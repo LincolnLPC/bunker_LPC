@@ -431,10 +431,14 @@ export class PeerConnectionManager {
         newSignalingState: this.peerConnection.signalingState,
       })
     } catch (error) {
+      // Извлечь информацию об ошибке
+      const errorMessage = error instanceof Error ? error.message : String(error)
+      const errorName = error instanceof Error ? error.name : 'Unknown'
+      
       // Детальное логирование ошибки
       const errorDetails: any = {
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorName: error instanceof Error ? error.name : 'Unknown',
+        errorMessage,
+        errorName,
         errorStack: error instanceof Error ? error.stack : undefined,
         signalingState: this.peerConnection.signalingState,
         connectionState: this.peerConnection.connectionState,
@@ -465,8 +469,28 @@ export class PeerConnectionManager {
         })),
       }
       
-      // Правильно логировать ошибку
-      console.error(`[PeerConnection] ❌ Error setting local description for ${this.playerId}:`, errorDetails)
+      // Правильно логировать ошибку - логировать по частям, чтобы избежать проблем с сериализацией
+      console.error(`[PeerConnection] ❌ Error setting local description for ${this.playerId}:`)
+      console.error(`  Error message: ${errorMessage}`)
+      console.error(`  Error name: ${errorName}`)
+      console.error(`  Signaling state: ${this.peerConnection.signalingState}`)
+      console.error(`  Connection state: ${this.peerConnection.connectionState}`)
+      console.error(`  ICE state: ${this.peerConnection.iceConnectionState}`)
+      console.error(`  Local description:`, this.peerConnection.localDescription ? {
+        type: this.peerConnection.localDescription.type,
+        sdpLength: this.peerConnection.localDescription.sdp?.length,
+        mlinesCount: (this.peerConnection.localDescription.sdp?.match(/^m=/gm) || []).length,
+      } : null)
+      console.error(`  Remote description:`, this.peerConnection.remoteDescription ? {
+        type: this.peerConnection.remoteDescription.type,
+        sdpLength: this.peerConnection.remoteDescription.sdp?.length,
+        mlinesCount: (this.peerConnection.remoteDescription.sdp?.match(/^m=/gm) || []).length,
+      } : null)
+      console.error(`  New offer:`, {
+        type: offer.type,
+        sdpLength: offer.sdp?.length,
+        mlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+      })
       
       // Дополнительное логирование для отладки
       if (error instanceof DOMException) {
@@ -479,18 +503,25 @@ export class PeerConnectionManager {
         console.error(`[PeerConnection] ❌ Error details:`, {
           name: error.name,
           message: error.message,
-          stack: error.stack,
+          stack: error.stack?.split('\n').slice(0, 5).join('\n'),
         })
       } else {
-        console.error(`[PeerConnection] ❌ Unknown error type:`, typeof error, error)
+        console.error(`[PeerConnection] ❌ Unknown error type:`, typeof error, String(error))
       }
       
       // Если это ошибка о порядке m-lines, вывести детальное сравнение
-      if (error instanceof Error && error.message.includes('m-lines')) {
+      if (errorMessage.includes('m-lines') || errorMessage.includes('order')) {
+        const currentLocalMlines = this.peerConnection.localDescription?.sdp?.match(/^m=.*$/gm) || []
+        const newOfferMlines = offer.sdp?.match(/^m=.*$/gm) || []
+        const currentRemoteMlines = this.peerConnection.remoteDescription?.sdp?.match(/^m=.*$/gm) || []
+        
         console.error(`[PeerConnection] ❌ M-lines comparison:`, {
-          currentLocalMlines: this.peerConnection.localDescription?.sdp?.match(/^m=.*$/gm) || [],
-          newOfferMlines: offer.sdp?.match(/^m=.*$/gm) || [],
-          currentRemoteMlines: this.peerConnection.remoteDescription?.sdp?.match(/^m=.*$/gm) || [],
+          currentLocalMlines,
+          newOfferMlines,
+          currentRemoteMlines,
+          localMlinesCount: currentLocalMlines.length,
+          newOfferMlinesCount: newOfferMlines.length,
+          remoteMlinesCount: currentRemoteMlines.length,
         })
       }
       
@@ -577,6 +608,43 @@ export class PeerConnectionManager {
       localDescriptionBefore: localDescBefore ? { type: localDescBefore.type } : null,
       remoteDescriptionBefore: remoteDescBefore ? { type: remoteDescBefore.type } : null,
     })
+    
+    // Проверить, что мы в правильном состоянии для установки answer
+    // Answer можно установить только когда:
+    // 1. У нас есть local description типа 'offer' (have-local-offer)
+    // 2. Или мы в состоянии 'stable' и еще нет remote description
+    // НЕЛЬЗЯ устанавливать answer, если мы в состоянии 'have-remote-offer' (это означает, что мы получили offer и должны создать answer)
+    if (signalingStateBefore === "have-remote-offer") {
+      const errorMsg = `Cannot set remote answer: connection is in 'have-remote-offer' state. We received an offer and should create an answer first, not set a remote answer.`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState: signalingStateBefore,
+        localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+        remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    // Проверить, что у нас есть local offer перед установкой remote answer
+    if (signalingStateBefore !== "have-local-offer" && signalingStateBefore !== "stable") {
+      const errorMsg = `Cannot set remote answer: connection is in '${signalingStateBefore}' state, expected 'have-local-offer' or 'stable'.`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState: signalingStateBefore,
+        localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+        remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    // Проверить, что remote description еще не установлена (или это обновление)
+    if (remoteDescBefore && remoteDescBefore.type === "answer") {
+      console.warn(`[PeerConnection] ⚠️ Remote answer already set for ${this.playerId}, skipping`, {
+        signalingState: signalingStateBefore,
+        existingRemoteDescription: { type: remoteDescBefore.type },
+      })
+      return // Уже установлен, пропускаем
+    }
     
     await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
     

@@ -33,6 +33,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 })
     }
 
+    // Check round mode from settings
+    const roundMode = (room.settings as any)?.roundMode || "automatic"
+    
+    // In manual mode, don't check timer - host controls everything
+    if (roundMode === "manual") {
+      return NextResponse.json({ 
+        success: true, 
+        expired: false,
+        timeRemaining: null,
+        manualMode: true
+      })
+    }
+
     // Only check if room is in playing or voting phase and timer is active
     if (!room.round_started_at || (room.phase !== "playing" && room.phase !== "voting")) {
       return NextResponse.json({ 
@@ -42,16 +55,22 @@ export async function POST(request: Request) {
       })
     }
 
+    // Get timer duration based on current phase
+    // For playing phase: use discussion time
+    // For voting phase: use voting time
+    const settings = (room.settings as any) || {}
+    const timerDuration = room.phase === "playing" 
+      ? (settings.discussionTime || room.round_timer_seconds)
+      : (settings.votingTime || 60)
+
     // Calculate time remaining
     const startedAt = new Date(room.round_started_at)
     const now = new Date()
     const elapsedSeconds = Math.floor((now.getTime() - startedAt.getTime()) / 1000)
-    const timeRemaining = Math.max(0, room.round_timer_seconds - elapsedSeconds)
+    const timeRemaining = Math.max(0, timerDuration - elapsedSeconds)
 
-    // If timer expired, handle auto-transition
-    if (timeRemaining <= 0) {
-      // Only auto-transition if in playing phase (auto-transition to voting)
-      // For voting phase, we wait for host to manually end voting
+    // If timer expired, handle auto-transition (only in automatic mode)
+    if (timeRemaining <= 0 && roundMode === "automatic") {
       if (room.phase === "playing") {
         // Auto-transition to voting
         const { error: updateError } = await supabase
@@ -68,7 +87,7 @@ export async function POST(request: Request) {
         await supabase.from("chat_messages").insert({
           room_id: roomId,
           player_id: null,
-          message: `Время раунда ${room.current_round} истекло. Началось голосование.`,
+          message: `Время обсуждения раунда ${room.current_round} истекло. Началось голосование.`,
           message_type: "system",
         })
 
@@ -131,15 +150,79 @@ export async function POST(request: Request) {
           newPhase: "voting",
           timeRemaining: 0
         })
-      }
+      } else if (room.phase === "voting") {
+        // Auto-transition to next round
+        // Check if this is the last round
+        const { data: allPlayers } = await supabase
+          .from("game_players")
+          .select("id")
+          .eq("room_id", roomId)
+          .eq("is_eliminated", false)
 
-      // For voting phase, just notify that time is up (host still needs to manually end)
-      return NextResponse.json({ 
-        success: true, 
-        expired: true,
-        phaseChanged: false,
-        timeRemaining: 0
-      })
+        const remainingPlayers = allPlayers?.length || 0
+
+        if (remainingPlayers <= 2) {
+          // Game finished - determine survivors
+          const { data: survivors } = await supabase
+            .from("game_players")
+            .select("id, name")
+            .eq("room_id", roomId)
+            .eq("is_eliminated", false)
+
+          const { error: finishError } = await supabase
+            .from("game_rooms")
+            .update({
+              phase: "finished",
+            })
+            .eq("id", roomId)
+
+          if (finishError) throw finishError
+
+          await supabase.from("chat_messages").insert({
+            room_id: roomId,
+            player_id: null,
+            message: `Игра завершена! Выжившие: ${survivors?.map((p: any) => p.name).join(", ") || "Не определены"}`,
+            message_type: "system",
+          })
+
+          return NextResponse.json({ 
+            success: true, 
+            expired: true,
+            phaseChanged: true,
+            newPhase: "finished",
+            timeRemaining: 0
+          })
+        }
+
+        // Advance to next round
+        const { error: updateError } = await supabase
+          .from("game_rooms")
+          .update({
+            phase: "playing",
+            current_round: (room.current_round || 0) + 1,
+            round_started_at: new Date().toISOString(),
+          })
+          .eq("id", roomId)
+
+        if (updateError) throw updateError
+
+        // Add system message
+        await supabase.from("chat_messages").insert({
+          room_id: roomId,
+          player_id: null,
+          message: `Время голосования истекло. Начался раунд ${(room.current_round || 0) + 1}`,
+          message_type: "system",
+        })
+
+        return NextResponse.json({ 
+          success: true, 
+          expired: true,
+          phaseChanged: true,
+          newPhase: "playing",
+          newRound: (room.current_round || 0) + 1,
+          timeRemaining: 0
+        })
+      }
     }
 
     return NextResponse.json({ 

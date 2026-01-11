@@ -83,6 +83,14 @@ export async function POST(request: Request) {
     const maxPlayers = typeof rawMaxPlayers === "string" ? parseInt(rawMaxPlayers, 10) : rawMaxPlayers
     const roundTimerSeconds =
       typeof rawRoundTimerSeconds === "string" ? parseInt(rawRoundTimerSeconds, 10) : rawRoundTimerSeconds
+    
+    // Determine round timer based on mode
+    // For automatic mode, use discussion time for playing phase
+    // For manual mode, timer is not used (set to 0 or a large value)
+    const roundMode = (settings as any)?.roundMode || "automatic"
+    const finalRoundTimerSeconds = roundMode === "automatic" 
+      ? ((settings as any)?.discussionTime || roundTimerSeconds)
+      : 0 // Manual mode doesn't use timer
 
     const validationResults = combineValidations(
       validateMaxPlayers(maxPlayers),

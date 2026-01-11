@@ -27,6 +27,9 @@ export default function CreateGamePage() {
   const [autoReveal, setAutoReveal] = useState(false)
   const [spectators, setSpectators] = useState(true)
   const [hostRole, setHostRole] = useState<"host_and_player" | "host_only">("host_and_player")
+  const [roundMode, setRoundMode] = useState<"manual" | "automatic">("automatic")
+  const [discussionTime, setDiscussionTime] = useState(120) // Время на обсуждение (секунды)
+  const [votingTime, setVotingTime] = useState(60) // Время на голосование (секунды)
   const [selectedCatastrophe, setSelectedCatastrophe] = useState<string>("")
   const [selectedBunker, setSelectedBunker] = useState<string>("")
   const [customCatastrophe, setCustomCatastrophe] = useState("")
@@ -147,6 +150,9 @@ export default function CreateGamePage() {
             hostRole, // "host_and_player" or "host_only"
             excludeNonBinaryGender, // Исключить пол "А" из опций
             characteristics: characteristicsSettings,
+            roundMode, // "manual" or "automatic"
+            discussionTime, // Время на обсуждение (только для автоматического режима)
+            votingTime, // Время на голосование (только для автоматического режима)
           },
         }),
       })
@@ -306,21 +312,75 @@ export default function CreateGamePage() {
               )}
             </div>
 
-            {/* Round Timer */}
+            {/* Round Mode */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <Label>Время на раунд</Label>
-                <span className="text-sm text-muted-foreground">{roundTimer} сек</span>
+                <Label>Режим переключения раундов</Label>
               </div>
-              <Slider
-                value={[roundTimer]}
-                onValueChange={([v]) => setRoundTimer(v)}
-                min={60}
-                max={300}
-                step={30}
-                className="py-2"
-              />
+              <RadioGroup value={roundMode} onValueChange={(v) => setRoundMode(v as "manual" | "automatic")}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="manual" id="round-mode-manual" />
+                  <Label htmlFor="round-mode-manual" className="font-normal cursor-pointer">
+                    Ручное переключение
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Ведущий сам переключает раунды и запускает голосование без таймеров
+                </p>
+                <div className="flex items-center space-x-2 mt-2">
+                  <RadioGroupItem value="automatic" id="round-mode-automatic" />
+                  <Label htmlFor="round-mode-automatic" className="font-normal cursor-pointer">
+                    Автоматическое переключение
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground ml-6">
+                  Таймер автоматически переключает раунды и запускает голосование
+                </p>
+              </RadioGroup>
             </div>
+
+            {/* Timer Settings - Only show for automatic mode */}
+            {roundMode === "automatic" && (
+              <>
+                {/* Discussion Time */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label>Время на обсуждение</Label>
+                    <span className="text-sm text-muted-foreground">{discussionTime} сек</span>
+                  </div>
+                  <Slider
+                    value={[discussionTime]}
+                    onValueChange={([v]) => setDiscussionTime(v)}
+                    min={60}
+                    max={600}
+                    step={30}
+                    className="py-2"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Время на обсуждение перед началом голосования
+                  </p>
+                </div>
+
+                {/* Voting Time */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Label>Время на голосование</Label>
+                    <span className="text-sm text-muted-foreground">{votingTime} сек</span>
+                  </div>
+                  <Slider
+                    value={[votingTime]}
+                    onValueChange={([v]) => setVotingTime(v)}
+                    min={30}
+                    max={300}
+                    step={15}
+                    className="py-2"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Время на голосование перед переходом к следующему раунду
+                  </p>
+                </div>
+              </>
+            )}
 
             {/* Auto Reveal */}
             <div className="flex items-center justify-between">

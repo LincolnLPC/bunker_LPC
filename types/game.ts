@@ -76,6 +76,9 @@ export interface GameState {
     hostRole?: "host_and_player" | "host_only"
     autoReveal?: boolean
     spectators?: boolean
+    roundMode?: "manual" | "automatic"
+    discussionTime?: number // Время на обсуждение (секунды)
+    votingTime?: number // Время на голосование (секунды)
     [key: string]: any
   }
 }

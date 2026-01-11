@@ -454,13 +454,69 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         const connectionStateBefore = peerManager.getConnectionState()
         const iceStateBefore = peerManager.getIceConnectionState()
         const signalingStateBefore = peerManager.getPeerConnection().signalingState
+        const localDescBefore = peerManager.getPeerConnection().localDescription
+        const remoteDescBefore = peerManager.getPeerConnection().remoteDescription
+        
         console.log(`[WebRTC] 📊 Connection state before handling answer:`, {
           connection: connectionStateBefore,
           ice: iceStateBefore,
           signaling: signalingStateBefore,
+          localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+          remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
         })
         
-        await peerManager.handleAnswer(signal.data as RTCSessionDescriptionInit)
+        // Проверить, что мы в правильном состоянии для обработки answer
+        // Answer можно обработать только когда:
+        // 1. У нас есть local description типа 'offer' (have-local-offer)
+        // 2. Или мы в состоянии 'stable' и еще нет remote description
+        // НЕЛЬЗЯ обрабатывать answer, если мы в состоянии 'have-remote-offer' (это означает, что мы получили offer и должны создать answer)
+        if (signalingStateBefore === "have-remote-offer") {
+          console.warn(`[WebRTC] ⚠️ Cannot handle answer from ${signal.from}: we are in 'have-remote-offer' state, we should create an answer first, not handle a remote answer`, {
+            signalingState: signalingStateBefore,
+            localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+            remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+          })
+          return
+        }
+        
+        // Проверить, что у нас есть local offer перед обработкой remote answer
+        if (signalingStateBefore !== "have-local-offer" && signalingStateBefore !== "stable") {
+          console.warn(`[WebRTC] ⚠️ Cannot handle answer from ${signal.from}: wrong signaling state '${signalingStateBefore}', expected 'have-local-offer' or 'stable'`, {
+            signalingState: signalingStateBefore,
+            localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+            remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+          })
+          return
+        }
+        
+        // Проверить, что remote description еще не установлена
+        if (remoteDescBefore && remoteDescBefore.type === "answer") {
+          console.warn(`[WebRTC] ⚠️ Remote answer already set for ${signal.from}, skipping`, {
+            signalingState: signalingStateBefore,
+            existingRemoteDescription: { type: remoteDescBefore.type },
+          })
+          return
+        }
+        
+        try {
+          await peerManager.handleAnswer(signal.data as RTCSessionDescriptionInit)
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          console.error(`[WebRTC] ❌ Error handling answer from ${signal.from}:`, {
+            error: errorMessage,
+            errorName: error instanceof Error ? error.name : 'Unknown',
+            signalingState: signalingStateBefore,
+            localDescription: localDescBefore ? { type: localDescBefore.type } : null,
+            remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+          })
+          
+          // Если это ошибка о неправильном состоянии, не пересоздавать соединение
+          // Это может быть нормальной ситуацией (например, дублирующий сигнал)
+          if (errorMessage.includes('have-remote-offer') || errorMessage.includes('wrong state') || errorMessage.includes('Called in wrong state')) {
+            console.warn(`[WebRTC] ⚠️ Answer handling failed due to state mismatch, this is likely a duplicate signal or race condition`)
+            return
+          }
+        }
         
         // После обработки answer, negotiation завершена - убедиться, что мы не создадим новый offer
         const signalingStateAfterAnswer = peerManager.getPeerConnection().signalingState
@@ -808,6 +864,28 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         
         // Создать и отправить offer (с проверкой подключения канала)
         // Offer создается с offerToReceiveAudio/Video, так что даже без локального потока мы можем получать удаленные потоки
+        
+        // Финальная проверка перед вызовом createOffer
+        const finalPeerConnection = peerManager.getPeerConnection()
+        const finalSignalingState = finalPeerConnection.signalingState
+        const finalHasLocalDesc = !!finalPeerConnection.localDescription
+        const finalHasRemoteDesc = !!finalPeerConnection.remoteDescription
+        
+        if (finalSignalingState !== 'stable') {
+          console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: signaling state changed to '${finalSignalingState}'`)
+          continue
+        }
+        
+        if (finalHasLocalDesc && finalPeerConnection.localDescription?.type === 'offer') {
+          console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: offer already created`)
+          continue
+        }
+        
+        if (finalHasLocalDesc && finalHasRemoteDesc) {
+          console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: negotiation already completed`)
+          continue
+        }
+        
         peerManager
           .createOffer()
           .then(async (offer) => {
@@ -837,7 +915,35 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
             }
           })
           .catch((err) => {
-            console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
+            const errorMessage = err instanceof Error ? err.message : String(err)
+            const errorName = err instanceof Error ? err.name : 'Unknown'
+            
+            console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, {
+              error: errorMessage,
+              errorName,
+              playerId,
+              signalingState: peerManager.getPeerConnection().signalingState,
+              localDescription: peerManager.getPeerConnection().localDescription ? { 
+                type: peerManager.getPeerConnection().localDescription.type,
+                sdpLength: peerManager.getPeerConnection().localDescription.sdp?.length,
+              } : null,
+              remoteDescription: peerManager.getPeerConnection().remoteDescription ? { 
+                type: peerManager.getPeerConnection().remoteDescription.type,
+                sdpLength: peerManager.getPeerConnection().remoteDescription.sdp?.length,
+              } : null,
+            })
+            
+            // Если это ошибка о m-lines, закрыть соединение и удалить его
+            if (errorMessage.includes('m-lines') || errorMessage.includes('order')) {
+              console.warn(`[WebRTC] ⚠️ Closing connection to ${playerId} due to m-lines error, will be recreated`)
+              peerManager.close()
+              peerConnectionsRef.current.delete(playerId)
+              setRemoteStreams((prev) => {
+                const next = new Map(prev)
+                next.delete(playerId)
+                return next
+              })
+            }
           })
       }
     }
