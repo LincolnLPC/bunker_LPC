@@ -123,10 +123,10 @@ export default function GamePage() {
     toggleAudio,
     toggleVideo,
   } = useWebRTC({
-    roomId: gameState.id,
-    userId: currentPlayerId,
-    currentPlayerId,
-    otherPlayers: gameState.players.filter((p) => p.id !== currentPlayerId).map((p) => ({
+    roomId: gameState?.id || "",
+    userId: currentPlayerId || "",
+    currentPlayerId: currentPlayerId || "",
+    otherPlayers: (gameState?.players || []).filter((p) => p.id !== currentPlayerId).map((p) => ({
       id: p.id,
       playerId: p.id,
     })),
@@ -478,12 +478,13 @@ export default function GamePage() {
       const remoteStream = remoteStreams.get(player.id)!
       const videoEnabled = remoteStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live")
       const audioEnabled = remoteStream.getAudioTracks().some((t) => t.enabled && t.readyState === "live")
-      console.debug(`[GamePage] Mapping stream for player ${player.name} (${player.id}):`, {
+      console.log(`[GamePage] ✅ Mapping REMOTE stream for player ${player.name} (${player.id}):`, {
         hasStream: true,
         videoEnabled,
         audioEnabled,
         videoTracks: remoteStream.getVideoTracks().length,
         audioTracks: remoteStream.getAudioTracks().length,
+        streamId: remoteStream.id,
       })
       return {
         ...player,
@@ -494,7 +495,7 @@ export default function GamePage() {
     } else {
       // Log when player doesn't have a stream
       if (player.id !== currentPlayerId) {
-        console.debug(`[GamePage] No stream for player ${player.name} (${player.id}), remoteStreams has:`, Array.from(remoteStreams?.keys() || []))
+        console.warn(`[GamePage] ⚠️ No stream for player ${player.name} (${player.id}), remoteStreams has keys:`, Array.from(remoteStreams?.keys() || []))
       }
     }
     return player

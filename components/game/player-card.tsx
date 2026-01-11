@@ -99,8 +99,8 @@ export function PlayerCard({
     player.stream,
     player.id,
     isCurrentPlayer,
-    Boolean(player.videoEnabled),
-  ]) // Added player.videoEnabled to react to track state changes, using Boolean() to ensure stable array size
+    player.videoEnabled ?? false, // Use nullish coalescing to ensure stable value
+  ]) // Ensure all dependencies are always defined to maintain stable array size
 
   // Get gender, age, profession from characteristics if revealed
   const genderChar = player.characteristics.find(c => c.category === 'gender' && c.isRevealed)

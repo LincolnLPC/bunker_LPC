@@ -87,11 +87,6 @@ async function checkAndRemoveInactivePlayers(roomId: string, supabase: any) {
       return lastSeen < thirtySecondsAgoTime
     })
 
-    if (findError) {
-      console.error("[Heartbeat] Error finding inactive players:", findError)
-      return
-    }
-
     if (!inactivePlayers || inactivePlayers.length === 0) {
       return // No inactive players
     }
