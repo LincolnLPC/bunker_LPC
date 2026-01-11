@@ -184,14 +184,36 @@ export function PlayerCard({
 
         {/* Player name overlay */}
         <div className="absolute top-1 left-6 right-1 z-20">
-          <h3 className="text-sm font-bold text-foreground truncate drop-shadow-lg">{player.name}</h3>
+          {/* First line: Name with Gender and Age on the right */}
+          <div className="flex items-start gap-1.5">
+            <div className="flex flex-col items-start">
+              <h3 className="text-sm font-bold text-foreground truncate drop-shadow-lg leading-tight">{player.name}</h3>
+              {/* Profession directly under name, aligned with name - same position as on image */}
+              {professionChar && (
+                <div className="mt-0 leading-tight self-start">
+                  <span className="text-[10px] font-semibold text-[oklch(0.7_0.2_50)] drop-shadow-lg">{professionChar.value}</span>
+                </div>
+              )}
+            </div>
+            {/* Gender and Age - right of name, aligned to top */}
+            {(genderChar || ageChar) && (
+              <div className="flex items-center gap-1 flex-shrink-0">
+                {genderChar && (
+                  <span className="text-[10px] font-bold text-[oklch(0.7_0.2_50)] drop-shadow-lg">{genderChar.value}</span>
+                )}
+                {ageChar && (
+                  <span className="text-[10px] font-bold text-[oklch(0.7_0.2_50)] drop-shadow-lg">{ageChar.value}</span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Characteristics overlay on video (when video is enabled and characteristics are shown) */}
         {showCharacteristics && player.videoEnabled && player.stream && revealedChars.length > 0 && (
           <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] via-transparent to-transparent pointer-events-none z-10">
-            <div className="absolute bottom-0 left-0 right-0 p-2 space-y-0.5">
-              {revealedChars.slice(0, 3).map((char) => (
+            <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
+              {revealedChars.slice(0, 5).map((char) => (
                 <div
                   key={char.id}
                   className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
@@ -213,23 +235,9 @@ export function PlayerCard({
             setShowCharacteristics(false)
           }}
         >
-          {/* Age/Gender and Profession - only if revealed */}
-          {(genderChar || ageChar || professionChar) && (
-            <div className="mb-2 space-y-0.5">
-              {genderChar && (
-                <div className="text-[oklch(0.7_0.2_50)] font-bold text-xs">{genderChar.value}</div>
-              )}
-              {ageChar && (
-                <div className="text-[oklch(0.7_0.2_50)] font-bold text-xs">{ageChar.value}</div>
-              )}
-              {professionChar && (
-                <div className="text-[oklch(0.7_0.2_50)] font-semibold text-xs">{professionChar.value}</div>
-              )}
-            </div>
-          )}
 
           {/* Revealed characteristics */}
-          <div className="space-y-0.5 text-[10px] leading-tight text-[oklch(0.75_0_0)]">
+          <div className="space-y-0.5 text-[10px] leading-tight text-[oklch(0.75_0_0)] invisible">
             {revealedChars.slice(0, 5).map((char) => (
               <div
                 key={char.id}

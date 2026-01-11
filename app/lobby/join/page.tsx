@@ -22,13 +22,20 @@ export default function JoinGamePage() {
 
   // Auto-fill room code from URL parameter
   useEffect(() => {
-    const codeParam = searchParams.get("code")
-    if (codeParam) {
-      // Clean and normalize the code
-      const cleaned = codeParam.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 6)
-      setRoomCode(cleaned)
+    // Extract code immediately to avoid serialization issues with searchParams object
+    try {
+      const codeParam = searchParams.get("code")
+      if (codeParam) {
+        // Clean and normalize the code
+        const cleaned = codeParam.trim().toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 6)
+        setRoomCode(cleaned)
+      }
+    } catch (e) {
+      // Ignore errors from searchParams serialization in DevTools
+      console.debug("[JoinPage] Could not read searchParams (DevTools serialization issue)")
     }
-  }, [searchParams])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Run only once on mount to avoid dependency on searchParams object
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault()

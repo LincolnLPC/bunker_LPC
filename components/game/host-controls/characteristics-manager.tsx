@@ -93,7 +93,9 @@ export function CharacteristicsManager({
   }
 
   const getCategoryOptions = (category: string): string[] => {
-    return CATEGORY_OPTIONS[category] || []
+    const options = CATEGORY_OPTIONS[category] || []
+    // Remove duplicates by converting to Set and back to array
+    return Array.from(new Set(options))
   }
 
   return (
@@ -196,8 +198,8 @@ export function CharacteristicsManager({
                           <SelectValue placeholder="Выберите из списка" />
                         </SelectTrigger>
                         <SelectContent>
-                          {getCategoryOptions(selectedChar.category).map((option) => (
-                            <SelectItem key={option} value={option}>
+                          {getCategoryOptions(selectedChar.category).map((option, index) => (
+                            <SelectItem key={`${option}-${index}`} value={option}>
                               {option}
                             </SelectItem>
                           ))}

@@ -85,7 +85,8 @@ import { DEFAULT_BUNKER_INFO } from "@/components/game/bunker-info"
 export default function GamePage() {
   const params = useParams()
   const router = useRouter()
-  const roomCode = params.roomCode as string
+  // Extract roomCode immediately to avoid serialization issues with params object
+  const roomCode = (params?.roomCode as string) || ""
 
   const {
     gameState,
