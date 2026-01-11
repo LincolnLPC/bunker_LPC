@@ -29,6 +29,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const pendingOffersRef = useRef<Map<string, RTCSessionDescriptionInit>>(new Map())
   const isInitiatorRef = useRef<Map<string, boolean>>(new Map())
   const lastOtherPlayersIdsRef = useRef<string>("")
+  const isInitialMountRef = useRef(true)
   const handleWebRTCSignalRef = useRef<((signal: WebRTCSignal) => Promise<void>) | null>(null)
 
   // Create stable reference to player IDs to avoid infinite loops
@@ -461,13 +462,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         
         await peerManager.handleAnswer(signal.data as RTCSessionDescriptionInit)
         
+        // После обработки answer, negotiation завершена - убедиться, что мы не создадим новый offer
+        const signalingStateAfterAnswer = peerManager.getPeerConnection().signalingState
+        const hasLocalAfterAnswer = !!peerManager.getPeerConnection().localDescription
+        const hasRemoteAfterAnswer = !!peerManager.getPeerConnection().remoteDescription
+        
         const connectionStateAfter = peerManager.getConnectionState()
         const iceStateAfter = peerManager.getIceConnectionState()
-        const signalingStateAfter = peerManager.getPeerConnection().signalingState
-        console.log(`[WebRTC] 📊 Connection state after handling answer:`, {
+        console.log(`[WebRTC] ✅ Answer processed for ${signal.from}`, {
+          signalingState: signalingStateAfterAnswer,
+          negotiationComplete: hasLocalAfterAnswer && hasRemoteAfterAnswer,
+          localDescriptionType: peerManager.getPeerConnection().localDescription?.type,
+          remoteDescriptionType: peerManager.getPeerConnection().remoteDescription?.type,
           connection: connectionStateAfter,
           ice: iceStateAfter,
-          signaling: signalingStateAfter,
         })
         
         // Проверить, есть ли уже полученные потоки
@@ -562,25 +570,77 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       console.log("[WebRTC] ℹ️ Creating connections without local stream (will only receive remote streams)")
     }
 
-    // Check if player IDs actually changed
-    if (otherPlayerIds === lastOtherPlayersIdsRef.current) {
-      // Player IDs haven't changed, skip
-      console.debug("[WebRTC] Player IDs haven't changed, skipping connection creation")
-      return
-    }
-    console.log("[WebRTC] Player IDs changed, creating connections. Previous:", lastOtherPlayersIdsRef.current, "New:", otherPlayerIds)
-    lastOtherPlayersIdsRef.current = otherPlayerIds
-
     // Create stable set of player IDs to avoid infinite loops
     const currentPlayerIds = new Set(otherPlayers.map((p) => p.playerId || p.id).filter(Boolean))
     const existingConnections = new Set(peerConnectionsRef.current.keys())
     
-    // Check if we actually need to create new connections
+    // Check if player IDs actually changed OR if we have existing connections that need to be recreated
+    // (this handles page reload case where connections are lost but player IDs are the same)
+    const playerIdsChanged = otherPlayerIds !== lastOtherPlayersIdsRef.current
+    const hasExistingConnections = existingConnections.size > 0
     const needsNewConnections = Array.from(currentPlayerIds).some(id => 
       id !== currentPlayerId && !existingConnections.has(id)
     )
     
-    if (!needsNewConnections) {
+    // При первой загрузке или перезагрузке страницы нужно пересоздать все соединения
+    const isFirstMount = isInitialMountRef.current
+    
+    // НЕ сбрасывать isInitialMountRef здесь - это нужно сделать ПОСЛЕ создания соединений
+    // чтобы избежать повторных срабатываний эффекта
+    
+    // Если ID игроков не изменились, но есть существующие соединения, проверяем их состояние
+    // Если соединения закрыты или не работают, нужно пересоздать
+    let needsReconnection = false
+    if (!playerIdsChanged && hasExistingConnections && !isFirstMount) {
+      // Проверить состояние существующих соединений
+      for (const [playerId, peerManager] of peerConnectionsRef.current.entries()) {
+        const connectionState = peerManager.getConnectionState()
+        const iceState = peerManager.getIceConnectionState()
+        // Если соединение закрыто или не установлено, нужно пересоздать
+        if (connectionState === 'closed' || connectionState === 'failed' || 
+            iceState === 'closed' || iceState === 'failed' || iceState === 'disconnected') {
+          console.log(`[WebRTC] 🔄 Connection to ${playerId} is in bad state (${connectionState}/${iceState}), will recreate`)
+          needsReconnection = true
+          // Закрыть старое соединение
+          peerManager.close()
+          peerConnectionsRef.current.delete(playerId)
+          setRemoteStreams((prev) => {
+            const next = new Map(prev)
+            next.delete(playerId)
+            return next
+          })
+        }
+      }
+    }
+    
+    // КРИТИЧНО: После перезагрузки страницы (isFirstMount) нужно ВСЕГДА создавать соединения,
+    // даже если otherPlayerIds не изменились, потому что старые соединения были закрыты
+    if (isFirstMount) {
+      console.log("[WebRTC] 🔄 First mount detected, will create all connections regardless of player IDs change")
+      // Принудительно установить needsNewConnections для всех игроков
+      for (const playerId of currentPlayerIds) {
+        if (playerId !== currentPlayerId && !existingConnections.has(playerId)) {
+          // Это будет обработано ниже
+        }
+      }
+    } else if (!playerIdsChanged && !needsNewConnections && !needsReconnection) {
+      // Player IDs haven't changed and no reconnection needed, skip
+      console.debug("[WebRTC] Player IDs haven't changed and connections are healthy, skipping connection creation")
+      return
+    }
+    
+    if (playerIdsChanged || isFirstMount) {
+      console.log("[WebRTC] Player IDs changed or first mount, creating connections. Previous:", lastOtherPlayersIdsRef.current, "New:", otherPlayerIds)
+      lastOtherPlayersIdsRef.current = otherPlayerIds
+    } else if (needsReconnection) {
+      console.log("[WebRTC] 🔄 Reconnection needed due to failed/closed connections")
+    }
+    
+    // После перезагрузки (isFirstMount) нужно создать соединения для всех игроков
+    if (isFirstMount) {
+      console.log("[WebRTC] 🔄 First mount: creating connections for all players. Current IDs:", Array.from(currentPlayerIds), "Existing:", Array.from(existingConnections))
+      // Продолжить создание соединений ниже
+    } else if (!needsNewConnections && !needsReconnection) {
       // No new connections needed, skip
       console.log("[WebRTC] No new connections needed. Current IDs:", Array.from(currentPlayerIds), "Existing:", Array.from(existingConnections))
       return
@@ -607,8 +667,23 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     }
 
     // Создать соединения с новыми игроками
+    // После перезагрузки (isFirstMount) нужно создать соединения для ВСЕХ игроков,
+    // даже если они уже были в existingConnections (потому что соединения были закрыты)
     for (const playerId of currentPlayerIds) {
-      if (playerId === currentPlayerId || existingConnections.has(playerId)) continue
+      if (playerId === currentPlayerId) continue
+      
+      // После перезагрузки игнорируем existingConnections, так как они были закрыты
+      if (!isFirstMount && existingConnections.has(playerId)) {
+        console.log(`[WebRTC] ⏭️ Skipping ${playerId} - connection already exists (not first mount)`)
+        continue
+      }
+      
+      if (isFirstMount) {
+        console.log(`[WebRTC] 🔄 First mount: creating new connection for ${playerId}`)
+        // Сбросить isInitialMountRef после начала создания первого соединения
+        // Это предотвратит повторное срабатывание логики перезагрузки
+        isInitialMountRef.current = false
+      }
 
       // Инициатор - игрок с локальным потоком (камера включена)
       // Если у обоих есть потоки или у обоих нет, то игрок с меньшим ID
@@ -683,6 +758,54 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           console.debug(`[WebRTC] No local stream available for ${playerId}, will only receive remote stream`)
         }
 
+        // Проверить signaling state и negotiation status перед созданием offer
+        const peerConnection = peerManager.getPeerConnection()
+        const signalingState = peerConnection.signalingState
+        const hasLocalDescription = !!peerConnection.localDescription
+        const hasRemoteDescription = !!peerConnection.remoteDescription
+        
+        console.log(`[WebRTC] 🔍 Checking if we can create offer for ${playerId}`, {
+          signalingState,
+          hasLocalDescription,
+          hasRemoteDescription,
+          localDescriptionType: peerConnection.localDescription?.type || 'none',
+          remoteDescriptionType: peerConnection.remoteDescription?.type || 'none',
+          connectionState: peerConnection.connectionState,
+          iceState: peerConnection.iceConnectionState,
+          hasLocalStream: !!localStream,
+          isInitiator: isInitiatorRef.current.get(playerId),
+        })
+        
+        // Нельзя создавать offer если:
+        // 1. Signaling state не 'stable'
+        // 2. Уже есть local description типа 'offer' (offer уже создан, ждем answer)
+        // 3. Negotiation уже завершена (есть и local и remote description)
+        if (signalingState !== 'stable') {
+          console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId}: signaling state is '${signalingState}', skipping`, {
+            localDescription: peerConnection.localDescription ? { type: peerConnection.localDescription.type } : null,
+            remoteDescription: peerConnection.remoteDescription ? { type: peerConnection.remoteDescription.type } : null,
+          })
+          continue // Использовать continue вместо return, чтобы не прерывать цикл
+        }
+        
+        if (hasLocalDescription && peerConnection.localDescription?.type === 'offer') {
+          console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId}: local description already set to 'offer', waiting for answer`, {
+            localDescriptionSdpLength: peerConnection.localDescription?.sdp?.length,
+            remoteDescription: peerConnection.remoteDescription ? { type: peerConnection.remoteDescription.type } : null,
+          })
+          continue // Использовать continue вместо return
+        }
+        
+        if (hasLocalDescription && hasRemoteDescription) {
+          console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId}: negotiation already completed (local: ${peerConnection.localDescription?.type}, remote: ${peerConnection.remoteDescription?.type}), skipping`, {
+            localDescriptionSdpLength: peerConnection.localDescription?.sdp?.length,
+            remoteDescriptionSdpLength: peerConnection.remoteDescription?.sdp?.length,
+          })
+          continue // Использовать continue вместо return
+        }
+        
+        console.log(`[WebRTC] ✅ All checks passed, creating offer for ${playerId}`)
+        
         // Создать и отправить offer (с проверкой подключения канала)
         // Offer создается с offerToReceiveAudio/Video, так что даже без локального потока мы можем получать удаленные потоки
         peerManager
@@ -723,64 +846,272 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   
   // Дополнительный эффект: если локальный поток появился после создания соединений,
   // нужно пересоздать offer для всех существующих соединений, где мы должны быть инициаторами
+  // Это особенно важно после перезагрузки страницы
   useEffect(() => {
     if (!localStream || !signalingConnected || !currentPlayerId) {
       return
     }
     
-    console.log(`[WebRTC] 🔄 Local stream appeared, checking if we need to create offers for existing connections`)
+    console.log(`[WebRTC] 🔄 Local stream appeared, checking if we need to create offers for existing connections`, {
+      connectionsCount: peerConnectionsRef.current.size,
+      connectionIds: Array.from(peerConnectionsRef.current.keys()),
+    })
     
     // Проверить все существующие соединения
     for (const [playerId, peerManager] of peerConnectionsRef.current.entries()) {
       if (playerId === currentPlayerId) continue
       
+      const connectionState = peerManager.getConnectionState()
+      const iceState = peerManager.getIceConnectionState()
       const hasTracks = peerManager.getPeerConnection().getSenders().some(s => s.track)
       const currentInitiator = isInitiatorRef.current.get(playerId)
       
       // Если у нас есть локальный поток, мы должны быть инициатором
       // Если мы еще не инициаторы или не добавили локальный поток, нужно пересоздать offer
+      // Также пересоздаем offer, если соединение не установлено (после перезагрузки)
       const shouldBeInitiator = true // Если у нас есть локальный поток, мы всегда инициаторы
       
-      if (shouldBeInitiator && (!currentInitiator || !hasTracks)) {
-        console.log(`[WebRTC] 📤 Local stream appeared, creating offer for ${playerId} (we should be initiator)`, {
-          currentInitiator,
-          hasTracks,
-          shouldBeInitiator,
+      // Проверить signaling state и negotiation status ПЕРЕД проверкой needsReoffer
+      const peerConnection = peerManager.getPeerConnection()
+      const signalingState = peerConnection.signalingState
+      const hasLocalDesc = !!peerConnection.localDescription
+      const hasRemoteDesc = !!peerConnection.remoteDescription
+      const localDescType = peerConnection.localDescription?.type
+      const remoteDescType = peerConnection.remoteDescription?.type
+      
+      // КРИТИЧНО: Если negotiation уже завершена (есть и local и remote description),
+      // НЕ пытаться создавать новый offer - это вызовет ошибку о порядке m-lines
+      if (hasLocalDesc && hasRemoteDesc) {
+        console.log(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: negotiation already completed`, {
+          localDescriptionType: localDescType,
+          remoteDescriptionType: remoteDescType,
+          signalingState,
+          connectionState,
+          iceState,
         })
+        continue // Пропустить это соединение
+      }
+      
+      // Если уже есть local description типа 'offer', negotiation в процессе, не создавать новый offer
+      if (hasLocalDesc && localDescType === 'offer') {
+        console.log(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: offer already sent, waiting for answer`, {
+          localDescriptionType: localDescType,
+          remoteDescriptionType: remoteDescType,
+          signalingState,
+        })
+        continue // Пропустить это соединение
+      }
+      
+      // Проверить, нужно ли пересоздать offer:
+      // 1. Если мы не инициаторы
+      // 2. Если нет tracks в senders
+      // 3. Если соединение в начальном состоянии (new, connecting)
+      // 4. Если ICE в начальном состоянии (new, checking)
+      // 5. Если соединение не установлено (disconnected, failed, closed)
+      // НО только если negotiation еще не началась (нет local description)
+      const needsReoffer = (!hasLocalDesc && !hasRemoteDesc) && (
+        !currentInitiator || !hasTracks || 
+        connectionState === 'new' || connectionState === 'connecting' ||
+        iceState === 'new' || iceState === 'checking' ||
+        connectionState === 'disconnected' || connectionState === 'failed' || connectionState === 'closed' ||
+        iceState === 'disconnected' || iceState === 'failed' || iceState === 'closed'
+      )
+      
+      if (shouldBeInitiator && needsReoffer) {
+        // Проверить signaling state и negotiation status еще раз перед пересозданием
+        const peerConnectionForRecreate = peerManager.getPeerConnection()
+        const signalingStateForRecreate = peerConnectionForRecreate.signalingState
+        const hasLocalDescInRecreate = !!peerConnectionForRecreate.localDescription
+        const hasRemoteDescInRecreate = !!peerConnectionForRecreate.remoteDescription
         
-        // Обновить статус инициатора
-        isInitiatorRef.current.set(playerId, true)
+        // Если negotiation уже завершена, не пересоздавать соединение
+        if (hasLocalDescInRecreate && hasRemoteDescInRecreate) {
+          console.log(`[WebRTC] ⚠️ Cannot recreate connection for ${playerId}: negotiation already completed`, {
+            localDescriptionType: peerConnectionForRecreate.localDescription?.type,
+            remoteDescriptionType: peerConnectionForRecreate.remoteDescription?.type,
+            signalingState: signalingStateForRecreate,
+          })
+          continue // Пропустить это соединение
+        }
         
-        // Добавить локальный поток
-        peerManager.addLocalStream(localStream)
-        
-        // Создать и отправить offer
-        peerManager
-          .createOffer()
-          .then(async (offer) => {
-            console.log(`[WebRTC] ✅ Created offer for ${playerId} (after local stream appeared)`)
-            if (signalingRef.current) {
-              try {
-                await signalingRef.current.connect((signal: WebRTCSignal) => {
-                  if (handleWebRTCSignalRef.current) {
-                    handleWebRTCSignalRef.current(signal)
-                  }
-                })
-                await signalingRef.current.sendOffer(playerId, offer)
-                console.log(`[WebRTC] ✅ Offer sent to ${playerId} (after local stream appeared)`)
-              } catch (err) {
-                console.error(`[WebRTC] ❌ Error sending offer to ${playerId}:`, err)
+        // Если соединение уже в процессе negotiation, нужно закрыть его и создать новое
+        if (signalingStateForRecreate !== 'stable' && signalingStateForRecreate !== 'have-local-pranswer' && signalingStateForRecreate !== 'have-remote-pranswer') {
+          console.log(`[WebRTC] 🔄 Connection to ${playerId} is in '${signalingStateForRecreate}' state, closing and recreating...`)
+          
+          // Закрыть старое соединение
+          peerManager.close()
+          peerConnectionsRef.current.delete(playerId)
+          setRemoteStreams((prev) => {
+            const next = new Map(prev)
+            next.delete(playerId)
+            return next
+          })
+          
+          // Создать новое соединение
+          const newPeerManager = new PeerConnectionManager({
+            playerId,
+            onStream: (stream) => {
+              console.log(`[WebRTC] ✅ Received remote stream from ${playerId} (recreated connection):`, {
+                streamId: stream.id,
+                videoTracks: stream.getVideoTracks().length,
+                audioTracks: stream.getAudioTracks().length,
+              })
+              setRemoteStreams((prev) => {
+                const next = new Map(prev)
+                next.set(playerId, stream)
+                return next
+              })
+            },
+            onIceCandidate: async (candidate) => {
+              if (signalingRef.current) {
+                try {
+                  await signalingRef.current.connect((signal: WebRTCSignal) => {
+                    if (handleWebRTCSignalRef.current) {
+                      handleWebRTCSignalRef.current(signal)
+                    }
+                  })
+                  await signalingRef.current.sendIceCandidate(playerId, candidate.toJSON())
+                } catch (err) {
+                  console.error(`[WebRTC] Error sending ICE candidate for ${playerId}:`, err)
+                }
               }
-            }
+            },
+            onConnectionStateChange: (state) => {
+              setConnectionStates((prev) => {
+                const next = new Map(prev)
+                next.set(playerId, state)
+                return next
+              })
+            },
           })
-          .catch((err) => {
-            console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
+          
+          peerConnectionsRef.current.set(playerId, newPeerManager)
+          isInitiatorRef.current.set(playerId, true)
+          
+          // Добавить локальный поток и создать offer
+          newPeerManager.addLocalStream(localStream)
+          
+          newPeerManager
+            .createOffer()
+            .then(async (offer) => {
+              console.log(`[WebRTC] ✅ Created offer for ${playerId} (recreated connection)`)
+              if (signalingRef.current) {
+                try {
+                  await signalingRef.current.connect((signal: WebRTCSignal) => {
+                    if (handleWebRTCSignalRef.current) {
+                      handleWebRTCSignalRef.current(signal)
+                    }
+                  })
+                  await signalingRef.current.sendOffer(playerId, offer)
+                  console.log(`[WebRTC] ✅ Offer sent to ${playerId} (recreated connection)`)
+                } catch (err) {
+                  console.error(`[WebRTC] ❌ Error sending offer to ${playerId}:`, err)
+                }
+              }
+            })
+            .catch((err) => {
+              console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
+            })
+        } else {
+          // Соединение в стабильном состоянии, можно просто добавить поток и создать offer
+          console.log(`[WebRTC] 📤 Local stream appeared, creating offer for ${playerId} (we should be initiator)`, {
+            currentInitiator,
+            hasTracks,
+            shouldBeInitiator,
+            connectionState,
+            iceState,
+            needsReoffer,
+            signalingState,
           })
+          
+          // Обновить статус инициатора
+          isInitiatorRef.current.set(playerId, true)
+          
+          // Добавить локальный поток
+          peerManager.addLocalStream(localStream)
+          
+          // Проверить signaling state и negotiation status перед созданием offer
+          const peerConnectionBeforeOffer = peerManager.getPeerConnection()
+          const signalingStateBeforeOffer = peerConnectionBeforeOffer.signalingState
+          const hasLocalDesc = !!peerConnectionBeforeOffer.localDescription
+          const hasRemoteDesc = !!peerConnectionBeforeOffer.remoteDescription
+          
+          console.log(`[WebRTC] 🔍 Checking if we can create offer for ${playerId} (after local stream appeared)`, {
+            signalingState: signalingStateBeforeOffer,
+            hasLocalDescription: hasLocalDesc,
+            hasRemoteDescription: hasRemoteDesc,
+            localDescriptionType: peerConnectionBeforeOffer.localDescription?.type || 'none',
+            remoteDescriptionType: peerConnectionBeforeOffer.remoteDescription?.type || 'none',
+            connectionState: peerConnectionBeforeOffer.connectionState,
+            iceState: peerConnectionBeforeOffer.iceConnectionState,
+            currentInitiator,
+            hasTracks,
+            shouldBeInitiator,
+            needsReoffer,
+          })
+          
+          if (signalingStateBeforeOffer !== 'stable') {
+            console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId} (after local stream): signaling state is '${signalingStateBeforeOffer}', skipping`, {
+              localDescription: peerConnectionBeforeOffer.localDescription ? { type: peerConnectionBeforeOffer.localDescription.type } : null,
+              remoteDescription: peerConnectionBeforeOffer.remoteDescription ? { type: peerConnectionBeforeOffer.remoteDescription.type } : null,
+            })
+            return
+          }
+          
+          if (hasLocalDesc && peerConnectionBeforeOffer.localDescription?.type === 'offer') {
+            console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId} (after local stream): local description already set to 'offer', waiting for answer`, {
+              localDescriptionSdpLength: peerConnectionBeforeOffer.localDescription?.sdp?.length,
+              remoteDescription: peerConnectionBeforeOffer.remoteDescription ? { type: peerConnectionBeforeOffer.remoteDescription.type } : null,
+            })
+            return
+          }
+          
+          if (hasLocalDesc && hasRemoteDesc) {
+            console.warn(`[WebRTC] ⚠️ Cannot create offer for ${playerId} (after local stream): negotiation already completed (local: ${peerConnectionBeforeOffer.localDescription?.type}, remote: ${peerConnectionBeforeOffer.remoteDescription?.type}), skipping`, {
+              localDescriptionSdpLength: peerConnectionBeforeOffer.localDescription?.sdp?.length,
+              remoteDescriptionSdpLength: peerConnectionBeforeOffer.remoteDescription?.sdp?.length,
+            })
+            return
+          }
+          
+          console.log(`[WebRTC] ✅ All checks passed, creating offer for ${playerId} (after local stream appeared)`)
+          
+          // Создать и отправить offer
+          peerManager
+            .createOffer()
+            .then(async (offer) => {
+              console.log(`[WebRTC] ✅ Created offer for ${playerId} (after local stream appeared)`)
+              if (signalingRef.current) {
+                try {
+                  await signalingRef.current.connect((signal: WebRTCSignal) => {
+                    if (handleWebRTCSignalRef.current) {
+                      handleWebRTCSignalRef.current(signal)
+                    }
+                  })
+                  await signalingRef.current.sendOffer(playerId, offer)
+                  console.log(`[WebRTC] ✅ Offer sent to ${playerId} (after local stream appeared)`)
+                } catch (err) {
+                  console.error(`[WebRTC] ❌ Error sending offer to ${playerId}:`, err)
+                }
+              }
+            })
+            .catch((err) => {
+              console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
+              // Если ошибка связана с signaling state, пересоздать соединение
+              if (err instanceof Error && err.message.includes('signaling state')) {
+                console.log(`[WebRTC] 🔄 Retrying by recreating connection for ${playerId}`)
+                // Закрыть и пересоздать соединение (код выше)
+              }
+            })
+        }
       } else {
         console.log(`[WebRTC] ℹ️ No need to recreate offer for ${playerId}:`, {
           currentInitiator,
           hasTracks,
           shouldBeInitiator,
+          connectionState,
+          iceState,
+          needsReoffer,
         })
       }
     }

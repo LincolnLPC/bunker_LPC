@@ -137,6 +137,37 @@ export default function GamePage() {
   const [showChat, setShowChat] = useState(false)
   const [unreadMessagesCount, setUnreadMessagesCount] = useState(0)
   const lastReadMessageIdRef = useRef<string | null>(null)
+  // Состояние для отключения звука игроков
+  const [mutedPlayers, setMutedPlayers] = useState<Set<string>>(new Set())
+  const [allPlayersMuted, setAllPlayersMuted] = useState(false)
+  
+  // Функции для управления звуком
+  const togglePlayerMute = useCallback((playerId: string) => {
+    setMutedPlayers((prev) => {
+      const next = new Set(prev)
+      if (next.has(playerId)) {
+        next.delete(playerId)
+      } else {
+        next.add(playerId)
+      }
+      return next
+    })
+  }, [])
+  
+  const toggleAllPlayersMute = useCallback(() => {
+    if (allPlayersMuted) {
+      // Включить всех
+      setMutedPlayers(new Set())
+      setAllPlayersMuted(false)
+    } else {
+      // Отключить всех
+      const allPlayerIds = gameState.players
+        .filter((p) => p.id !== currentPlayerId)
+        .map((p) => p.id)
+      setMutedPlayers(new Set(allPlayerIds))
+      setAllPlayersMuted(true)
+    }
+  }, [allPlayersMuted, gameState.players, currentPlayerId])
   const [showRevealModal, setShowRevealModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showJournal, setShowJournal] = useState(false)
@@ -1103,12 +1134,16 @@ export default function GamePage() {
           currentPlayerId={currentPlayerId}
           onToggleCharacteristic={toggleCharacteristic}
           onSelectPlayer={setSelectedPlayer}
+          mutedPlayers={mutedPlayers}
+          onTogglePlayerMute={togglePlayerMute}
         />
       </main>
 
       <GameControls
         isHost={isHost}
         currentPhase={gameState.phase}
+        allPlayersMuted={allPlayersMuted}
+        onToggleAllPlayersMute={toggleAllPlayersMute}
         audioEnabled={audioEnabled}
         videoEnabled={videoEnabled}
         hasLocalStream={!!localStream}

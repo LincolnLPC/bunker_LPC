@@ -264,9 +264,84 @@ export class PeerConnectionManager {
    * Создать SDP offer
    */
   async createOffer(): Promise<RTCSessionDescriptionInit> {
+    // Детальное логирование состояния соединения перед созданием offer
+    const signalingState = this.peerConnection.signalingState
+    const localDescription = this.peerConnection.localDescription
+    const remoteDescription = this.peerConnection.remoteDescription
+    const hasLocalDescription = !!localDescription
+    const hasRemoteDescription = !!remoteDescription
+    const connectionState = this.peerConnection.connectionState
+    const iceState = this.peerConnection.iceConnectionState
+    const transceivers = this.peerConnection.getTransceivers()
+    
+    console.log(`[PeerConnection] 🔍 createOffer() called for ${this.playerId}`, {
+      signalingState,
+      connectionState,
+      iceState,
+      hasLocalDescription,
+      hasRemoteDescription,
+      localDescriptionType: localDescription?.type || 'none',
+      remoteDescriptionType: remoteDescription?.type || 'none',
+      localDescriptionSdp: localDescription?.sdp ? `${localDescription.sdp.substring(0, 100)}...` : 'none',
+      remoteDescriptionSdp: remoteDescription?.sdp ? `${remoteDescription.sdp.substring(0, 100)}...` : 'none',
+      transceiversCount: transceivers.length,
+      transceivers: transceivers.map(t => ({
+        mid: t.mid,
+        direction: t.direction,
+        currentDirection: t.currentDirection,
+        senderTrack: t.sender.track ? { kind: t.sender.track.kind, id: t.sender.track.id } : null,
+        receiverTrack: t.receiver.track ? { kind: t.receiver.track.kind, id: t.receiver.track.id } : null,
+      })),
+      stackTrace: new Error().stack?.split('\n').slice(1, 6).join('\n'),
+    })
+    
+    // Можно создавать offer только в состоянии 'stable' и только если negotiation еще не завершена
+    // Если у нас уже есть и local и remote description, negotiation завершена, и нельзя создавать новый offer
+    if (signalingState !== 'stable') {
+      const errorMsg = `Cannot create offer: connection is in '${signalingState}' state, expected 'stable'. Current localDescription: ${localDescription?.type || 'none'}, remoteDescription: ${remoteDescription?.type || 'none'}`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState,
+        connectionState,
+        iceState,
+        localDescription: localDescription ? { type: localDescription.type, sdpLength: localDescription.sdp?.length } : null,
+        remoteDescription: remoteDescription ? { type: remoteDescription.type, sdpLength: remoteDescription.sdp?.length } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    // Если уже есть local description типа 'offer', нельзя создавать новый offer
+    // (это означает, что offer уже был создан и отправлен, но answer еще не получен)
+    if (hasLocalDescription && localDescription?.type === 'offer') {
+      const errorMsg = `Cannot create offer: local description already set to 'offer'. Waiting for answer. Connection needs to be reset to create a new offer.`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState,
+        connectionState,
+        iceState,
+        localDescription: localDescription ? { type: localDescription.type, sdpLength: localDescription.sdp?.length } : null,
+        remoteDescription: remoteDescription ? { type: remoteDescription.type, sdpLength: remoteDescription.sdp?.length } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    // Если negotiation уже завершена (есть и local и remote description), нельзя создавать новый offer
+    if (hasLocalDescription && hasRemoteDescription) {
+      const errorMsg = `Cannot create offer: negotiation already completed. Local: ${localDescription?.type}, Remote: ${remoteDescription?.type}. Connection needs to be reset to create a new offer.`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState,
+        connectionState,
+        iceState,
+        localDescription: localDescription ? { type: localDescription.type, sdpLength: localDescription.sdp?.length, sdpPreview: localDescription.sdp?.substring(0, 200) } : null,
+        remoteDescription: remoteDescription ? { type: remoteDescription.type, sdpLength: remoteDescription.sdp?.length, sdpPreview: remoteDescription.sdp?.substring(0, 200) } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
     // Логировать состояние перед созданием offer
     const transceiversBefore = this.peerConnection.getTransceivers()
-    console.log(`[PeerConnection] 📊 Creating offer for ${this.playerId}, transceivers before:`, 
+    console.log(`[PeerConnection] 📊 Creating offer for ${this.playerId}, signalingState: ${signalingState}, transceivers before:`, 
       transceiversBefore.map(t => ({
         mid: t.mid,
         direction: t.direction,
@@ -276,11 +351,151 @@ export class PeerConnectionManager {
     )
     
     // Always offer to receive audio/video, even if we don't have local stream
+    console.log(`[PeerConnection] 📤 Calling RTCPeerConnection.createOffer() for ${this.playerId}`)
     const offer = await this.peerConnection.createOffer({
       offerToReceiveAudio: true,
       offerToReceiveVideo: true,
     })
-    await this.peerConnection.setLocalDescription(offer)
+    
+    console.log(`[PeerConnection] ✅ Offer created for ${this.playerId}`, {
+      offerType: offer.type,
+      sdpLength: offer.sdp?.length || 0,
+      sdpPreview: offer.sdp ? offer.sdp.substring(0, 300) : 'none',
+      mlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+    })
+    
+    // КРИТИЧНО: Проверить состояние ЕЩЕ РАЗ перед setLocalDescription
+    // (состояние могло измениться между проверкой в начале метода и здесь)
+    const finalSignalingState = this.peerConnection.signalingState
+    const finalLocalDesc = this.peerConnection.localDescription
+    const finalRemoteDesc = this.peerConnection.remoteDescription
+    const finalHasLocalDesc = !!finalLocalDesc
+    const finalHasRemoteDesc = !!finalRemoteDesc
+    
+    // Логировать состояние перед setLocalDescription
+    console.log(`[PeerConnection] 🔄 Setting local description for ${this.playerId}`, {
+      currentSignalingState: finalSignalingState,
+      currentLocalDescription: finalLocalDesc ? {
+        type: finalLocalDesc.type,
+        sdpLength: finalLocalDesc.sdp?.length,
+        mlinesCount: (finalLocalDesc.sdp?.match(/^m=/gm) || []).length,
+      } : null,
+      currentRemoteDescription: finalRemoteDesc ? {
+        type: finalRemoteDesc.type,
+        sdpLength: finalRemoteDesc.sdp?.length,
+        mlinesCount: (finalRemoteDesc.sdp?.match(/^m=/gm) || []).length,
+      } : null,
+      newOfferType: offer.type,
+      newOfferSdpLength: offer.sdp?.length,
+      newOfferMlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+    })
+    
+    // Финальная проверка перед setLocalDescription
+    if (finalSignalingState !== 'stable') {
+      const errorMsg = `Cannot set local description: connection is in '${finalSignalingState}' state, expected 'stable'`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        signalingState: finalSignalingState,
+        localDescription: finalLocalDesc ? { type: finalLocalDesc.type } : null,
+        remoteDescription: finalRemoteDesc ? { type: finalRemoteDesc.type } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    if (finalHasLocalDesc && finalLocalDesc.type === 'offer') {
+      const errorMsg = `Cannot set local description: local description already set to 'offer'. Waiting for answer.`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        localDescriptionType: finalLocalDesc.type,
+        remoteDescription: finalRemoteDesc ? { type: finalRemoteDesc.type } : null,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    if (finalHasLocalDesc && finalHasRemoteDesc) {
+      const errorMsg = `Cannot set local description: negotiation already completed. Local: ${finalLocalDesc.type}, Remote: ${finalRemoteDesc.type}`
+      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+        playerId: this.playerId,
+        localDescriptionType: finalLocalDesc.type,
+        remoteDescriptionType: finalRemoteDesc.type,
+        localMlinesCount: (finalLocalDesc.sdp?.match(/^m=/gm) || []).length,
+        remoteMlinesCount: (finalRemoteDesc.sdp?.match(/^m=/gm) || []).length,
+        newOfferMlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+      })
+      throw new Error(errorMsg)
+    }
+    
+    try {
+      await this.peerConnection.setLocalDescription(offer)
+      console.log(`[PeerConnection] ✅ Local description set successfully for ${this.playerId}`, {
+        newSignalingState: this.peerConnection.signalingState,
+      })
+    } catch (error) {
+      // Детальное логирование ошибки
+      const errorDetails: any = {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : 'Unknown',
+        errorStack: error instanceof Error ? error.stack : undefined,
+        signalingState: this.peerConnection.signalingState,
+        connectionState: this.peerConnection.connectionState,
+        iceState: this.peerConnection.iceConnectionState,
+        currentLocalDescription: this.peerConnection.localDescription ? {
+          type: this.peerConnection.localDescription.type,
+          sdpLength: this.peerConnection.localDescription.sdp?.length,
+          sdpPreview: this.peerConnection.localDescription.sdp?.substring(0, 300),
+          mlinesCount: (this.peerConnection.localDescription.sdp?.match(/^m=/gm) || []).length,
+          mlines: this.peerConnection.localDescription.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
+        } : null,
+        currentRemoteDescription: this.peerConnection.remoteDescription ? {
+          type: this.peerConnection.remoteDescription.type,
+          sdpLength: this.peerConnection.remoteDescription.sdp?.length,
+          sdpPreview: this.peerConnection.remoteDescription.sdp?.substring(0, 300),
+          mlinesCount: (this.peerConnection.remoteDescription.sdp?.match(/^m=/gm) || []).length,
+          mlines: this.peerConnection.remoteDescription.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
+        } : null,
+        newOfferSdpPreview: offer.sdp?.substring(0, 300),
+        newOfferMlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+        newOfferMlines: offer.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
+        transceivers: this.peerConnection.getTransceivers().map(t => ({
+          mid: t.mid,
+          direction: t.direction,
+          currentDirection: t.currentDirection,
+          senderTrack: t.sender.track ? { kind: t.sender.track.kind, id: t.sender.track.id } : null,
+          receiverTrack: t.receiver.track ? { kind: t.receiver.track.kind, id: t.receiver.track.id } : null,
+        })),
+      }
+      
+      // Правильно логировать ошибку
+      console.error(`[PeerConnection] ❌ Error setting local description for ${this.playerId}:`, errorDetails)
+      
+      // Дополнительное логирование для отладки
+      if (error instanceof DOMException) {
+        console.error(`[PeerConnection] ❌ DOMException details:`, {
+          name: error.name,
+          message: error.message,
+          code: error.code,
+        })
+      } else if (error instanceof Error) {
+        console.error(`[PeerConnection] ❌ Error details:`, {
+          name: error.name,
+          message: error.message,
+          stack: error.stack,
+        })
+      } else {
+        console.error(`[PeerConnection] ❌ Unknown error type:`, typeof error, error)
+      }
+      
+      // Если это ошибка о порядке m-lines, вывести детальное сравнение
+      if (error instanceof Error && error.message.includes('m-lines')) {
+        console.error(`[PeerConnection] ❌ M-lines comparison:`, {
+          currentLocalMlines: this.peerConnection.localDescription?.sdp?.match(/^m=.*$/gm) || [],
+          newOfferMlines: offer.sdp?.match(/^m=.*$/gm) || [],
+          currentRemoteMlines: this.peerConnection.remoteDescription?.sdp?.match(/^m=.*$/gm) || [],
+        })
+      }
+      
+      throw error
+    }
     
     // Логировать состояние после создания offer
     const transceiversAfter = this.peerConnection.getTransceivers()
@@ -350,13 +565,31 @@ export class PeerConnectionManager {
    * Обработать входящий SDP answer
    */
   async handleAnswer(answer: RTCSessionDescriptionInit) {
+    const signalingStateBefore = this.peerConnection.signalingState
+    const localDescBefore = this.peerConnection.localDescription
+    const remoteDescBefore = this.peerConnection.remoteDescription
+    
     console.log(`[PeerConnection] 📥 Handling answer for ${this.playerId}`, {
       answerType: answer.type,
       hasSdp: !!answer.sdp,
       sdpLength: answer.sdp?.length || 0,
+      signalingStateBefore,
+      localDescriptionBefore: localDescBefore ? { type: localDescBefore.type } : null,
+      remoteDescriptionBefore: remoteDescBefore ? { type: remoteDescBefore.type } : null,
     })
     
     await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
+    
+    const signalingStateAfter = this.peerConnection.signalingState
+    const localDescAfter = this.peerConnection.localDescription
+    const remoteDescAfter = this.peerConnection.remoteDescription
+    
+    console.log(`[PeerConnection] ✅ Answer handled for ${this.playerId}`, {
+      signalingStateAfter,
+      localDescriptionAfter: localDescAfter ? { type: localDescAfter.type } : null,
+      remoteDescriptionAfter: remoteDescAfter ? { type: remoteDescAfter.type } : null,
+      negotiationComplete: !!localDescAfter && !!remoteDescAfter,
+    })
     
     // После установки remote description, проверить, есть ли уже полученные треки
     // Это может произойти, если треки были получены до обработки answer

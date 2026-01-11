@@ -9,6 +9,8 @@ interface PlayerGridProps {
   currentPlayerId?: string
   onToggleCharacteristic?: (playerId: string, characteristicId: string) => void
   onSelectPlayer?: (player: Player) => void
+  mutedPlayers?: Set<string>
+  onTogglePlayerMute?: (playerId: string) => void
 }
 
 export function PlayerGrid({
@@ -17,6 +19,8 @@ export function PlayerGrid({
   currentPlayerId,
   onToggleCharacteristic,
   onSelectPlayer,
+  mutedPlayers,
+  onTogglePlayerMute,
 }: PlayerGridProps) {
   // Create array with empty slots
   const slots = Array.from({ length: maxPlayers }, (_, i) => {
@@ -42,6 +46,8 @@ export function PlayerGrid({
               isCurrentPlayer={player.id === currentPlayerId}
               onToggleCharacteristic={(charId) => onToggleCharacteristic?.(player.id, charId)}
               onSelect={() => onSelectPlayer?.(player)}
+              isMuted={mutedPlayers?.has(player.id) ?? false}
+              onToggleMute={() => onTogglePlayerMute?.(player.id)}
             />
           ) : (
             <EmptySlot slotNumber={index + 1} />

@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX } from "lucide-react"
 
 interface GameControlsProps {
   isHost: boolean
@@ -20,6 +20,8 @@ interface GameControlsProps {
   audioEnabled?: boolean
   videoEnabled?: boolean
   hasLocalStream?: boolean
+  allPlayersMuted?: boolean
+  onToggleAllPlayersMute?: () => void
 }
 
 export function GameControls({
@@ -39,6 +41,8 @@ export function GameControls({
   audioEnabled = true,
   videoEnabled = true,
   hasLocalStream = false,
+  allPlayersMuted = false,
+  onToggleAllPlayersMute,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -75,6 +79,18 @@ export function GameControls({
                 {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </Button>
             </>
+          )}
+          {/* Mute all players button */}
+          {onToggleAllPlayersMute && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={allPlayersMuted ? "text-destructive" : "text-foreground"}
+              onClick={onToggleAllPlayersMute}
+              title={allPlayersMuted ? "Включить звук всех игроков" : "Отключить звук всех игроков"}
+            >
+              {allPlayersMuted ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+            </Button>
           )}
         </div>
 

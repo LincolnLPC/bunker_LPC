@@ -11,6 +11,8 @@ interface PlayerCardProps {
   isCurrentPlayer?: boolean
   onToggleCharacteristic?: (characteristicId: string) => void
   onSelect?: () => void
+  isMuted?: boolean
+  onToggleMute?: () => void
 }
 
 export function PlayerCard({
@@ -19,6 +21,8 @@ export function PlayerCard({
   isCurrentPlayer = false,
   onToggleCharacteristic,
   onSelect,
+  isMuted = false,
+  onToggleMute,
 }: PlayerCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -84,7 +88,17 @@ export function PlayerCard({
 
     // Update muted state if needed
     if (videoElement) {
-      videoElement.muted = isCurrentPlayer
+      // Для текущего игрока всегда muted (чтобы не было эха)
+      // Для других игроков применяем состояние isMuted
+      videoElement.muted = isCurrentPlayer || isMuted
+      
+      // Также отключаем audio tracks, если игрок muted
+      if (currentStream && !isCurrentPlayer) {
+        const audioTracks = currentStream.getAudioTracks()
+        audioTracks.forEach((track) => {
+          track.enabled = !isMuted
+        })
+      }
     }
 
     // Cleanup function
@@ -100,6 +114,7 @@ export function PlayerCard({
     player.id,
     isCurrentPlayer,
     player.videoEnabled ?? false, // Use nullish coalescing to ensure stable value
+    isMuted, // Добавляем isMuted в зависимости
   ]) // Ensure all dependencies are always defined to maintain stable array size
 
   // Get gender, age, profession from characteristics if revealed
@@ -152,6 +167,20 @@ export function PlayerCard({
             </div>
           )}
         </div>
+        
+        {/* Mute button for other players */}
+        {!isCurrentPlayer && onToggleMute && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onToggleMute()
+            }}
+            className="absolute top-1 right-1 z-30 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
+            title={isMuted ? "Включить звук" : "Отключить звук"}
+          >
+            <MicOff className={`w-4 h-4 ${isMuted ? "text-destructive" : "text-muted-foreground"}`} />
+          </button>
+        )}
 
         {/* Player name overlay */}
         <div className="absolute top-1 left-6 right-1 z-20">
