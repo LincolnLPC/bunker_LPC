@@ -1,13 +1,16 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Shuffle, RefreshCw, X } from "lucide-react"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Shuffle, RefreshCw, X, Skull, Vote } from "lucide-react"
+import { cn } from "@/lib/utils"
+import { createClient } from "@/lib/supabase/client"
 import type { Player, Characteristic } from "@/types/game"
 import {
   SAMPLE_HEALTH_CONDITIONS,
@@ -34,6 +37,11 @@ interface CharacteristicsManagerProps {
     charId2: string,
   ) => Promise<void>
   onRandomizeCharacteristic: (playerId: string, characteristicId: string) => Promise<void>
+  roomId?: string
+  currentRound?: number
+  currentPhase?: "waiting" | "playing" | "voting" | "results" | "finished"
+  roundMode?: "manual" | "automatic"
+  onEliminatePlayer?: (playerId: string) => void
 }
 
 const CATEGORY_OPTIONS: Record<string, string[]> = {
@@ -56,11 +64,37 @@ export function CharacteristicsManager({
   onUpdateCharacteristic,
   onExchangeCharacteristics,
   onRandomizeCharacteristic,
+  roomId,
+  currentRound,
+  currentPhase,
+  roundMode = "automatic",
+  onEliminatePlayer,
 }: CharacteristicsManagerProps) {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [selectedChar, setSelectedChar] = useState<Characteristic | null>(null)
   const [newValue, setNewValue] = useState("")
   const [loading, setLoading] = useState(false)
+  const [selectedForElimination, setSelectedForElimination] = useState<string | null>(null)
+  const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
+  const [activeTab, setActiveTab] = useState("characteristics")
+
+  // Stabilize values for useEffect dependencies
+  const stableRoundMode = roundMode || "automatic"
+  const stableCurrentPhase = currentPhase || "waiting"
+
+  // Reset tab when panel opens/closes or phase changes
+  useEffect(() => {
+    if (!isOpen) {
+      setActiveTab("characteristics")
+      return
+    }
+    
+    if (stableRoundMode === "manual" && stableCurrentPhase === "voting") {
+      setActiveTab("elimination")
+    } else {
+      setActiveTab("characteristics")
+    }
+  }, [isOpen, stableRoundMode, stableCurrentPhase])
 
   const handleRandomize = async () => {
     if (!selectedPlayer || !selectedChar) return
@@ -98,15 +132,94 @@ export function CharacteristicsManager({
     return Array.from(new Set(options))
   }
 
+  // Fetch vote counts for elimination tab (fetch when panel is open and in voting phase)
+  useEffect(() => {
+    if (roomId && currentRound !== undefined && stableCurrentPhase === "voting" && stableRoundMode === "manual") {
+      const fetchVoteCounts = async () => {
+        try {
+          const supabase = createClient()
+          const { data: votes, error } = await supabase
+            .from("votes")
+            .select("target_id, vote_weight")
+            .eq("room_id", roomId)
+            .eq("round", currentRound)
+
+          if (!error && votes) {
+            const counts: Record<string, number> = {}
+            for (const vote of votes) {
+              const weight = vote.vote_weight || 1
+              counts[vote.target_id] = (counts[vote.target_id] || 0) + weight
+            }
+            setVoteCounts(counts)
+          }
+        } catch (err) {
+          console.error("Error fetching vote counts:", err)
+        }
+      }
+
+      fetchVoteCounts()
+      // Auto-refresh every 2 seconds as fallback
+      const interval = setInterval(fetchVoteCounts, 2000)
+      
+      // Subscribe to realtime updates for votes
+      const supabase = createClient()
+      const channel = supabase
+        .channel(`votes_elimination:${roomId}:${currentRound}`)
+        .on(
+          "postgres_changes",
+          {
+            event: "*",
+            schema: "public",
+            table: "votes",
+            filter: `room_id=eq.${roomId}`,
+          },
+          () => {
+            // Refresh vote counts when votes change
+            fetchVoteCounts()
+          }
+        )
+        .subscribe()
+
+      return () => {
+        clearInterval(interval)
+        if (channel) {
+          supabase.removeChannel(channel)
+        }
+      }
+    }
+  }, [roomId, currentRound, stableCurrentPhase, stableRoundMode])
+
+  const eligiblePlayers = players.filter((p) => !p.isEliminated)
+
+  const handleEliminate = async () => {
+    if (!selectedForElimination || !onEliminatePlayer) return
+    await onEliminatePlayer(selectedForElimination)
+    setSelectedForElimination(null)
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
-          <DialogTitle>Управление характеристиками</DialogTitle>
-          <DialogDescription>Редактируйте характеристики игроков (только для ведущего)</DialogDescription>
+          <DialogTitle>Управление игрой</DialogTitle>
+          <DialogDescription>Управление характеристиками и игроками (только для ведущего)</DialogDescription>
         </DialogHeader>
 
-        <div className="flex flex-1 gap-4 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
+          <TabsList className={stableRoundMode === "manual" && stableCurrentPhase === "voting" ? "grid w-full grid-cols-2" : "grid w-full grid-cols-1"}>
+            <TabsTrigger value="characteristics">Характеристики</TabsTrigger>
+            {stableRoundMode === "manual" && stableCurrentPhase === "voting" && (
+              <TabsTrigger value="elimination">
+                Изгнание игрока
+                {Object.keys(voteCounts).length > 0 && (
+                  <span className="ml-2 text-xs bg-primary/20 px-1.5 py-0.5 rounded">Голоса</span>
+                )}
+              </TabsTrigger>
+            )}
+          </TabsList>
+
+          <TabsContent value="characteristics" className="flex-1 overflow-hidden mt-4">
+            <div className="flex flex-1 gap-4 overflow-hidden">
           {/* Выбор игрока */}
           <div className="w-64 border-r border-border pr-4 overflow-y-auto">
             <Label className="mb-2 block">Выберите игрока</Label>
@@ -239,6 +352,83 @@ export function CharacteristicsManager({
             )}
           </div>
         </div>
+          </TabsContent>
+
+          {stableRoundMode === "manual" && stableCurrentPhase === "voting" && (
+            <TabsContent value="elimination" className="flex-1 overflow-hidden mt-4">
+              <div className="space-y-4">
+                <div>
+                  <h3 className="font-semibold mb-4">Выбрать игрока для изгнания</h3>
+                  
+                  {/* Vote counts display */}
+                  {Object.keys(voteCounts).length > 0 && (
+                    <div className="mb-4 p-3 rounded-lg bg-primary/10 border border-primary/30">
+                      <div className="text-sm font-semibold text-primary mb-2">Текущие голоса:</div>
+                      <div className="space-y-1">
+                        {Object.entries(voteCounts)
+                          .sort(([, a], [, b]) => b - a)
+                          .map(([playerId, count]) => {
+                            const player = players.find((p) => p.id === playerId)
+                            if (!player) return null
+                            return (
+                              <div key={playerId} className="flex justify-between text-sm">
+                                <span className="text-foreground">{player.name}:</span>
+                                <span className="font-bold text-primary">{count}</span>
+                              </div>
+                            )
+                          })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Player selection */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {eligiblePlayers.map((player) => (
+                      <button
+                        key={player.id}
+                        onClick={() => setSelectedForElimination(player.id)}
+                        className={cn(
+                          "p-3 rounded-lg border-2 text-left transition-all",
+                          selectedForElimination === player.id
+                            ? "border-destructive bg-destructive/20"
+                            : "border-border bg-card hover:border-destructive/50",
+                        )}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <div className="font-semibold">{player.name}</div>
+                            {voteCounts[player.id] !== undefined && (
+                              <div className="text-xs text-muted-foreground mt-1">
+                                {voteCounts[player.id]} голосов
+                              </div>
+                            )}
+                          </div>
+                          {selectedForElimination === player.id && (
+                            <Skull className="w-5 h-5 text-destructive" />
+                          )}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Eliminate button */}
+                  {selectedForElimination && (
+                    <Button
+                      variant="destructive"
+                      size="lg"
+                      className="w-full mt-4"
+                      onClick={handleEliminate}
+                      disabled={loading}
+                    >
+                      <Skull className="w-4 h-4 mr-2" />
+                      Изгнать {players.find((p) => p.id === selectedForElimination)?.name}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+          )}
+        </Tabs>
       </DialogContent>
     </Dialog>
   )

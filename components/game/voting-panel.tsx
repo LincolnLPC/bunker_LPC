@@ -72,7 +72,8 @@ export function VotingPanel({
     }
   }, [timeRemaining, onTimerEnd])
 
-  const eligiblePlayers = players.filter((p) => !p.isEliminated && p.id !== currentPlayerId)
+
+  const eligiblePlayers = players.filter((p) => !p.isEliminated)
 
   const handleSelect = (playerId: string) => {
     setSelectedId(playerId)
@@ -130,6 +131,8 @@ export function VotingPanel({
             {Math.floor(currentTimeRemaining / 60)}:{(currentTimeRemaining % 60).toString().padStart(2, "0")}
           </div>
         </div>
+
+
 
         {/* Player selection grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">

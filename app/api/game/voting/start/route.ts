@@ -24,7 +24,7 @@ export async function POST(request: Request) {
     // Get room and verify host
     const { data: room, error: roomError } = await supabase
       .from("game_rooms")
-      .select("id, host_id, phase")
+      .select("id, host_id, phase, settings")
       .eq("id", roomId)
       .single()
 
@@ -40,13 +40,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Game must be in playing phase" }, { status: 400 })
     }
 
-    // Update room to voting phase and restart timer
+    // Get round mode setting
+    const roundMode = (room.settings as any)?.roundMode || "automatic"
+
+    // Update room to voting phase
+    // In manual mode, don't start timer (round_started_at stays null)
+    const updateData: any = {
+      phase: "voting",
+    }
+    
+    // Only start timer in automatic mode
+    if (roundMode === "automatic") {
+      updateData.round_started_at = new Date().toISOString()
+    } else {
+      // In manual mode, clear any existing timer
+      updateData.round_started_at = null
+    }
+    
     const { error: updateError } = await supabase
       .from("game_rooms")
-      .update({ 
-        phase: "voting",
-        round_started_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq("id", roomId)
 
     if (updateError) throw updateError

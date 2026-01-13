@@ -36,8 +36,9 @@ export function GameHeader({
     finished: "Завершено",
   }
 
-  // Показывать таймер только во время игры или голосования
-  const showTimer = gameState.phase === "playing" || gameState.phase === "voting"
+  // Показывать таймер только во время игры или голосования и только в автоматическом режиме
+  const roundMode = gameState.settings?.roundMode || "automatic"
+  const showTimer = (gameState.phase === "playing" || gameState.phase === "voting") && roundMode === "automatic"
 
   return (
     <header className="flex items-center justify-between px-4 py-2 bg-[oklch(0.08_0.01_60)] border-b border-border">

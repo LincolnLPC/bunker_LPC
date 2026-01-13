@@ -28,6 +28,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const peerConnectionsRef = useRef<Map<string, PeerConnectionManager>>(new Map())
   const pendingOffersRef = useRef<Map<string, RTCSessionDescriptionInit>>(new Map())
   const isInitiatorRef = useRef<Map<string, boolean>>(new Map())
+  const isCreatingOfferRef = useRef<Map<string, boolean>>(new Map()) // Защита от одновременных вызовов createOffer
   const lastOtherPlayersIdsRef = useRef<string>("")
   const isInitialMountRef = useRef(true)
   const handleWebRTCSignalRef = useRef<((signal: WebRTCSignal) => Promise<void>) | null>(null)
@@ -886,9 +887,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           continue
         }
         
+        // Проверить, не создается ли уже offer для этого игрока
+        if (isCreatingOfferRef.current.get(playerId)) {
+          console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: offer creation already in progress`)
+          continue
+        }
+        
+        // Установить флаг создания offer
+        isCreatingOfferRef.current.set(playerId, true)
+        
         peerManager
           .createOffer()
           .then(async (offer) => {
+            // Сбросить флаг после успешного создания
+            isCreatingOfferRef.current.set(playerId, false)
             console.log(`[WebRTC] ✅ Created offer for ${playerId}, sending via signaling`, {
               offerType: offer.type,
               hasSdp: !!offer.sdp,
@@ -915,6 +927,9 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
             }
           })
           .catch((err) => {
+            // Сбросить флаг при ошибке
+            isCreatingOfferRef.current.set(playerId, false)
+            
             const errorMessage = err instanceof Error ? err.message : String(err)
             const errorName = err instanceof Error ? err.name : 'Unknown'
             
@@ -1097,9 +1112,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           // Добавить локальный поток и создать offer
           newPeerManager.addLocalStream(localStream)
           
+          // Проверить, не создается ли уже offer для этого игрока
+          if (isCreatingOfferRef.current.get(playerId)) {
+            console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId} (recreated connection): offer creation already in progress`)
+            return
+          }
+          
+          // Установить флаг создания offer
+          isCreatingOfferRef.current.set(playerId, true)
+          
           newPeerManager
             .createOffer()
             .then(async (offer) => {
+              // Сбросить флаг после успешного создания
+              isCreatingOfferRef.current.set(playerId, false)
               console.log(`[WebRTC] ✅ Created offer for ${playerId} (recreated connection)`)
               if (signalingRef.current) {
                 try {
@@ -1116,6 +1142,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               }
             })
             .catch((err) => {
+              // Сбросить флаг при ошибке
+              isCreatingOfferRef.current.set(playerId, false)
               console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
             })
         } else {
@@ -1182,10 +1210,21 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           
           console.log(`[WebRTC] ✅ All checks passed, creating offer for ${playerId} (after local stream appeared)`)
           
+          // Проверить, не создается ли уже offer для этого игрока
+          if (isCreatingOfferRef.current.get(playerId)) {
+            console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId} (after local stream): offer creation already in progress`)
+            return
+          }
+          
+          // Установить флаг создания offer
+          isCreatingOfferRef.current.set(playerId, true)
+          
           // Создать и отправить offer
           peerManager
             .createOffer()
             .then(async (offer) => {
+              // Сбросить флаг после успешного создания
+              isCreatingOfferRef.current.set(playerId, false)
               console.log(`[WebRTC] ✅ Created offer for ${playerId} (after local stream appeared)`)
               if (signalingRef.current) {
                 try {
@@ -1202,6 +1241,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               }
             })
             .catch((err) => {
+              // Сбросить флаг при ошибке
+              isCreatingOfferRef.current.set(playerId, false)
               console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
               // Если ошибка связана с signaling state, пересоздать соединение
               if (err instanceof Error && err.message.includes('signaling state')) {

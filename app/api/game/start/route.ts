@@ -43,6 +43,9 @@ export async function POST(request: Request) {
     // Get host role setting
     const hostRole = (room.settings as any)?.hostRole || "host_and_player"
     
+    // Get round mode setting
+    const roundMode = (room.settings as any)?.roundMode || "automatic"
+    
     // Count actual players (excluding host if in "host_only" mode)
     const actualPlayers = hostRole === "host_only" 
       ? room.game_players.filter((p: any) => p.user_id !== room.host_id)
@@ -59,14 +62,24 @@ export async function POST(request: Request) {
       .update({ is_ready: false })
       .eq("room_id", roomId)
 
-    // Update room to playing phase and start timer
+    // Update room to playing phase
+    // In manual mode, don't start timer (round_started_at stays null)
+    const updateData: any = {
+      phase: "playing",
+      current_round: 1,
+    }
+    
+    // Only start timer in automatic mode
+    if (roundMode === "automatic") {
+      updateData.round_started_at = new Date().toISOString()
+    } else {
+      // In manual mode, clear any existing timer
+      updateData.round_started_at = null
+    }
+    
     const { error: updateError } = await supabase
       .from("game_rooms")
-      .update({
-        phase: "playing",
-        current_round: 1,
-        round_started_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq("id", roomId)
 
     if (updateError) throw updateError

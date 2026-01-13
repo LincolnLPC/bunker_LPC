@@ -15,7 +15,7 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json()
-    const { roomId } = body
+    const { roomId, playerId } = body
 
     // Get room
     const { data: room, error: roomError } = await supabase
@@ -31,6 +31,9 @@ export async function POST(request: Request) {
     if (room.host_id !== user.id) {
       return NextResponse.json({ error: "Only host can end voting" }, { status: 403 })
     }
+
+    // Get round mode
+    const roundMode = (room.settings as any)?.roundMode || "automatic"
 
     // Count votes
     const { data: votes, error: votesError } = await supabase
@@ -48,13 +51,28 @@ export async function POST(request: Request) {
       voteCounts[vote.target_id] = (voteCounts[vote.target_id] || 0) + weight
     }
 
-    // Find player with most votes
-    let maxVotes = 0
+    // Determine eliminated player
     let eliminatedPlayerId: string | null = null
-    for (const [playerId, count] of Object.entries(voteCounts)) {
-      if (count > maxVotes) {
-        maxVotes = count
-        eliminatedPlayerId = playerId
+    
+    // In manual mode, if playerId is provided, use it
+    if (roundMode === "manual" && playerId) {
+      // Verify player exists and is not eliminated
+      const targetPlayer = room.game_players.find((p: any) => p.id === playerId)
+      if (!targetPlayer) {
+        return NextResponse.json({ error: "Player not found" }, { status: 400 })
+      }
+      if (targetPlayer.is_eliminated) {
+        return NextResponse.json({ error: "Player already eliminated" }, { status: 400 })
+      }
+      eliminatedPlayerId = playerId
+    } else {
+      // Automatic mode or manual mode without explicit selection - find player with most votes
+      let maxVotes = 0
+      for (const [playerId, count] of Object.entries(voteCounts)) {
+        if (count > maxVotes) {
+          maxVotes = count
+          eliminatedPlayerId = playerId
+        }
       }
     }
 

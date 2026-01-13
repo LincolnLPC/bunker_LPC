@@ -391,14 +391,27 @@ export class PeerConnectionManager {
     })
     
     // Финальная проверка перед setLocalDescription
+    // Если состояние изменилось, НЕ устанавливать новый offer - это вызовет ошибку m-lines
     if (finalSignalingState !== 'stable') {
-      const errorMsg = `Cannot set local description: connection is in '${finalSignalingState}' state, expected 'stable'`
+      const errorMsg = `Cannot set local description: connection is in '${finalSignalingState}' state, expected 'stable'. State changed during offer creation.`
       console.error(`[PeerConnection] ❌ ${errorMsg}`, {
         playerId: this.playerId,
         signalingState: finalSignalingState,
-        localDescription: finalLocalDesc ? { type: finalLocalDesc.type } : null,
-        remoteDescription: finalRemoteDesc ? { type: finalRemoteDesc.type } : null,
+        localDescription: finalLocalDesc ? { 
+          type: finalLocalDesc.type,
+          sdpLength: finalLocalDesc.sdp?.length,
+        } : null,
+        remoteDescription: finalRemoteDesc ? { 
+          type: finalRemoteDesc.type,
+          sdpLength: finalRemoteDesc.sdp?.length,
+        } : null,
       })
+      // Не выбрасывать ошибку, а просто вернуть существующий offer если он есть
+      // Это предотвратит ошибку m-lines
+      if (finalHasLocalDesc && finalLocalDesc.type === 'offer') {
+        console.warn(`[PeerConnection] ⚠️ Returning existing offer instead of creating new one`)
+        return finalLocalDesc as RTCSessionDescriptionInit
+      }
       throw new Error(errorMsg)
     }
     
@@ -409,7 +422,9 @@ export class PeerConnectionManager {
         localDescriptionType: finalLocalDesc.type,
         remoteDescription: finalRemoteDesc ? { type: finalRemoteDesc.type } : null,
       })
-      throw new Error(errorMsg)
+      // Вернуть существующий offer вместо создания нового
+      console.warn(`[PeerConnection] ⚠️ Returning existing offer instead of creating new one`)
+      return finalLocalDesc as RTCSessionDescriptionInit
     }
     
     if (finalHasLocalDesc && finalHasRemoteDesc) {

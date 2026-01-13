@@ -79,6 +79,11 @@ const CharacteristicsManager = dynamic(() => import("@/components/game/host-cont
   loading: () => null,
 })
 
+const VoteCountsModal = dynamic(() => import("@/components/game/vote-counts-modal").then(mod => ({ default: mod.VoteCountsModal })), {
+  ssr: false,
+  loading: () => null,
+})
+
 // Import constants separately (they're small and needed immediately)
 import { DEFAULT_BUNKER_INFO } from "@/components/game/bunker-info"
 
@@ -176,12 +181,13 @@ export default function GamePage() {
   const [showSpecialCards, setShowSpecialCards] = useState(false)
   const [showBunkerInfo, setShowBunkerInfo] = useState(false)
   const [showCharacteristicsManager, setShowCharacteristicsManager] = useState(false)
+  const [showVoteCountsModal, setShowVoteCountsModal] = useState(false)
   const [specialCards, setSpecialCards] = useState<any[]>([])
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [votedPlayerId, setVotedPlayerId] = useState<string | undefined>()
   const [voteResults, setVoteResults] = useState<{ playerId: string; votes: number }[]>([])
   const [eliminatedId, setEliminatedId] = useState<string | undefined>()
-  const [showVotingPanel, setShowVotingPanel] = useState(true)
+  const [showVotingPanel, setShowVotingPanel] = useState(false)
   const [sendingMessage, setSendingMessage] = useState(false)
   const [showDebugInfo, setShowDebugInfo] = useState(false) // Hidden by default
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false) // Hidden by default
@@ -205,15 +211,6 @@ export default function GamePage() {
     }
   }, [gameState.phase, gameState.id, gameState.players, voteResults.length, eliminatedId])
 
-  // Reset voting panel state when entering voting phase
-  useEffect(() => {
-    if (gameState.phase === "voting") {
-      setShowVotingPanel(true)
-    } else {
-      setShowVotingPanel(false)
-    }
-  }, [gameState.phase])
-
   // Check if player has already voted when entering voting phase
   useEffect(() => {
     if (gameState.phase === "voting" && gameState.id && currentPlayerId) {
@@ -231,19 +228,24 @@ export default function GamePage() {
 
           if (!error && votes && votes.length > 0) {
             setVotedPlayerId(votes[0].target_id)
+            setShowVotingPanel(false) // Don't show panel if already voted
             console.log("[Vote] Found existing vote:", votes[0].target_id)
           } else {
             setVotedPlayerId(undefined)
+            setShowVotingPanel(true) // Show panel if not voted yet
             console.log("[Vote] No existing vote found for current player")
           }
         } catch (err) {
           console.error("Error checking vote:", err)
+          // On error, show panel to allow voting
+          setShowVotingPanel(true)
         }
       }
       checkVote()
     } else if (gameState.phase !== "voting") {
-      // Clear voted player ID when not in voting phase
+      // Clear voted player ID and hide panel when not in voting phase
       setVotedPlayerId(undefined)
+      setShowVotingPanel(false)
     }
   }, [gameState.phase, gameState.id, gameState.currentRound, currentPlayerId])
 
@@ -286,8 +288,15 @@ export default function GamePage() {
   }, [gameState?.id, currentPlayerId])
 
   // Timer check - periodically check if timer expired and refresh state
+  // Skip timer check in manual mode
   useEffect(() => {
     if (!gameState.id || (gameState.phase !== "playing" && gameState.phase !== "voting")) {
+      return
+    }
+
+    // Don't check timer in manual mode
+    const roundMode = gameState.settings?.roundMode || "automatic"
+    if (roundMode === "manual") {
       return
     }
 
@@ -693,14 +702,22 @@ export default function GamePage() {
   }, [votedPlayerId, castVote])
 
   // Handle voting phase end
-  const handleEndVoting = useCallback(async () => {
+  const handleEndVoting = useCallback(async (playerId?: string) => {
     if (!gameState.id) return
 
     try {
+      const roundMode = gameState.settings?.roundMode || "automatic"
+      const body: any = { roomId: gameState.id }
+      
+      // In manual mode, if playerId is provided, use it
+      if (roundMode === "manual" && playerId) {
+        body.playerId = playerId
+      }
+
       const response = await fetch("/api/game/eliminate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomId: gameState.id }),
+        body: JSON.stringify(body),
       })
 
       if (!response.ok) {
@@ -717,7 +734,7 @@ export default function GamePage() {
     } catch (err) {
       console.error("Error ending voting:", err)
     }
-  }, [gameState.id, refresh])
+  }, [gameState.id, gameState.settings?.roundMode, refresh])
 
   // Handle continue after results
   const handleContinueAfterResults = useCallback(() => {
@@ -726,6 +743,46 @@ export default function GamePage() {
     setVotedPlayerId(undefined)
     nextRound()
   }, [nextRound])
+
+  // Handle next round - in manual mode, this also ends voting and shows results
+  const handleNextRound = useCallback(async () => {
+    if (!gameState.id) return
+
+    const roundMode = gameState.settings?.roundMode || "automatic"
+    
+    // In manual mode from voting phase, use nextRound API which will end voting and go to results
+    if (roundMode === "manual" && gameState.phase === "voting") {
+      try {
+        const response = await fetch("/api/game/round/next", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId: gameState.id }),
+        })
+
+        if (!response.ok) {
+          const data = await response.json()
+          throw new Error(data.error || "Failed to advance round")
+        }
+
+        const data = await response.json()
+        
+        // If API returned results (manual mode from voting), set them
+        if (data.results && data.eliminatedPlayerId) {
+          setVoteResults(data.results || [])
+          setEliminatedId(data.eliminatedPlayerId)
+        }
+        
+        // Refresh game state
+        refresh()
+      } catch (err) {
+        console.error("Error advancing round:", err)
+      }
+      return
+    }
+    
+    // Otherwise, proceed to next round normally
+    nextRound()
+  }, [gameState.id, gameState.phase, gameState.settings?.roundMode, refresh, nextRound])
 
   // Handle send chat message
   const handleSendMessage = useCallback(
@@ -1071,12 +1128,14 @@ export default function GamePage() {
           <span className="text-sm text-muted-foreground">Обновление...</span>
         </div>
       )}
-      {/* Connection Status */}
-      <ConnectionStatus
-        isConnected={connectionState === "connected"}
-        isReconnecting={connectionState === "reconnecting"}
-        onRetry={reconnect}
-      />
+      {/* Connection Status - Hide for eliminated players */}
+      {!currentPlayer?.isEliminated && (
+        <ConnectionStatus
+          isConnected={connectionState === "connected"}
+          isReconnecting={connectionState === "reconnecting"}
+          onRetry={reconnect}
+        />
+      )}
       <OnlineStatus />
 
       {/* Media error banner */}
@@ -1176,11 +1235,15 @@ export default function GamePage() {
           }
         }}
         onStartVoting={startVoting}
-        onNextRound={nextRound}
+        onNextRound={handleNextRound}
         onEndVoting={handleEndVoting}
         onOpenSpecialCards={() => setShowSpecialCards(true)}
         onOpenBunkerInfo={() => setShowBunkerInfo(true)}
         onOpenCharacteristicsManager={() => setShowCharacteristicsManager(true)}
+        roundMode={gameState.settings?.roundMode || "automatic"}
+        onOpenVoteCounts={
+          gameState.phase === "voting" ? () => setShowVoteCountsModal(true) : undefined
+        }
       />
 
       {/* Voting Panel */}
@@ -1198,7 +1261,7 @@ export default function GamePage() {
             const elapsed = Math.floor((now - startedAt) / 1000)
             return Math.max(0, gameState.roundTimerSeconds - elapsed)
           })()}
-          onClose={isHost ? handleEndVoting : () => setShowVotingPanel(false)}
+          onClose={isHost && gameState.settings?.roundMode === "automatic" ? () => handleEndVoting() : () => setShowVotingPanel(false)}
           isHost={isHost}
           onTimerEnd={() => setShowVotingPanel(false)}
         />
@@ -1335,6 +1398,31 @@ export default function GamePage() {
           onUpdateCharacteristic={updateCharacteristic}
           onExchangeCharacteristics={exchangeCharacteristics}
           onRandomizeCharacteristic={randomizeCharacteristic}
+          roomId={gameState.id}
+          currentRound={gameState.currentRound}
+          currentPhase={gameState.phase}
+          roundMode={gameState.settings?.roundMode || "automatic"}
+          onEliminatePlayer={(playerId) => handleEndVoting(playerId)}
+        />
+      )}
+
+      {/* Vote Counts Modal */}
+      {gameState.phase === "voting" && (
+        <VoteCountsModal
+          isOpen={showVoteCountsModal}
+          onClose={() => setShowVoteCountsModal(false)}
+          players={playersWithStream}
+          roomId={gameState.id}
+          currentRound={gameState.currentRound}
+          currentPlayerId={currentPlayerId}
+          onVote={async (targetId: string) => {
+            if (castVote) {
+              await castVote(targetId)
+              setVotedPlayerId(targetId)
+              setShowVotingPanel(false)
+            }
+          }}
+          votedPlayerId={votedPlayerId}
         />
       )}
     </div>

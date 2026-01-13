@@ -168,14 +168,14 @@ export function PlayerCard({
           )}
         </div>
         
-        {/* Mute button for other players */}
+        {/* Mute button for other players - show even for eliminated players */}
         {!isCurrentPlayer && onToggleMute && (
           <button
             onClick={(e) => {
               e.stopPropagation()
               onToggleMute()
             }}
-            className="absolute top-1 right-1 z-30 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
+            className="absolute top-1 right-1 z-40 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
             title={isMuted ? "Включить звук" : "Отключить звук"}
           >
             <MicOff className={`w-4 h-4 ${isMuted ? "text-destructive" : "text-muted-foreground"}`} />
@@ -281,9 +281,9 @@ export function PlayerCard({
         </button>
       )}
 
-      {/* Eliminated overlay */}
+      {/* Eliminated overlay - lower z-index so mute button is above */}
       {player.isEliminated && (
-        <div className="absolute inset-0 bg-[oklch(0.55_0.22_25/0.3)] flex items-center justify-center">
+        <div className="absolute inset-0 bg-[oklch(0.55_0.22_25/0.3)] flex items-center justify-center z-30 pointer-events-none">
           <span className="text-[oklch(0.55_0.22_25)] font-bold text-lg rotate-[-15deg]">ВЫБЫЛ</span>
         </div>
       )}

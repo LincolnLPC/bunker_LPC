@@ -25,7 +25,7 @@ export async function POST(request: Request) {
     // Get room and verify host
     const { data: room, error: roomError } = await supabase
       .from("game_rooms")
-      .select("id, host_id, phase, current_round")
+      .select("id, host_id, phase, current_round, settings")
       .eq("id", roomId)
       .single()
 
@@ -36,9 +36,83 @@ export async function POST(request: Request) {
     if (room.host_id !== user.id) {
       return NextResponse.json({ error: "Only host can advance round" }, { status: 403 })
     }
-
-    if (room.phase !== "results") {
+    
+    // Get round mode setting
+    const roundMode = (room.settings as any)?.roundMode || "automatic"
+    
+    // In automatic mode, must be in results phase
+    // In manual mode, can advance from voting or results phase
+    if (roundMode === "automatic" && room.phase !== "results") {
       return NextResponse.json({ error: "Must be in results phase to advance" }, { status: 400 })
+    }
+    
+    if (roundMode === "manual" && room.phase !== "voting" && room.phase !== "results") {
+      return NextResponse.json({ error: "Must be in voting or results phase to advance" }, { status: 400 })
+    }
+    
+    // If in voting phase in manual mode, first end voting (eliminate player with most votes) and go to results
+    if (roundMode === "manual" && room.phase === "voting") {
+      // Count votes
+      const { data: votes, error: votesError } = await supabase
+        .from("votes")
+        .select("*")
+        .eq("room_id", roomId)
+        .eq("round", room.current_round)
+
+      if (votesError) throw votesError
+
+      // Tally votes (accounting for vote weights)
+      const voteCounts: Record<string, number> = {}
+      for (const vote of votes || []) {
+        const weight = vote.vote_weight || 1
+        voteCounts[vote.target_id] = (voteCounts[vote.target_id] || 0) + weight
+      }
+
+      // Find player with most votes
+      let maxVotes = 0
+      let eliminatedPlayerId: string | null = null
+      for (const [playerId, count] of Object.entries(voteCounts)) {
+        if (count > maxVotes) {
+          maxVotes = count
+          eliminatedPlayerId = playerId
+        }
+      }
+
+      // Eliminate player if there are votes
+      if (eliminatedPlayerId) {
+        const { error: eliminateError } = await supabase
+          .from("game_players")
+          .update({ is_eliminated: true })
+          .eq("id", eliminatedPlayerId)
+
+        if (eliminateError) throw eliminateError
+
+        // Reveal all characteristics of eliminated player
+        const { error: revealError } = await supabase
+          .from("player_characteristics")
+          .update({ is_revealed: true, reveal_round: room.current_round })
+          .eq("player_id", eliminatedPlayerId)
+
+        if (revealError) throw revealError
+      }
+
+      // Update room to results phase (to show results before next round)
+      const { error: resultsError } = await supabase
+        .from("game_rooms")
+        .update({ phase: "results" })
+        .eq("id", roomId)
+
+      if (resultsError) throw resultsError
+
+      return NextResponse.json({
+        success: true,
+        phase: "results",
+        eliminatedPlayerId,
+        results: Object.entries(voteCounts).map(([playerId, count]) => ({
+          playerId,
+          votes: count,
+        })),
+      })
     }
 
     // Count remaining players
@@ -52,8 +126,9 @@ export async function POST(request: Request) {
 
     const remainingPlayers = players?.length || 0
 
-    // Check if game should end
-    if (remainingPlayers <= 2) {
+    // Check if game should end - only in automatic mode
+    // In manual mode, host decides when to end the game
+    if (roundMode === "automatic" && remainingPlayers <= 2) {
       // Check if game is already finished (to avoid double stats update)
       if (room.phase === "finished") {
         return NextResponse.json({ 
@@ -110,14 +185,24 @@ export async function POST(request: Request) {
       })
     }
 
-    // Advance to next round and restart timer
+    // Advance to next round
+    // In manual mode, don't start timer (round_started_at stays null)
+    const updateData: any = {
+      phase: "playing",
+      current_round: (room.current_round || 0) + 1,
+    }
+    
+    // Only start timer in automatic mode
+    if (roundMode === "automatic") {
+      updateData.round_started_at = new Date().toISOString()
+    } else {
+      // In manual mode, clear any existing timer
+      updateData.round_started_at = null
+    }
+    
     const { error: updateError } = await supabase
       .from("game_rooms")
-      .update({
-        phase: "playing",
-        current_round: (room.current_round || 0) + 1,
-        round_started_at: new Date().toISOString(),
-      })
+      .update(updateData)
       .eq("id", roomId)
 
     if (updateError) throw updateError

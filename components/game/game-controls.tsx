@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3 } from "lucide-react"
 
 interface GameControlsProps {
   isHost: boolean
@@ -22,6 +22,8 @@ interface GameControlsProps {
   hasLocalStream?: boolean
   allPlayersMuted?: boolean
   onToggleAllPlayersMute?: () => void
+  roundMode?: "manual" | "automatic"
+  onOpenVoteCounts?: () => void
 }
 
 export function GameControls({
@@ -43,6 +45,8 @@ export function GameControls({
   hasLocalStream = false,
   allPlayersMuted = false,
   onToggleAllPlayersMute,
+  roundMode = "automatic",
+  onOpenVoteCounts,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -107,14 +111,6 @@ export function GameControls({
                 Мои характеристики
               </Button>
             )}
-            <Button
-              variant="outline"
-              className="border-[oklch(0.7_0.2_50)] text-[oklch(0.7_0.2_50)] hover:bg-[oklch(0.7_0.2_50/0.1)] bg-transparent"
-              onClick={onRevealCharacteristic}
-            >
-              <Hand className="w-4 h-4 mr-2" />
-              Раскрыть карту
-            </Button>
 
             <Button
               variant="outline"
@@ -160,7 +156,27 @@ export function GameControls({
         {currentPhase === "voting" && (
           <>
             <div className="text-sm text-[oklch(0.7_0.2_50)] animate-pulse">Идёт голосование...</div>
-            {isHost && (
+            {onOpenVoteCounts && (
+              <Button
+                variant="outline"
+                className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
+                onClick={onOpenVoteCounts}
+              >
+                <BarChart3 className="w-4 h-4 mr-2" />
+                Голоса
+              </Button>
+            )}
+            {isHost && onOpenCharacteristicsManager && (
+              <Button
+                variant="outline"
+                className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
+                onClick={onOpenCharacteristicsManager}
+              >
+                <Settings2 className="w-4 h-4 mr-2" />
+                Управление
+              </Button>
+            )}
+            {isHost && roundMode === "automatic" && (
               <Button
                 variant="outline"
                 className="border-[oklch(0.7_0.2_50)] text-[oklch(0.7_0.2_50)] hover:bg-[oklch(0.7_0.2_50/0.1)] bg-transparent"
@@ -168,6 +184,16 @@ export function GameControls({
               >
                 <CheckCircle className="w-4 h-4 mr-2" />
                 Завершить голосование
+              </Button>
+            )}
+            {isHost && roundMode === "manual" && onNextRound && (
+              <Button
+                variant="default"
+                className="bg-[oklch(0.7_0.2_50)] text-[oklch(0.1_0_0)] hover:bg-[oklch(0.75_0.22_50)]"
+                onClick={onNextRound}
+              >
+                <SkipForward className="w-4 h-4 mr-2" />
+                Следующий раунд
               </Button>
             )}
           </>

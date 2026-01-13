@@ -308,8 +308,10 @@ export async function POST(request: Request) {
       })
     }
 
-    // Helper function to get unique random value from list (excluding used values)
-    const getUniqueRandomValue = (category: "profession" | "hobby" | "baggage", options: string[]): string => {
+    // Helper function to get unique value from list (excluding used values)
+    // For profession: assign by slot order (sequential)
+    // For hobby and baggage: assign randomly but uniquely
+    const getUniqueValue = (category: "profession" | "hobby" | "baggage", options: string[], slot: number): string => {
       const used = usedValues[category]
       const available = options.filter((opt) => !used.has(opt))
       
@@ -319,7 +321,17 @@ export async function POST(request: Request) {
         return getRandomItem(options)
       }
       
-      const selected = getRandomItem(available)
+      let selected: string
+      if (category === "profession") {
+        // Assign professions sequentially by slot number
+        // Use slot - 1 as index, wrapping around if needed
+        const index = (slot - 1) % available.length
+        selected = available[index]
+      } else {
+        // For hobby and baggage, still use random selection but ensure uniqueness
+        selected = getRandomItem(available)
+      }
+      
       used.add(selected) // Mark as used for next player
       return selected
     }
@@ -352,11 +364,12 @@ export async function POST(request: Request) {
     const age = getRandomAge()
     
     // Use custom settings for profession if available, and ensure uniqueness
+    // Assign professions sequentially by slot number
     const professionOptions = characteristicsSettings["profession"]?.customList && characteristicsSettings["profession"]?.customList.length > 0
       ? characteristicsSettings["profession"].customList
       : SAMPLE_PROFESSIONS
     const profession = characteristicsSettings["profession"]?.enabled !== false
-      ? getUniqueRandomValue("profession", professionOptions)
+      ? getUniqueValue("profession", professionOptions, nextSlot)
       : getRandomItem(SAMPLE_PROFESSIONS)
 
     console.log("[Join] Generated random attributes:", { gender, genderModifier, age, profession })
@@ -410,7 +423,7 @@ export async function POST(request: Request) {
 
       // For profession, hobby, baggage - ensure uniqueness
       if (category === "profession" || category === "hobby" || category === "baggage") {
-        return getUniqueRandomValue(category as "profession" | "hobby" | "baggage", options as string[])
+        return getUniqueValue(category as "profession" | "hobby" | "baggage", options as string[], nextSlot)
       }
       
       return getRandomItem(options as string[])
