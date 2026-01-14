@@ -117,7 +117,7 @@ export default function GamePage() {
   } = useGameState(roomCode)
 
   // Загрузить настройки медиа из профиля
-  const { settings: mediaSettings } = useMediaSettings()
+  const { settings: mediaSettings, loading: mediaSettingsLoading } = useMediaSettings()
 
   const {
     localStream,
@@ -394,10 +394,30 @@ export default function GamePage() {
   const [mediaInitialized, setMediaInitialized] = useState(false)
   
   useEffect(() => {
+    // Логируем состояние для диагностики
+    console.log("[Media] Checking conditions for media initialization:", {
+      loading,
+      mediaSettingsLoading,
+      roomId: gameState.id,
+      currentPlayerId,
+      mediaInitialized,
+      autoRequestCamera: mediaSettings.autoRequestCamera,
+      autoRequestMicrophone: mediaSettings.autoRequestMicrophone,
+      allConditions: {
+        notLoading: !loading,
+        settingsLoaded: !mediaSettingsLoading,
+        hasRoomId: !!gameState.id,
+        hasPlayerId: !!currentPlayerId,
+        notInitialized: !mediaInitialized,
+        shouldRequest: (mediaSettings.autoRequestCamera || mediaSettings.autoRequestMicrophone),
+      }
+    })
+    
     // Запрашиваем доступ только когда игра загружена и комната существует, и еще не инициализировали
     // Также проверяем настройки пользователя - должен ли автоматически запрашивать доступ
     if (
       !loading &&
+      !mediaSettingsLoading &&
       gameState.id &&
       currentPlayerId &&
       !mediaInitialized &&
@@ -405,6 +425,7 @@ export default function GamePage() {
     ) {
       console.log("[Media] Conditions met - requesting camera/microphone access...", {
         loading,
+        mediaSettingsLoading,
         roomId: gameState.id,
         currentPlayerId,
         mediaInitialized,
@@ -449,24 +470,63 @@ export default function GamePage() {
             
             setMediaInitialized(true)
           } else {
-            // Stream is null (likely permission denied) - this is OK, user can enable manually
-            console.log("[Media] Media initialization returned null (likely permission denied) - user can enable manually")
+            // Stream is null (browser doesn't support or permission denied) - this is OK
+            console.log("[Media] Media unavailable (browser doesn't support or permission denied) - game will continue without video/audio")
             // Set initialized to true so we don't keep retrying automatically
             setMediaInitialized(true)
           }
         })
         .catch((err) => {
+          // Детальное логирование ошибки - логируем саму ошибку и её свойства
+          console.error("[Media] ❌ Caught error in initializeMedia:", err)
+          console.error("[Media] Error type:", typeof err)
+          console.error("[Media] Error constructor:", err?.constructor?.name)
+          console.error("[Media] Error keys:", err ? Object.keys(err) : [])
+          
+          // Попробуем извлечь информацию об ошибке
+          let errorName = "Unknown"
+          let errorMessage = String(err)
+          let errorCode: number | undefined = undefined
+          
+          if (err) {
+            if (err instanceof DOMException) {
+              errorName = err.name
+              errorMessage = err.message
+              errorCode = err.code
+            } else if (err instanceof Error) {
+              errorName = err.name
+              errorMessage = err.message
+            } else if (typeof err === 'object') {
+              // Попробуем извлечь свойства напрямую
+              errorName = (err as any).name || (err as any).errorName || "Unknown"
+              errorMessage = (err as any).message || (err as any).errorMessage || String(err)
+              errorCode = (err as any).code || (err as any).errorCode
+            }
+          }
+          
+          const errorDetails = {
+            errorName,
+            errorMessage,
+            errorCode,
+            errorObject: err,
+            settings: mediaSettings,
+            loading,
+            roomId: gameState.id,
+            currentPlayerId,
+          }
+          
           // Check if it's a permission error
           const isPermissionError = 
-            (err instanceof DOMException && err.name === "NotAllowedError") ||
-            (err instanceof Error && (err.name === "NotAllowedError" || err.message.includes("Permission denied")))
+            errorName === "NotAllowedError" ||
+            errorMessage.includes("Permission denied") ||
+            errorMessage.includes("permission")
           
           if (isPermissionError) {
-            console.log("[Media] Permission denied - user can enable media manually via button")
+            console.log("[Media] ⚠️ Permission denied - user can enable media manually via button", errorDetails)
             // Set initialized to true so we don't keep retrying
             setMediaInitialized(true)
           } else {
-            console.warn("[Media] Failed to initialize media (non-permission error):", err)
+            console.error("[Media] ❌ Failed to initialize media (non-permission error):", errorDetails)
             // Не устанавливаем mediaInitialized в true при других ошибках, чтобы можно было повторить
           }
         })
@@ -481,8 +541,21 @@ export default function GamePage() {
       // Если пользователь отключил автозапрос, все равно устанавливаем флаг
       console.log("[Media] Auto-request disabled by user settings")
       setMediaInitialized(true)
+    } else {
+      // Логируем, почему условие не выполнилось
+      const reasons = []
+      if (loading) reasons.push("gameState still loading")
+      if (mediaSettingsLoading) reasons.push("mediaSettings still loading")
+      if (!gameState.id) reasons.push("no roomId")
+      if (!currentPlayerId) reasons.push("no currentPlayerId")
+      if (mediaInitialized) reasons.push("already initialized")
+      if (!mediaSettings.autoRequestCamera && !mediaSettings.autoRequestMicrophone) reasons.push("auto-request disabled")
+      
+      if (reasons.length > 0) {
+        console.log("[Media] Conditions NOT met - waiting:", reasons.join(", "))
+      }
     }
-  }, [loading, gameState.id, currentPlayerId, initializeMedia, mediaInitialized, mediaSettings])
+  }, [loading, mediaSettingsLoading, gameState.id, currentPlayerId, initializeMedia, mediaInitialized, mediaSettings])
 
   // Update players with their streams (local and remote)
   // Log current state for debugging
@@ -1209,22 +1282,92 @@ export default function GamePage() {
         hasLocalStream={!!localStream}
         onToggleMic={toggleAudio}
         onToggleVideo={toggleVideo}
-        onRequestMedia={() => {
-          console.log("[Media] Manual media request triggered")
+        onRequestMedia={async () => {
+          console.log("[Media] 🔘 Manual media request triggered (user clicked button)")
+          console.log("[Media] Current state:", {
+            hasLocalStream: !!localStream,
+            mediaInitialized,
+            mediaError,
+            audioEnabled,
+            videoEnabled,
+            timestamp: new Date().toISOString(),
+          })
+          
+          // Проверка перед запросом
+          if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            console.error("[Media] ❌ Browser doesn't support getUserMedia")
+            alert("Ваш браузер не поддерживает доступ к камере/микрофону. Пожалуйста, используйте современный браузер (Chrome, Firefox, Edge, Safari).")
+            return
+          }
+          
+          // Проверка разрешений (если поддерживается)
+          try {
+            if (navigator.permissions && navigator.permissions.query) {
+              const cameraPermission = await navigator.permissions.query({ name: 'camera' as PermissionName })
+              const microphonePermission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+              
+              console.log("[Media] Permission status before request:", {
+                camera: cameraPermission.state,
+                microphone: microphonePermission.state,
+              })
+              
+              if (cameraPermission.state === 'denied' || microphonePermission.state === 'denied') {
+                const blockedDevices = []
+                if (cameraPermission.state === 'denied') blockedDevices.push('камера')
+                if (microphonePermission.state === 'denied') blockedDevices.push('микрофон')
+                
+                alert(`Доступ к ${blockedDevices.join(' и ')} заблокирован в настройках браузера.\n\nЧтобы исправить:\n1. Нажмите на значок замка 🔒 в адресной строке\n2. Найдите настройки камеры/микрофона\n3. Измените с "Заблокировано" на "Разрешить"\n4. Обновите страницу`)
+                return
+              }
+            }
+          } catch (permError) {
+            console.log("[Media] Permissions API check failed (this is OK):", permError)
+          }
+          
           setMediaInitialized(false) // Сбрасываем флаг, чтобы можно было повторить
+          
+          console.log("[Media] 🚀 Calling initializeMedia with video:true, audio:true")
+          console.log("[Media] This should trigger browser permission dialog...")
+          
           initializeMedia({
             video: true,
             audio: true,
           })
             .then((stream) => {
+              console.log("[Media] ✅ Manual media request - initializeMedia returned:", {
+                hasStream: !!stream,
+                streamId: stream?.id,
+                videoTracks: stream?.getVideoTracks().length || 0,
+                audioTracks: stream?.getAudioTracks().length || 0,
+              })
+              
               if (stream) {
-                console.log("[Media] Manual media request successful, stream:", stream.id)
-                console.log("[Media] Successfully initialized media stream (manual)")
+                console.log("[Media] ✅ Manual media request successful!", {
+                  streamId: stream.id,
+                  videoTracks: stream.getVideoTracks().map(t => ({
+                    id: t.id,
+                    label: t.label,
+                    enabled: t.enabled,
+                    readyState: t.readyState,
+                  })),
+                  audioTracks: stream.getAudioTracks().map(t => ({
+                    id: t.id,
+                    label: t.label,
+                    enabled: t.enabled,
+                    readyState: t.readyState,
+                  })),
+                })
                 setMediaInitialized(true)
+              } else {
+                console.warn("[Media] ⚠️ Manual media request - stream is null (permission denied or error)")
               }
             })
             .catch((err) => {
-              console.error("[Media] Failed to initialize media:", err)
+              console.error("[Media] ❌ Manual media request - initializeMedia failed:", {
+                error: err,
+                errorName: err instanceof Error ? err.name : typeof err,
+                errorMessage: err instanceof Error ? err.message : String(err),
+              })
               // Оставляем возможность повторить
             })
         }}

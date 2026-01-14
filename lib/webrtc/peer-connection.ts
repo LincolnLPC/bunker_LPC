@@ -661,7 +661,37 @@ export class PeerConnectionManager {
       return // Уже установлен, пропускаем
     }
     
-    await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
+    try {
+      await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
+    } catch (setRemoteDescError) {
+      // Детальное логирование ошибки setRemoteDescription
+      let errorDetails: any = {
+        playerId: this.playerId,
+        signalingStateBefore,
+        localDescriptionBefore: localDescBefore ? { type: localDescBefore.type } : null,
+        remoteDescriptionBefore: remoteDescBefore ? { type: remoteDescBefore.type } : null,
+        answerType: answer.type,
+        hasAnswerSdp: !!answer.sdp,
+      }
+      
+      if (setRemoteDescError instanceof Error) {
+        errorDetails.errorMessage = setRemoteDescError.message
+        errorDetails.errorName = setRemoteDescError.name
+        errorDetails.errorStack = setRemoteDescError.stack
+        if ('code' in setRemoteDescError) {
+          errorDetails.errorCode = (setRemoteDescError as any).code
+        }
+      } else {
+        errorDetails.error = String(setRemoteDescError)
+        errorDetails.errorType = typeof setRemoteDescError
+      }
+      
+      console.error(`[PeerConnection] ❌ Error setting remote description (answer):`, errorDetails)
+      console.error(`[PeerConnection] ❌ Raw error object:`, setRemoteDescError)
+      
+      // Пробрасываем ошибку дальше
+      throw setRemoteDescError
+    }
     
     const signalingStateAfter = this.peerConnection.signalingState
     const localDescAfter = this.peerConnection.localDescription

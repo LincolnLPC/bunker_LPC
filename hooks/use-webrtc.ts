@@ -45,21 +45,74 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
   // Initialize local media stream
   const initializeMedia = useCallback(async (options?: { video?: boolean; audio?: boolean }) => {
+    // Определяем переменные вне try-catch, чтобы они были доступны в catch
+    const requestVideo = options?.video !== false
+    const requestAudio = options?.audio !== false
+    let videoConstraints: MediaTrackConstraints | boolean = false
+    let audioConstraints: MediaTrackConstraints | boolean = false
+    
     try {
       // Check if browser supports getUserMedia
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const errorMsg = "Ваш браузер не поддерживает доступ к камере/микрофону"
-        setError(errorMsg)
-        console.error("[WebRTC] Browser doesn't support getUserMedia")
-        throw new Error(errorMsg)
+        // Не устанавливаем ошибку в состояние - это не критично, игра может работать без видео
+        console.warn("[WebRTC] Browser doesn't support getUserMedia - video/audio will be unavailable")
+        // Возвращаем null вместо выброса ошибки, чтобы приложение продолжало работать
+        return null
       }
 
-      // Используем переданные опции или значения по умолчанию
-      const requestVideo = options?.video !== false
-      const requestAudio = options?.audio !== false
+      // Проверка статуса разрешений (если поддерживается)
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          console.log("[WebRTC] Checking permission status...")
+          const cameraPermission = await navigator.permissions.query({ name: 'camera' as PermissionName })
+          const microphonePermission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
+          
+          console.log("[WebRTC] Permission status:", {
+            camera: cameraPermission.state,
+            microphone: microphonePermission.state,
+            cameraBlocked: cameraPermission.state === 'denied',
+            microphoneBlocked: microphonePermission.state === 'denied',
+          })
+          
+          if (cameraPermission.state === 'denied' || microphonePermission.state === 'denied') {
+            console.warn("[WebRTC] ⚠️ Permissions are BLOCKED (denied). User needs to reset permissions in browser settings.")
+            const message = "Доступ к камере/микрофону заблокирован в настройках браузера. Пожалуйста, разрешите доступ в настройках браузера и обновите страницу."
+            setError(message)
+            return null
+          }
+        }
+      } catch (permError) {
+        // Permissions API может не поддерживаться или не работать - это нормально
+        console.log("[WebRTC] Permissions API not available or failed (this is OK):", permError)
+      }
+
+      // Проверка доступных устройств (для диагностики)
+      console.log("[WebRTC] Checking available devices...")
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices()
+        const videoDevices = devices.filter(d => d.kind === 'videoinput')
+        const audioDevices = devices.filter(d => d.kind === 'audioinput')
+        console.log("[WebRTC] Available devices:", {
+          videoDevices: videoDevices.length,
+          audioDevices: audioDevices.length,
+          videoDeviceLabels: videoDevices.map(d => ({ id: d.deviceId, label: d.label || 'No label (permission not granted)' })),
+          audioDeviceLabels: audioDevices.map(d => ({ id: d.deviceId, label: d.label || 'No label (permission not granted)' })),
+        })
+        
+        // Если устройства без label, это означает, что разрешение еще не предоставлено
+        if (videoDevices.length > 0 && videoDevices.every(d => !d.label)) {
+          console.warn("[WebRTC] Video devices found but no labels - permission may not be granted")
+        }
+        if (audioDevices.length > 0 && audioDevices.every(d => !d.label)) {
+          console.warn("[WebRTC] Audio devices found but no labels - permission may not be granted")
+        }
+      } catch (enumError) {
+        console.warn("[WebRTC] Error enumerating devices (this is OK if permission not granted yet):", enumError)
+      }
 
       // Подготовить constraints для видео
-      const videoConstraints: MediaTrackConstraints | boolean = requestVideo
+      videoConstraints = requestVideo
         ? {
             width: { ideal: 640 },
             height: { ideal: 480 },
@@ -69,7 +122,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         : false
 
       // Подготовить constraints для аудио
-      const audioConstraints: MediaTrackConstraints | boolean = requestAudio
+      audioConstraints = requestAudio
         ? {
             echoCancellation: true,
             noiseSuppression: true,
@@ -77,18 +130,54 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           }
         : false
 
-      console.log("[WebRTC] Requesting camera and microphone access...", {
+      console.log("[WebRTC] 📹 Requesting camera and microphone access...", {
         video: requestVideo,
         audio: requestAudio,
+        videoConstraints: typeof videoConstraints === 'object' ? JSON.stringify(videoConstraints) : videoConstraints,
+        audioConstraints: typeof audioConstraints === 'object' ? JSON.stringify(audioConstraints) : audioConstraints,
         cameraDeviceId: mediaSettings?.cameraDeviceId,
         microphoneDeviceId: mediaSettings?.microphoneDeviceId,
+        userAgent: navigator.userAgent,
+        isSecureContext: window.isSecureContext,
+        location: window.location.href,
       })
+      
+      console.log("[WebRTC] Calling getUserMedia now...")
       const stream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: audioConstraints,
       })
+      console.log("[WebRTC] ✅ getUserMedia succeeded, got stream:", stream.id)
       
-      console.log("[WebRTC] Media access granted, stream obtained:", stream.id)
+      console.log("[WebRTC] ✅ Media access granted, stream obtained:", {
+        streamId: stream.id,
+        videoTracks: stream.getVideoTracks().length,
+        audioTracks: stream.getAudioTracks().length,
+        videoTracksInfo: stream.getVideoTracks().map(t => ({
+          id: t.id,
+          label: t.label,
+          enabled: t.enabled,
+          readyState: t.readyState,
+          muted: t.muted,
+          settings: t.getSettings(),
+        })),
+        audioTracksInfo: stream.getAudioTracks().map(t => ({
+          id: t.id,
+          label: t.label,
+          enabled: t.enabled,
+          readyState: t.readyState,
+          muted: t.muted,
+          settings: t.getSettings(),
+        })),
+      })
+      
+      // Проверка, что stream не пустой
+      if (stream.getVideoTracks().length === 0 && requestVideo) {
+        console.warn("[WebRTC] ⚠️ Video was requested but stream has no video tracks!")
+      }
+      if (stream.getAudioTracks().length === 0 && requestAudio) {
+        console.warn("[WebRTC] ⚠️ Audio was requested but stream has no audio tracks!")
+      }
       setLocalStream(stream)
       setError(null)
       
@@ -112,16 +201,82 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       
       return stream
     } catch (err: unknown) {
+      // Сначала логируем саму ошибку
+      console.error("[WebRTC] ❌ Raw error caught:", err)
+      console.error("[WebRTC] Error type:", typeof err)
+      console.error("[WebRTC] Error instanceof Error:", err instanceof Error)
+      console.error("[WebRTC] Error instanceof DOMException:", err instanceof DOMException)
+      
+      // Извлекаем информацию об ошибке
+      let errorName = "Unknown"
+      let errorMessage = String(err)
+      let errorCode: number | undefined = undefined
+      let errorStack: string | undefined = undefined
+      
+      if (err instanceof DOMException) {
+        errorName = err.name
+        errorMessage = err.message
+        errorCode = err.code
+      } else if (err instanceof Error) {
+        errorName = err.name
+        errorMessage = err.message
+        errorStack = err.stack
+      } else if (err && typeof err === 'object') {
+        // Попробуем извлечь свойства напрямую
+        errorName = (err as any).name || (err as any).errorName || "Unknown"
+        errorMessage = (err as any).message || (err as any).errorMessage || String(err)
+        errorCode = (err as any).code || (err as any).errorCode
+        errorStack = (err as any).stack || (err as any).errorStack
+      }
+      
+      // Детальное логирование ошибки (упрощенный объект, чтобы избежать проблем с сериализацией)
+      const errorDetails = {
+        errorName,
+        errorMessage,
+        errorCode,
+        errorStack: errorStack ? errorStack.substring(0, 200) : undefined, // Ограничиваем длину stack trace
+        requestVideo,
+        requestAudio,
+        hasMediaSettings: !!mediaSettings,
+        cameraDeviceId: mediaSettings?.cameraDeviceId || null,
+        microphoneDeviceId: mediaSettings?.microphoneDeviceId || null,
+        // Не включаем constraints напрямую, так как они могут быть объектами, которые не сериализуются
+        hasVideoConstraints: !!videoConstraints,
+        hasAudioConstraints: !!audioConstraints,
+      }
+      
+      console.error("[WebRTC] ❌ Error initializing media - full details:", JSON.stringify(errorDetails, null, 2))
+      console.error("[WebRTC] ❌ Error initializing media - simple format:", {
+        errorName: errorName,
+        errorMessage: errorMessage,
+        errorCode: errorCode,
+        requestVideo: requestVideo,
+        requestAudio: requestAudio,
+      })
+      
       // Check if it's a permission error (NotAllowedError)
       const isPermissionError = 
-        (err instanceof DOMException && err.name === "NotAllowedError") ||
-        (err instanceof Error && (err.name === "NotAllowedError" || err.message.includes("Permission denied")))
+        errorName === "NotAllowedError" ||
+        errorMessage.includes("Permission denied") ||
+        errorMessage.includes("permission")
+      
+      console.log("[WebRTC] Permission error check:", {
+        isPermissionError,
+        errorName,
+        errorMessage,
+        errorNameMatches: errorName === "NotAllowedError",
+        errorMessageIncludes: errorMessage.includes("Permission denied") || errorMessage.includes("permission"),
+      })
       
       if (isPermissionError) {
         // Permission denied is not a critical error - user can retry manually
         const message = "Доступ к камере/микрофону запрещен. Вы можете включить их позже, нажав кнопку 'Включить камеру'."
         setError(message)
-        console.warn("[WebRTC] Permission denied - this is expected if user hasn't granted access. User can retry manually.")
+        console.warn("[WebRTC] ⚠️ Permission denied - user can enable media manually via button", {
+          errorName: errorName,
+          errorMessage: errorMessage,
+          note: "This is normal if auto-request is blocked. User should click 'Enable Camera' button.",
+        })
         return null
       }
       
@@ -131,15 +286,9 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       
       // Log as warning for recoverable errors, error for non-recoverable
       if (recoverable) {
-        console.warn("[WebRTC] Media initialization failed (recoverable):", err, { 
-          errorName: err instanceof Error ? err.name : "Unknown",
-          errorMessage: err instanceof Error ? err.message : String(err)
-        })
+        console.warn("[WebRTC] ⚠️ Media initialization failed (recoverable):", errorDetails)
       } else {
-        console.error("[WebRTC] Media initialization failed (non-recoverable):", err, { 
-          errorName: err instanceof Error ? err.name : "Unknown",
-          errorMessage: err instanceof Error ? err.message : String(err)
-        })
+        console.error("[WebRTC] ❌ Media initialization failed (non-recoverable):", errorDetails)
       }
       
       return null
@@ -502,14 +651,29 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         try {
           await peerManager.handleAnswer(signal.data as RTCSessionDescriptionInit)
         } catch (error) {
-          const errorMessage = error instanceof Error ? error.message : String(error)
-          console.error(`[WebRTC] ❌ Error handling answer from ${signal.from}:`, {
-            error: errorMessage,
-            errorName: error instanceof Error ? error.name : 'Unknown',
+          // Детальное логирование ошибки
+          let errorDetails: any = {
             signalingState: signalingStateBefore,
             localDescription: localDescBefore ? { type: localDescBefore.type } : null,
             remoteDescription: remoteDescBefore ? { type: remoteDescBefore.type } : null,
-          })
+          }
+          
+          if (error instanceof Error) {
+            errorDetails.errorMessage = error.message
+            errorDetails.errorName = error.name
+            errorDetails.errorStack = error.stack
+            if ('code' in error) {
+              errorDetails.errorCode = (error as any).code
+            }
+          } else {
+            errorDetails.error = String(error)
+            errorDetails.errorType = typeof error
+          }
+          
+          console.error(`[WebRTC] ❌ Error handling answer from ${signal.from}:`, errorDetails)
+          
+          // Также логируем саму ошибку отдельно для полной информации
+          console.error(`[WebRTC] ❌ Raw error object:`, error)
           
           // Если это ошибка о неправильном состоянии, не пересоздавать соединение
           // Это может быть нормальной ситуацией (например, дублирующий сигнал)
