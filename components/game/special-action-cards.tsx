@@ -15,7 +15,7 @@ interface SpecialCard {
   name: string
   description: string
   icon: React.ReactNode
-  type: "exchange" | "peek" | "immunity" | "reroll" | "reveal" | "steal" | "discard-health" | "double-vote" | "no-vote-against" | "reshuffle" | "revote" | "replace-profession" | "replace-health"
+  type: "exchange" | "peek" | "immunity" | "reroll" | "reveal" | "steal" | "double-vote" | "no-vote-against" | "reshuffle" | "revote" | "replace-profession" | "replace-health"
   isUsed: boolean
 }
 
@@ -68,8 +68,6 @@ export function SpecialActionCards({
         return <Target className="w-6 h-6" />
       case "steal":
         return <Sparkles className="w-6 h-6" />
-      case "discard-health":
-        return <Target className="w-6 h-6" />
       case "double-vote":
         return <Sparkles className="w-6 h-6" />
       case "no-vote-against":
@@ -91,7 +89,6 @@ export function SpecialActionCards({
     selectedCard?.type === "peek" ||
     selectedCard?.type === "reveal" ||
     selectedCard?.type === "steal" ||
-    selectedCard?.type === "discard-health" ||
     selectedCard?.type === "no-vote-against" ||
     selectedCard?.type === "replace-profession" ||
     selectedCard?.type === "replace-health"
@@ -188,9 +185,7 @@ export function SpecialActionCards({
                             ? "Выберите характеристику для раскрытия:"
                             : selectedCard.type === "steal"
                               ? "Выберите характеристику для кражи:"
-                              : selectedCard.type === "discard-health"
-                                ? "Выберите открытую карту здоровья:"
-                                : selectedCard.type === "replace-profession"
+                              : selectedCard.type === "replace-profession"
                                   ? "Выберите открытую карту профессии:"
                                   : selectedCard.type === "replace-health"
                                     ? "Выберите открытую карту здоровья:"
@@ -203,11 +198,7 @@ export function SpecialActionCards({
 
                         let availableChars = targetPlayer.characteristics
 
-                        if (selectedCard.type === "discard-health") {
-                          availableChars = targetPlayer.characteristics.filter(
-                            (c) => c.category === "health" && c.isRevealed
-                          )
-                        } else if (selectedCard.type === "replace-profession") {
+                        if (selectedCard.type === "replace-profession") {
                           availableChars = targetPlayer.characteristics.filter(
                             (c) => c.category === "profession" && c.isRevealed
                           )
@@ -335,7 +326,6 @@ export function SpecialActionCards({
                           selectedCard.type === "peek" || 
                           selectedCard.type === "reveal" || 
                           selectedCard.type === "steal" ||
-                          selectedCard.type === "discard-health" ||
                           selectedCard.type === "replace-profession" ||
                           selectedCard.type === "replace-health")
                         ? !selectedCharacteristic

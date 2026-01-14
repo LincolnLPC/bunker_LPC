@@ -185,16 +185,6 @@ export async function POST(request: Request) {
         actionResult = await handleExchangeCard(supabase, playerId, roomId, targetPlayerId, characteristicId)
         break
 
-      case "peek":
-        if (!targetPlayerId || !characteristicId) {
-          return NextResponse.json(
-            { error: "Target player and characteristic required for peek" },
-            { status: 400 }
-          )
-        }
-        actionResult = await handlePeekCard(supabase, playerId, roomId, targetPlayerId, characteristicId)
-        break
-
       case "reveal":
         if (!targetPlayerId || !characteristicId) {
           return NextResponse.json(
@@ -224,16 +214,6 @@ export async function POST(request: Request) {
 
       case "immunity":
         actionResult = await handleImmunityCard(supabase, playerId, roomId)
-        break
-
-      case "discard-health":
-        if (!targetPlayerId || !characteristicId) {
-          return NextResponse.json(
-            { error: "Target player and characteristic required for discard-health" },
-            { status: 400 }
-          )
-        }
-        actionResult = await handleDiscardHealthCard(supabase, playerId, roomId, targetPlayerId, characteristicId)
         break
 
       case "double-vote":
@@ -358,37 +338,6 @@ async function handleExchangeCard(
   if (updateTargetError) throw updateTargetError
 
   return { type: "exchange", exchanged: true, characteristicId, targetCharacteristicId: targetChars.id }
-}
-
-async function handlePeekCard(
-  supabase: any,
-  playerId: string,
-  roomId: string,
-  targetPlayerId: string,
-  characteristicId: string,
-) {
-  // Peek at a hidden characteristic (temporary reveal for current player only)
-  // In this implementation, we'll create a temporary peek record
-  // For now, just reveal it temporarily (mark as peeked for this player)
-  const { data: characteristic, error: charError } = await supabase
-    .from("player_characteristics")
-    .select("*")
-    .eq("player_id", targetPlayerId)
-    .eq("id", characteristicId)
-    .single()
-
-  if (charError || !characteristic) {
-    throw new Error("Characteristic not found")
-  }
-
-  // Return the characteristic value (it's peeked, not permanently revealed)
-  return {
-    type: "peek",
-    characteristicId,
-    value: characteristic.value,
-    category: characteristic.category,
-    name: characteristic.name,
-  }
 }
 
 async function handleRevealCard(
@@ -562,41 +511,6 @@ async function handleImmunityCard(supabase: any, playerId: string, roomId: strin
   if (updateError) throw updateError
 
   return { type: "immunity", active: true, round: room.current_round }
-}
-
-async function handleDiscardHealthCard(
-  supabase: any,
-  playerId: string,
-  roomId: string,
-  targetPlayerId: string,
-  characteristicId: string,
-) {
-  // Discard (delete) an open health card from any player
-  const { data: characteristic, error: charError } = await supabase
-    .from("player_characteristics")
-    .select("*")
-    .eq("player_id", targetPlayerId)
-    .eq("id", characteristicId)
-    .eq("category", "health")
-    .single()
-
-  if (charError || !characteristic) {
-    throw new Error("Health characteristic not found or not open")
-  }
-
-  if (!characteristic.is_revealed) {
-    throw new Error("Only revealed health cards can be discarded")
-  }
-
-  // Delete the characteristic
-  const { error: deleteError } = await supabase
-    .from("player_characteristics")
-    .delete()
-    .eq("id", characteristicId)
-
-  if (deleteError) throw deleteError
-
-  return { type: "discard-health", characteristicId, discardedValue: characteristic.value }
 }
 
 async function handleDoubleVoteCard(supabase: any, playerId: string, roomId: string) {

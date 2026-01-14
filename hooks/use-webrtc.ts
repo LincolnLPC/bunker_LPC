@@ -143,10 +143,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       })
       
       console.log("[WebRTC] Calling getUserMedia now...")
-      const stream = await navigator.mediaDevices.getUserMedia({
+      
+      // Добавляем таймаут для getUserMedia (максимум 10 секунд)
+      const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: audioConstraints,
       })
+      
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new DOMException("Timeout starting video/audio source. Camera might be busy or not responding.", "AbortError"))
+        }, 10000) // 10 секунд таймаут
+      })
+      
+      const stream = await Promise.race([getUserMediaPromise, timeoutPromise])
       console.log("[WebRTC] ✅ getUserMedia succeeded, got stream:", stream.id)
       
       console.log("[WebRTC] ✅ Media access granted, stream obtained:", {
@@ -203,9 +213,11 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     } catch (err: unknown) {
       // Сначала логируем саму ошибку
       console.error("[WebRTC] ❌ Raw error caught:", err)
-      console.error("[WebRTC] Error type:", typeof err)
-      console.error("[WebRTC] Error instanceof Error:", err instanceof Error)
-      console.error("[WebRTC] Error instanceof DOMException:", err instanceof DOMException)
+      console.log("[WebRTC] Error diagnostic info:", {
+        type: typeof err,
+        isError: err instanceof Error,
+        isDOMException: err instanceof DOMException,
+      })
       
       // Извлекаем информацию об ошибке
       let errorName = "Unknown"
@@ -245,14 +257,34 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         hasAudioConstraints: !!audioConstraints,
       }
       
-      console.error("[WebRTC] ❌ Error initializing media - full details:", JSON.stringify(errorDetails, null, 2))
-      console.error("[WebRTC] ❌ Error initializing media - simple format:", {
-        errorName: errorName,
-        errorMessage: errorMessage,
-        errorCode: errorCode,
-        requestVideo: requestVideo,
-        requestAudio: requestAudio,
-      })
+      console.error("[WebRTC] ❌ Error initializing media:", JSON.stringify(errorDetails, null, 2))
+      
+      // Отправляем ошибку на сервер для логирования
+      try {
+        await fetch('/api/log/error', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: errorMessage,
+            error: {
+              name: errorName,
+              message: errorMessage,
+              code: errorCode,
+              stack: errorStack,
+            },
+            stack: errorStack,
+            url: typeof window !== 'undefined' ? window.location.href : undefined,
+            userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
+            timestamp: new Date().toISOString(),
+          }),
+        }).catch(err => {
+          // Игнорируем ошибки отправки логов на сервер
+          console.debug("[WebRTC] Failed to send error log to server:", err)
+        })
+      } catch (logError) {
+        // Игнорируем ошибки логирования
+        console.debug("[WebRTC] Error logging failed:", logError)
+      }
       
       // Check if it's a permission error (NotAllowedError)
       const isPermissionError = 
@@ -276,6 +308,31 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           errorName: errorName,
           errorMessage: errorMessage,
           note: "This is normal if auto-request is blocked. User should click 'Enable Camera' button.",
+        })
+        return null
+      }
+      
+      // Check if it's a NotReadableError (camera/microphone in use)
+      const isNotReadableError = 
+        errorName === "NotReadableError" ||
+        errorMessage.includes("Could not start video source") ||
+        errorMessage.includes("Could not start audio source")
+      
+      // Check if it's a timeout error (AbortError with timeout message)
+      const isTimeoutError = 
+        errorName === "AbortError" &&
+        (errorMessage.includes("Timeout") || errorMessage.includes("timeout"))
+      
+      if (isNotReadableError || isTimeoutError) {
+        // NotReadableError and timeout errors are recoverable - camera might be busy, user can retry
+        const message = isTimeoutError
+          ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Попробуйте закрыть другие приложения, использующие камеру, и нажмите кнопку 'Включить камеру' для повторной попытки."
+          : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'."
+        setError(message)
+        console.warn(`[WebRTC] ⚠️ ${isTimeoutError ? 'Timeout' : 'NotReadableError'} - camera/microphone might be in use or slow to respond`, {
+          errorName: errorName,
+          errorMessage: errorMessage,
+          note: "Camera might be busy from previous session or slow to respond. User should close other apps and retry.",
         })
         return null
       }

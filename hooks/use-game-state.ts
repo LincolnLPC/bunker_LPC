@@ -65,6 +65,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
         audioEnabled: p.audio_enabled ?? true,
       }
     })
+    .sort((a, b) => a.slot - b.slot) // Фиксируем порядок игроков по slot
 
   const state: GameState = {
     id: room.id,
@@ -1005,13 +1006,27 @@ export function useGameState(roomCode: string) {
 
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error || "Failed to advance round")
+        const errorMessage = data.error || "Failed to advance round"
+        
+        // Если ошибка связана с неправильной фазой, это может быть проблема синхронизации состояния
+        // В этом случае просто обновим состояние игры, чтобы получить актуальную фазу
+        if (errorMessage.includes("Must be in") && errorMessage.includes("phase")) {
+          console.warn("[GameState] Cannot advance round - wrong phase, refreshing state:", errorMessage)
+          loadGameState() // Обновить состояние, чтобы получить актуальную фазу
+          return
+        }
+        
+        throw new Error(errorMessage)
       }
 
       loadGameState()
     } catch (err) {
       console.error("Error advancing round:", err)
-      setError(err instanceof Error ? err.message : "Failed to advance round")
+      // Не устанавливаем ошибку для ошибок фазы - это может быть проблема синхронизации
+      const errorMessage = err instanceof Error ? err.message : "Failed to advance round"
+      if (!errorMessage.includes("Must be in") || !errorMessage.includes("phase")) {
+        setError(errorMessage)
+      }
     }
   }, [gameState, loadGameState])
 
@@ -1553,14 +1568,23 @@ export function useGameState(roomCode: string) {
         }
 
         if (!response.ok) {
-          throw new Error(responseData?.error || "Failed to use special card")
+          const errorMessage = responseData?.error || "Failed to use special card"
+          // Don't log expected errors for eliminated players
+          if (!errorMessage.includes("Eliminated players cannot use special cards")) {
+            console.error("Error using special card:", errorMessage)
+          }
+          throw new Error(errorMessage)
         }
 
         // Reload game state to reflect changes
         loadGameState()
       } catch (err) {
-        console.error("Error using special card:", err)
-        setError(err instanceof Error ? err.message : "Failed to use special card")
+        const errorMessage = err instanceof Error ? err.message : "Failed to use special card"
+        // Don't log expected errors for eliminated players
+        if (!errorMessage.includes("Eliminated players cannot use special cards")) {
+          console.error("Error using special card:", err)
+          setError(errorMessage)
+        }
         throw err
       }
     },

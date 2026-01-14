@@ -87,14 +87,12 @@ export async function POST(request: Request) {
     // Grant special cards to all players
     try {
       // TEMPORARY: All card types for testing
-      const cardTypes: Array<"exchange" | "peek" | "immunity" | "reroll" | "reveal" | "steal" | "discard-health" | "double-vote" | "no-vote-against" | "reshuffle" | "revote" | "replace-profession" | "replace-health"> = [
+      const cardTypes: Array<"exchange" | "immunity" | "reroll" | "reveal" | "steal" | "double-vote" | "no-vote-against" | "reshuffle" | "revote" | "replace-profession" | "replace-health"> = [
         "exchange",
-        "peek",
         "immunity",
         "reroll",
         "reveal",
         "steal",
-        "discard-health",
         "double-vote",
         "no-vote-against",
         "reshuffle",

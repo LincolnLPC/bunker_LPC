@@ -10,11 +10,15 @@ import {
   SAMPLE_BIO,
   SAMPLE_SKILLS,
   SAMPLE_TRAITS,
+  SAMPLE_PROFESSIONS,
 } from "@/types/game"
 
 function getRandomItem<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
 }
+
+const GENDER_OPTIONS = ["М", "Ж", "А", "М(с)", "Ж(с)", "М(а)", "Ж(а)"]
+const AGE_OPTIONS: string[] = Array.from({ length: 103 }, (_, i) => `${i + 18} лет`) // Возраст от 18 до 120
 
 const CATEGORY_OPTIONS: Record<string, string[]> = {
   health: SAMPLE_HEALTH_CONDITIONS,
@@ -26,6 +30,9 @@ const CATEGORY_OPTIONS: Record<string, string[]> = {
   bio: SAMPLE_BIO,
   skill: SAMPLE_SKILLS,
   trait: SAMPLE_TRAITS,
+  profession: SAMPLE_PROFESSIONS,
+  gender: GENDER_OPTIONS,
+  age: AGE_OPTIONS,
 }
 
 // POST - Randomize characteristic value
@@ -74,10 +81,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Characteristic not found" }, { status: 404 })
     }
 
-    // Verify player belongs to room
+    // Verify player belongs to room and get gender for gender characteristic logic
     const { data: player, error: playerError } = await supabase
       .from("game_players")
-      .select("id")
+      .select("id, gender")
       .eq("id", char.player_id)
       .eq("room_id", roomId)
       .single()
@@ -90,19 +97,91 @@ export async function POST(request: Request) {
     const characteristicsSettings = (room.settings as any)?.characteristics || {}
     const categorySetting = characteristicsSettings[char.category]
 
-    // Determine options: use custom list if available, otherwise use default
+    // Determine options: use custom list if available and not empty, otherwise use default values
     let options: string[] = []
-    if (categorySetting?.customList && categorySetting.customList.length > 0) {
+    const hasCustomList = categorySetting?.customList && Array.isArray(categorySetting.customList) && categorySetting.customList.length > 0
+    
+    if (hasCustomList) {
+      // Use custom list provided by user when creating the game
       options = categorySetting.customList
     } else {
+      // Use default values from CATEGORY_OPTIONS if user didn't add custom options
       options = CATEGORY_OPTIONS[char.category] || []
     }
 
+    // Log for debugging
+    console.log("[Randomize] Category options:", {
+      category: char.category,
+      hasCustomList,
+      customListLength: categorySetting?.customList?.length || 0,
+      defaultOptionsLength: CATEGORY_OPTIONS[char.category]?.length || 0,
+      finalOptionsLength: options.length,
+      usingDefault: !hasCustomList,
+    })
+
     if (options.length === 0) {
+      console.error("[Randomize] No options available for category:", char.category, {
+        categorySetting,
+        availableCategories: Object.keys(CATEGORY_OPTIONS),
+        hasDefaultOptions: !!CATEGORY_OPTIONS[char.category],
+      })
+      return NextResponse.json({ 
+        error: `No options available for category: ${char.category}. Please configure options in game settings.`,
+        category: char.category,
+      }, { status: 400 })
+    }
+
+    // Get current value of this characteristic
+    const { data: currentChar, error: currentCharError } = await supabase
+      .from("player_characteristics")
+      .select("value")
+      .eq("id", characteristicId)
+      .single()
+
+    const currentValue = currentChar?.value || null
+
+    // For non-gender characteristics
+    // Get all players in the room
+    const { data: roomPlayers, error: playersError } = await supabase
+      .from("game_players")
+      .select("id")
+      .eq("room_id", roomId)
+
+    if (playersError || !roomPlayers) {
+      return NextResponse.json({ error: "Failed to get room players" }, { status: 500 })
+    }
+
+    const playerIds = roomPlayers.map((p) => p.id)
+
+    // Get all used characteristics of this category from all players in the room
+    // Exclude the current characteristic
+    const { data: usedCharacteristics, error: usedError } = await supabase
+      .from("player_characteristics")
+      .select("value")
+      .in("player_id", playerIds)
+      .eq("category", char.category)
+      .neq("id", characteristicId) // Exclude the current characteristic
+
+    if (usedError) {
+      return NextResponse.json({ error: "Failed to get used characteristics" }, { status: 500 })
+    }
+
+    // Get set of used values (excluding current value)
+    const usedValues = new Set((usedCharacteristics || []).map((c) => c.value))
+
+    // Filter out used values AND current value from available options
+    const availableOptions = options.filter((option) => !usedValues.has(option) && option !== currentValue)
+
+    // If no available options left (all are used), allow reusing any value except current
+    const optionsToChooseFrom = availableOptions.length > 0 
+      ? availableOptions 
+      : options.filter(opt => opt !== currentValue)
+
+    if (optionsToChooseFrom.length === 0) {
       return NextResponse.json({ error: "No options available for this category" }, { status: 400 })
     }
 
-    const randomValue = getRandomItem(options)
+    const randomValue = getRandomItem(optionsToChooseFrom)
 
     // Update characteristic
     const { error: updateError } = await supabase

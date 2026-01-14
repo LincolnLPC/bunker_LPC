@@ -84,6 +84,11 @@ const VoteCountsModal = dynamic(() => import("@/components/game/vote-counts-moda
   loading: () => null,
 })
 
+const SpecialCardUsedModal = dynamic(() => import("@/components/game/special-card-used-modal").then(mod => ({ default: mod.SpecialCardUsedModal })), {
+  ssr: false,
+  loading: () => null,
+})
+
 // Import constants separately (they're small and needed immediately)
 import { DEFAULT_BUNKER_INFO } from "@/components/game/bunker-info"
 
@@ -183,6 +188,13 @@ export default function GamePage() {
   const [showCharacteristicsManager, setShowCharacteristicsManager] = useState(false)
   const [showVoteCountsModal, setShowVoteCountsModal] = useState(false)
   const [specialCards, setSpecialCards] = useState<any[]>([])
+  // State for used card modal
+  const [usedCardData, setUsedCardData] = useState<{
+    playerName: string
+    cardName: string
+    cardDescription: string
+    cardType: string
+  } | null>(null)
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [votedPlayerId, setVotedPlayerId] = useState<string | undefined>()
   const [voteResults, setVoteResults] = useState<{ playerId: string; votes: number }[]>([])
@@ -809,14 +821,6 @@ export default function GamePage() {
     }
   }, [gameState.id, gameState.settings?.roundMode, refresh])
 
-  // Handle continue after results
-  const handleContinueAfterResults = useCallback(() => {
-    setVoteResults([])
-    setEliminatedId(undefined)
-    setVotedPlayerId(undefined)
-    nextRound()
-  }, [nextRound])
-
   // Handle next round - in manual mode, this also ends voting and shows results
   const handleNextRound = useCallback(async () => {
     if (!gameState.id) return
@@ -856,6 +860,14 @@ export default function GamePage() {
     // Otherwise, proceed to next round normally
     nextRound()
   }, [gameState.id, gameState.phase, gameState.settings?.roundMode, refresh, nextRound])
+
+  // Handle continue after results
+  const handleContinueAfterResults = useCallback(() => {
+    setVoteResults([])
+    setEliminatedId(undefined)
+    setVotedPlayerId(undefined)
+    handleNextRound()
+  }, [handleNextRound])
 
   // Handle send chat message
   const handleSendMessage = useCallback(
@@ -976,6 +988,36 @@ export default function GamePage() {
     }
   }, [gameState?.phase, gameState?.id, currentPlayerId])
 
+  // Subscribe to special card used events
+  const specialCardChannelRef = useRef<any>(null)
+  useEffect(() => {
+    if (!gameState?.id) return
+
+    const supabase = createClient()
+    const channel = supabase.channel(`room:${gameState.id}`, {
+      config: {
+        broadcast: { self: false },
+      },
+    })
+
+    channel.on("broadcast", { event: "special_card_used" }, ({ payload }) => {
+      setUsedCardData({
+        playerName: payload.playerName,
+        cardName: payload.cardName,
+        cardDescription: payload.cardDescription,
+        cardType: payload.cardType,
+      })
+    })
+
+    channel.subscribe()
+    specialCardChannelRef.current = channel
+
+    return () => {
+      channel.unsubscribe()
+      specialCardChannelRef.current = null
+    }
+  }, [gameState?.id])
+
   // Handle Shift+U to toggle debug info and refresh indicator
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -1016,7 +1058,6 @@ export default function GamePage() {
       reroll: "Перегенерируйте одну из своих характеристик",
       reveal: "Раскройте одну характеристику другого игрока для всех",
       steal: "Украдите одну характеристику у другого игрока",
-      "discard-health": "Сбросьте открытую карту здоровья у любого игрока",
       "double-vote": "Ваш голос считается за два в этом голосовании",
       "no-vote-against": "Выбранный игрок до конца игры не голосует против вас",
       reshuffle: "Соберите все открытые карты определенной категории, перемешайте и перераздайте",
@@ -1035,7 +1076,6 @@ export default function GamePage() {
       reroll: "Перебросить",
       reveal: "Раскрыть карту",
       steal: "Украсть характеристику",
-      "discard-health": "Хорошие таблетки",
       "double-vote": "Громкий голос",
       "no-vote-against": "Будь другом",
       reshuffle: "Давайте начистоту",
@@ -1059,6 +1099,20 @@ export default function GamePage() {
         // Update local state
         setSpecialCards((prev) => prev.map((c) => (c.id === cardId ? { ...c, isUsed: true } : c)))
 
+        // Broadcast card usage to all players
+        if (currentPlayer && specialCardChannelRef.current) {
+          await specialCardChannelRef.current.send({
+            type: "broadcast",
+            event: "special_card_used",
+            payload: {
+              playerName: currentPlayer.name,
+              cardName: card.name,
+              cardDescription: card.description,
+              cardType: card.type,
+            },
+          })
+        }
+
         // Add system message
         const systemMessage: ChatMessage = {
           id: Math.random().toString(36).substring(7),
@@ -1068,11 +1122,15 @@ export default function GamePage() {
         }
         setChatMessages((prev) => [...prev, systemMessage])
       } catch (err) {
-        console.error("Error using special card:", err)
         // Error is already handled in useSpecialCard
+        // Don't log expected errors for eliminated players
+        const errorMessage = err instanceof Error ? err.message : String(err)
+        if (!errorMessage.includes("Eliminated players cannot use special cards")) {
+          console.error("Error using special card:", err)
+        }
       }
     },
-    [gameState, currentPlayerId, specialCards, useSpecialCard, currentPlayer?.name],
+    [gameState, currentPlayerId, specialCards, useSpecialCard, currentPlayer],
   )
 
   const handlePlayAgain = useCallback(() => {
@@ -1474,6 +1532,18 @@ export default function GamePage() {
           characteristics={currentPlayer.characteristics || []}
           onReveal={handleRevealCharacteristic}
           onClose={() => setShowRevealModal(false)}
+        />
+      )}
+
+      {/* Special Card Used Modal */}
+      {usedCardData && (
+        <SpecialCardUsedModal
+          isOpen={true}
+          playerName={usedCardData.playerName}
+          cardName={usedCardData.cardName}
+          cardDescription={usedCardData.cardDescription}
+          cardType={usedCardData.cardType}
+          onClose={() => setUsedCardData(null)}
         />
       )}
       

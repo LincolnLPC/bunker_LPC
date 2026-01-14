@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Shuffle, RefreshCw, X, Skull, Vote } from "lucide-react"
+import { Shuffle, RefreshCw, X, Skull, Vote, ArrowLeftRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { Player, Characteristic } from "@/types/game"
@@ -77,24 +77,46 @@ export function CharacteristicsManager({
   const [selectedForElimination, setSelectedForElimination] = useState<string | null>(null)
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
   const [activeTab, setActiveTab] = useState("characteristics")
+  // Exchange tab state
+  const [exchangePlayer1, setExchangePlayer1] = useState<Player | null>(null)
+  const [exchangePlayer2, setExchangePlayer2] = useState<Player | null>(null)
+  const [exchangeCategory, setExchangeCategory] = useState<string | null>(null)
 
   // Stabilize values for useEffect dependencies
   const stableRoundMode = roundMode || "automatic"
   const stableCurrentPhase = currentPhase || "waiting"
 
-  // Reset tab when panel opens/closes or phase changes
+  // Reset tab when panel opens/closes
   useEffect(() => {
     if (!isOpen) {
       setActiveTab("characteristics")
       return
     }
+    // Always default to characteristics tab when opening
+    // User can manually switch to elimination tab if needed
+    setActiveTab("characteristics")
+  }, [isOpen])
+
+  // Update selectedPlayer when players prop changes (for real-time updates)
+  useEffect(() => {
+    if (!selectedPlayer) return
     
-    if (stableRoundMode === "manual" && stableCurrentPhase === "voting") {
-      setActiveTab("elimination")
-    } else {
-      setActiveTab("characteristics")
+    const updatedPlayer = players.find(p => p.id === selectedPlayer.id)
+    if (!updatedPlayer) return
+    
+    // Update selectedPlayer with fresh data
+    setSelectedPlayer(updatedPlayer)
+    
+    // Update selectedChar if it still exists
+    if (selectedChar) {
+      const updatedChar = updatedPlayer.characteristics.find(c => c.id === selectedChar.id)
+      if (updatedChar && updatedChar.value !== selectedChar.value) {
+        setSelectedChar(updatedChar)
+        setNewValue(updatedChar.value)
+      }
     }
-  }, [isOpen, stableRoundMode, stableCurrentPhase])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players])
 
   const handleRandomize = async () => {
     if (!selectedPlayer || !selectedChar) return
@@ -134,7 +156,7 @@ export function CharacteristicsManager({
 
   // Fetch vote counts for elimination tab (fetch when panel is open and in voting phase)
   useEffect(() => {
-    if (roomId && currentRound !== undefined && stableCurrentPhase === "voting" && stableRoundMode === "manual") {
+    if (roomId && currentRound !== undefined && stableCurrentPhase === "voting") {
       const fetchVoteCounts = async () => {
         try {
           const supabase = createClient()
@@ -197,6 +219,68 @@ export function CharacteristicsManager({
     setSelectedForElimination(null)
   }
 
+  const getCategoryLabel = (category: string) => {
+    const labels: Record<string, string> = {
+      gender: "Пол",
+      age: "Возраст",
+      profession: "Профессия",
+      health: "Здоровье",
+      hobby: "Хобби",
+      phobia: "Фобия",
+      baggage: "Багаж",
+      fact: "Факт",
+      special: "Особое",
+      bio: "Биология",
+      skill: "Навык",
+      trait: "Черта характера",
+      additional: "Дополнительно",
+    }
+    return labels[category] || category
+  }
+
+  const handleExchange = async () => {
+    if (!exchangePlayer1 || !exchangePlayer2 || !exchangeCategory) return
+    if (exchangePlayer1.id === exchangePlayer2.id) return
+    
+    // Find characteristics of the selected category for each player
+    const char1 = exchangePlayer1.characteristics.find((c) => c.category === exchangeCategory)
+    const char2 = exchangePlayer2.characteristics.find((c) => c.category === exchangeCategory)
+    
+    if (!char1 || !char2) {
+      console.error("Characteristic not found for selected category")
+      return
+    }
+    
+    setLoading(true)
+    try {
+      await onExchangeCharacteristics(
+        exchangePlayer1.id,
+        char1.id,
+        exchangePlayer2.id,
+        char2.id,
+      )
+      // Reset selections
+      setExchangePlayer1(null)
+      setExchangePlayer2(null)
+      setExchangeCategory(null)
+    } catch (error) {
+      console.error("Error exchanging characteristics:", error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Get available categories (categories that exist in both selected players)
+  const getAvailableCategories = (): string[] => {
+    if (!exchangePlayer1 || !exchangePlayer2) return []
+    
+    const categories1 = new Set(exchangePlayer1.characteristics.map((c) => c.category))
+    const categories2 = new Set(exchangePlayer2.characteristics.map((c) => c.category))
+    
+    // Return categories that exist in both players
+    return Array.from(categories1).filter((cat) => categories2.has(cat))
+  }
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -206,16 +290,15 @@ export function CharacteristicsManager({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className={stableRoundMode === "manual" && stableCurrentPhase === "voting" ? "grid w-full grid-cols-2" : "grid w-full grid-cols-1"}>
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="characteristics">Характеристики</TabsTrigger>
-            {stableRoundMode === "manual" && stableCurrentPhase === "voting" && (
-              <TabsTrigger value="elimination">
-                Изгнание игрока
-                {Object.keys(voteCounts).length > 0 && (
-                  <span className="ml-2 text-xs bg-primary/20 px-1.5 py-0.5 rounded">Голоса</span>
-                )}
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="exchange">Обмен</TabsTrigger>
+            <TabsTrigger value="elimination">
+              Изгнание игрока
+              {stableCurrentPhase === "voting" && Object.keys(voteCounts).length > 0 && (
+                <span className="ml-2 text-xs bg-primary/20 px-1.5 py-0.5 rounded">Голоса</span>
+              )}
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="characteristics" className="flex-1 overflow-hidden mt-4">
@@ -225,7 +308,7 @@ export function CharacteristicsManager({
             <Label className="mb-2 block">Выберите игрока</Label>
             <ScrollArea className="h-full">
               <div className="space-y-2">
-                {players.map((player) => (
+                {[...players].sort((a, b) => a.slot - b.slot).map((player) => (
                   <button
                     key={player.id}
                     onClick={() => {
@@ -256,11 +339,11 @@ export function CharacteristicsManager({
           </div>
 
           {/* Характеристики выбранного игрока */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
             {selectedPlayer ? (
-              <div className="space-y-4">
-                <div>
-                  <h3 className="font-semibold mb-2">Характеристики: {selectedPlayer.name}</h3>
+              <div className="flex flex-col h-full min-h-0">
+                <h3 className="font-semibold mb-2 flex-shrink-0">Характеристики: {selectedPlayer.name}</h3>
+                <div className="max-h-[50vh] overflow-y-auto pr-4">
                   <div className="space-y-2">
                     {selectedPlayer.characteristics.map((char) => (
                       <div
@@ -287,11 +370,24 @@ export function CharacteristicsManager({
                             size="sm"
                             variant="ghost"
                             className="ml-2"
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.stopPropagation()
-                              setSelectedChar(char)
-                              setNewValue(char.value)
+                              setLoading(true)
+                              try {
+                                await onRandomizeCharacteristic(selectedPlayer.id, char.id)
+                                // Update selected char if it's currently selected
+                                if (selectedChar?.id === char.id) {
+                                  // Reload will happen via gameState update, just clear selection
+                                  setSelectedChar(null)
+                                  setNewValue("")
+                                }
+                              } catch (error) {
+                                console.error("Error randomizing characteristic:", error)
+                              } finally {
+                                setLoading(false)
+                              }
                             }}
+                            disabled={loading}
                           >
                             <RefreshCw className="w-4 h-4" />
                           </Button>
@@ -354,8 +450,111 @@ export function CharacteristicsManager({
         </div>
           </TabsContent>
 
-          {stableRoundMode === "manual" && stableCurrentPhase === "voting" && (
-            <TabsContent value="elimination" className="flex-1 overflow-hidden mt-4">
+          <TabsContent value="exchange" className="flex-1 overflow-hidden mt-4">
+            <div className="space-y-6">
+              <h3 className="font-semibold mb-4">Обмен характеристиками между игроками</h3>
+              
+              <div className="grid grid-cols-3 gap-4">
+                {/* Player 1 selection */}
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">Игрок 1</Label>
+                    <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-2">
+                      {players.filter((p) => !p.isEliminated).map((player) => (
+                        <button
+                          key={player.id}
+                          onClick={() => {
+                            setExchangePlayer1(player)
+                            setExchangeCategory(null)
+                          }}
+                          className={cn(
+                            "w-full text-left p-3 rounded-lg border transition-colors",
+                            exchangePlayer1?.id === player.id
+                              ? "bg-primary/20 border-primary"
+                              : "bg-card border-border hover:bg-accent",
+                          )}
+                        >
+                          <div className="font-semibold">{player.name}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Player 2 selection */}
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">Игрок 2</Label>
+                    <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-2">
+                      {players
+                        .filter((p) => !p.isEliminated && p.id !== exchangePlayer1?.id)
+                        .map((player) => (
+                          <button
+                            key={player.id}
+                            onClick={() => {
+                              setExchangePlayer2(player)
+                              setExchangeCategory(null)
+                            }}
+                            className={cn(
+                              "w-full text-left p-3 rounded-lg border transition-colors",
+                              exchangePlayer2?.id === player.id
+                                ? "bg-primary/20 border-primary"
+                                : "bg-card border-border hover:bg-accent",
+                            )}
+                          >
+                            <div className="font-semibold">{player.name}</div>
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Category selection */}
+                <div className="space-y-4">
+                  <div>
+                    <Label className="mb-2 block">Характеристика</Label>
+                    {exchangePlayer1 && exchangePlayer2 ? (
+                      <div className="space-y-2 max-h-64 overflow-y-auto border rounded-lg p-2">
+                        {getAvailableCategories().map((category) => (
+                          <button
+                            key={category}
+                            onClick={() => setExchangeCategory(category)}
+                            className={cn(
+                              "w-full text-left p-3 rounded-lg border transition-colors",
+                              exchangeCategory === category
+                                ? "bg-primary/20 border-primary"
+                                : "bg-card border-border hover:bg-accent",
+                            )}
+                          >
+                            <div className="font-semibold">{getCategoryLabel(category)}</div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="p-3 rounded-lg border border-border bg-muted/50 text-muted-foreground text-sm text-center">
+                        Выберите двух игроков
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Exchange button */}
+              {exchangePlayer1 && exchangePlayer2 && exchangeCategory && (
+                <Button
+                  size="lg"
+                  className="w-full"
+                  onClick={handleExchange}
+                  disabled={loading}
+                >
+                  <ArrowLeftRight className="w-4 h-4 mr-2" />
+                  Обменять характеристики
+                </Button>
+              )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="elimination" className="flex-1 overflow-hidden mt-4">
               <div className="space-y-4">
                 <div>
                   <h3 className="font-semibold mb-4">Выбрать игрока для изгнания</h3>
@@ -427,7 +626,6 @@ export function CharacteristicsManager({
                 </div>
               </div>
             </TabsContent>
-          )}
         </Tabs>
       </DialogContent>
     </Dialog>

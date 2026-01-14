@@ -1,6 +1,23 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
+// Helper function to check if a player has immunity for the current round
+function hasImmunity(player: any, currentRound: number): boolean {
+  if (!player || !player.metadata) return false
+  
+  try {
+    let metadata: any = player.metadata
+    if (typeof metadata === 'string') {
+      metadata = JSON.parse(metadata)
+    }
+    
+    const immunity = metadata?.immunity
+    return immunity?.active === true && immunity?.round === currentRound
+  } catch (e) {
+    return false
+  }
+}
+
 // POST - Eliminate player (end voting)
 export async function POST(request: Request) {
   const supabase = await createClient()
@@ -64,15 +81,48 @@ export async function POST(request: Request) {
       if (targetPlayer.is_eliminated) {
         return NextResponse.json({ error: "Player already eliminated" }, { status: 400 })
       }
+      
+      // Check if player has immunity
+      if (hasImmunity(targetPlayer, room.current_round)) {
+        return NextResponse.json({ error: "Player has immunity and cannot be eliminated" }, { status: 400 })
+      }
+      
       eliminatedPlayerId = playerId
     } else {
-      // Automatic mode or manual mode without explicit selection - find player with most votes
-      let maxVotes = 0
-      for (const [playerId, count] of Object.entries(voteCounts)) {
-        if (count > maxVotes) {
-          maxVotes = count
+      // Automatic mode or manual mode without explicit selection - find player with most votes (excluding players with immunity)
+      // Sort players by vote count (descending)
+      const sortedPlayers = Object.entries(voteCounts)
+        .map(([playerId, count]) => ({
+          playerId,
+          votes: count,
+          player: room.game_players.find((p: any) => p.id === playerId)
+        }))
+        .sort((a, b) => b.votes - a.votes)
+      
+      // Find the first player without immunity
+      // Also check if the player with most votes has immunity (for notification)
+      const topPlayer = sortedPlayers[0]
+      let savedByImmunityPlayer: any = null
+      
+      if (topPlayer && topPlayer.player && hasImmunity(topPlayer.player, room.current_round)) {
+        savedByImmunityPlayer = topPlayer.player
+      }
+      
+      for (const { playerId, player } of sortedPlayers) {
+        if (player && !hasImmunity(player, room.current_round)) {
           eliminatedPlayerId = playerId
+          break
         }
+      }
+      
+      // Add system message if a player was saved by immunity
+      if (savedByImmunityPlayer && eliminatedPlayerId && savedByImmunityPlayer.id !== eliminatedPlayerId) {
+        await supabase.from("chat_messages").insert({
+          room_id: roomId,
+          player_id: null,
+          message: `${savedByImmunityPlayer.name} спасен от изгнания благодаря иммунитету!`,
+          message_type: "system",
+        })
       }
     }
 
