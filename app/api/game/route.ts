@@ -187,6 +187,11 @@ export async function POST(request: Request) {
     const finalCatastrophe = catastrophe || getRandomItem(SAMPLE_CATASTROPHES)
     const finalBunkerDescription = bunkerDescription || getRandomItem(SAMPLE_BUNKERS)
 
+    // Generate full bunker info with random equipment and supplies
+    // Capacity is determined based on maxPlayers: 8->2-4, 12->3-5, 16->3-8, 20->4-11
+    const { generateBunkerInfo } = await import("@/lib/game/bunkers")
+    const bunkerInfo = generateBunkerInfo(finalBunkerDescription, maxPlayers)
+
     const { data: room, error } = await supabase
       .from("game_rooms")
       .insert({
@@ -195,6 +200,7 @@ export async function POST(request: Request) {
         max_players: maxPlayers,
         catastrophe: finalCatastrophe,
         bunker_description: finalBunkerDescription,
+        bunker_info: bunkerInfo,
         phase: "waiting",
         current_round: 0,
         round_timer_seconds: roundTimerSeconds,

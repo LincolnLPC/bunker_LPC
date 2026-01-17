@@ -13,6 +13,7 @@ interface PlayerCardProps {
   onSelect?: () => void
   isMuted?: boolean
   onToggleMute?: () => void
+  vdoNinjaCameraUrl?: string | null
 }
 
 export function PlayerCard({
@@ -23,6 +24,7 @@ export function PlayerCard({
   onSelect,
   isMuted = false,
   onToggleMute,
+  vdoNinjaCameraUrl,
 }: PlayerCardProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -135,55 +137,140 @@ export function PlayerCard({
     <div
       onClick={handleCardClick}
       className={cn(
-        "relative flex flex-col rounded-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:scale-[1.02]",
+        "relative rounded-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:scale-[1.02]",
         "bg-[oklch(0.1_0.02_50/0.9)] backdrop-blur-sm",
         player.isEliminated && "card-eliminated",
         isCurrentPlayer ? "border-[oklch(0.7_0.15_200)] card-glow-cyan" : "border-[oklch(0.7_0.2_50)] card-glow-orange",
+        // Всегда используем aspect ratio для правильных размеров карточки
+        "aspect-[4/3]"
       )}
     >
       {/* Slot number */}
-      <div className="absolute top-1 left-1 z-10 text-[oklch(0.5_0_0)] text-xs font-mono">{slotNumber}</div>
+      <div className="absolute top-1 left-1 z-50 text-[oklch(0.5_0_0)] text-xs font-mono">{slotNumber}</div>
 
-      {/* Video/Avatar area */}
-      <div className="relative aspect-[4/3] bg-[oklch(0.08_0.01_60)]">
-        {player.stream ? (
-          <video ref={videoRef} autoPlay playsInline muted={isCurrentPlayer} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <User className="w-12 h-12 text-[oklch(0.3_0_0)]" />
-          </div>
-        )}
-
-        {/* Video/Audio indicators */}
-        <div className="absolute bottom-1 right-1 flex gap-1 z-20">
-          {!player.audioEnabled && (
-            <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
-              <MicOff className="w-3 h-3 text-foreground" />
+      {/* Video/Avatar area - для VDO.ninja занимает всю карточку */}
+      {isCurrentPlayer && vdoNinjaCameraUrl ? (
+        // Для VDO.ninja iframe занимает всю карточку
+        <div className="absolute inset-0 w-full h-full z-0">
+          <iframe
+            src={vdoNinjaCameraUrl}
+            allow="camera; microphone; autoplay; fullscreen"
+            className="w-full h-full border-0"
+            style={{ 
+              border: 'none',
+              margin: 0,
+              padding: 0,
+              width: '100%',
+              height: '100%',
+              display: 'block'
+            }}
+            title="VDO.ninja Camera"
+          />
+        </div>
+      ) : (
+        <div className="relative aspect-[4/3] bg-[oklch(0.08_0.01_60)] overflow-hidden">
+          {player.stream ? (
+            <video ref={videoRef} autoPlay playsInline muted={isCurrentPlayer} className="w-full h-full object-cover" />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center">
+              <User className="w-12 h-12 text-[oklch(0.3_0_0)]" />
             </div>
           )}
-          {!player.videoEnabled && (
-            <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
-              <VideoOff className="w-3 h-3 text-foreground" />
+
+          {/* Video/Audio indicators - не показываем для VDO.ninja iframe */}
+          {!(isCurrentPlayer && vdoNinjaCameraUrl) && (
+            <div className="absolute bottom-1 right-1 flex gap-1 z-20">
+              {!player.audioEnabled && (
+                <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
+                  <MicOff className="w-3 h-3 text-foreground" />
+                </div>
+              )}
+              {!player.videoEnabled && (
+                <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
+                  <VideoOff className="w-3 h-3 text-foreground" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Characteristics overlay on video (when video is enabled and characteristics are shown) */}
+          {showCharacteristics && player.videoEnabled && player.stream && revealedChars.length > 0 && (
+            <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] via-transparent to-transparent pointer-events-none z-10">
+              {/* Left side - first 5 characteristics */}
+              <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
+                {revealedChars.slice(0, 5).map((char) => (
+                  <div
+                    key={char.id}
+                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                  >
+                    {char.value}
+                  </div>
+                ))}
+              </div>
+              {/* Right side - remaining characteristics */}
+              {revealedChars.length > 5 && (
+                <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
+                  {revealedChars.slice(5).map((char) => (
+                    <div
+                      key={char.id}
+                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                    >
+                      {char.value}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          
+          {/* Characteristics overlay at bottom when video is disabled or no stream */}
+          {showCharacteristics && (!player.videoEnabled || !player.stream) && revealedChars.length > 0 && (
+            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] to-transparent pointer-events-none z-10">
+              {/* Left side - first 5 characteristics */}
+              <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
+                {revealedChars.slice(0, 5).map((char) => (
+                  <div
+                    key={char.id}
+                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                  >
+                    {char.value}
+                  </div>
+                ))}
+              </div>
+              {/* Right side - remaining characteristics */}
+              {revealedChars.length > 5 && (
+                <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
+                  {revealedChars.slice(5).map((char) => (
+                    <div
+                      key={char.id}
+                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                    >
+                      {char.value}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
-        
-        {/* Mute button for other players - show even for eliminated players */}
-        {!isCurrentPlayer && onToggleMute && (
-          <button
-            onClick={(e) => {
-              e.stopPropagation()
-              onToggleMute()
-            }}
-            className="absolute top-1 right-1 z-40 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
-            title={isMuted ? "Включить звук" : "Отключить звук"}
-          >
-            <MicOff className={`w-4 h-4 ${isMuted ? "text-destructive" : "text-muted-foreground"}`} />
-          </button>
-        )}
+      )}
 
-        {/* Player name overlay */}
-        <div className="absolute top-1 left-6 right-1 z-20">
+      {/* Mute button for other players - show even for eliminated players */}
+      {!isCurrentPlayer && onToggleMute && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onToggleMute()
+          }}
+          className="absolute top-1 right-1 z-50 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
+          title={isMuted ? "Включить звук" : "Отключить звук"}
+        >
+          <MicOff className={`w-4 h-4 ${isMuted ? "text-destructive" : "text-muted-foreground"}`} />
+        </button>
+      )}
+
+      {/* Player name overlay */}
+      <div className="absolute top-1 left-6 right-1 z-50">
           {/* First line: Name with Gender and Age on the right */}
           <div className="flex items-start gap-1.5">
             <div className="flex flex-col items-start">
@@ -209,67 +296,6 @@ export function PlayerCard({
           </div>
         </div>
 
-        {/* Characteristics overlay on video (when video is enabled and characteristics are shown) */}
-        {showCharacteristics && player.videoEnabled && player.stream && revealedChars.length > 0 && (
-          <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] via-transparent to-transparent pointer-events-none z-10">
-            {/* Left side - first 5 characteristics */}
-            <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
-              {revealedChars.slice(0, 5).map((char) => (
-                <div
-                  key={char.id}
-                  className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
-                >
-                  {char.value}
-                </div>
-              ))}
-            </div>
-            {/* Right side - remaining characteristics */}
-            {revealedChars.length > 5 && (
-              <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
-                {revealedChars.slice(5).map((char) => (
-                  <div
-                    key={char.id}
-                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
-                  >
-                    {char.value}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        
-        {/* Characteristics overlay at bottom when video is disabled or no stream */}
-        {showCharacteristics && (!player.videoEnabled || !player.stream) && revealedChars.length > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] to-transparent pointer-events-none z-10">
-            {/* Left side - first 5 characteristics */}
-            <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
-              {revealedChars.slice(0, 5).map((char) => (
-                <div
-                  key={char.id}
-                  className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
-                >
-                  {char.value}
-                </div>
-              ))}
-            </div>
-            {/* Right side - remaining characteristics */}
-            {revealedChars.length > 5 && (
-              <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
-                {revealedChars.slice(5).map((char) => (
-                  <div
-                    key={char.id}
-                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
-                  >
-                    {char.value}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
       {/* Show characteristics toggle when hidden */}
       {!showCharacteristics && (
         <button
@@ -277,7 +303,7 @@ export function PlayerCard({
             e.stopPropagation()
             setShowCharacteristics(true)
           }}
-          className="absolute bottom-1 left-1 p-1 rounded bg-[oklch(0.2_0.02_50/0.8)] text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+          className="absolute bottom-1 left-1 z-50 p-1 rounded bg-[oklch(0.2_0.02_50/0.8)] text-[10px] text-muted-foreground hover:text-foreground transition-colors"
         >
           Показать
         </button>
@@ -285,7 +311,7 @@ export function PlayerCard({
 
       {/* Eliminated overlay - lower z-index so mute button is above */}
       {player.isEliminated && (
-        <div className="absolute inset-0 bg-[oklch(0.55_0.22_25/0.3)] flex items-center justify-center z-30 pointer-events-none">
+        <div className="absolute inset-0 bg-[oklch(0.55_0.22_25/0.3)] flex items-center justify-center z-40 pointer-events-none">
           <span className="text-[oklch(0.55_0.22_25)] font-bold text-lg rotate-[-15deg]">ВЫБЫЛ</span>
         </div>
       )}

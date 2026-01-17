@@ -39,6 +39,13 @@ export class SocketIOSignaling {
       isConnecting: this.isConnecting,
     })
     
+    // Проверка обязательных параметров
+    if (!this.roomId || !this.currentPlayerId) {
+      const error = new Error(`Cannot connect: missing roomId (${this.roomId}) or playerId (${this.currentPlayerId})`)
+      console.error(`[SocketIO] ❌ ${error.message}`)
+      throw error
+    }
+    
     // Если уже идет подключение, вернуть существующий промис
     if (this.isConnecting && this.connectPromise) {
       console.log(`[SocketIO] ⏳ Connection already in progress, returning existing promise`)
@@ -147,7 +154,17 @@ export class SocketIOSignaling {
           // Обработка ошибок подключения
           this.socket.on('connect_error', (error) => {
             console.error(`[SocketIO] ❌ Connection error:`, error)
-            reject(error)
+            cleanup()
+            if (!resolved) {
+              resolved = true
+              // Более информативная ошибка
+              const errorMessage = error.message || 'Unknown connection error'
+              const isNetworkError = errorMessage.includes('Network') || errorMessage.includes('ECONNREFUSED')
+              const detailedError = isNetworkError 
+                ? new Error(`Socket.io server is not available. Make sure the server is running on ${serverUrl}. Error: ${errorMessage}`)
+                : error
+              reject(detailedError)
+            }
           })
 
           // Обработка сигналов WebRTC
@@ -191,8 +208,19 @@ export class SocketIOSignaling {
             if (!resolved) {
               resolved = true
               cleanup()
-              console.error(`[SocketIO] ❌ Connection timeout after 20 seconds`)
-              reject(new Error("Socket.io connection timeout"))
+              const socketState = this.socket ? {
+                connected: this.socket.connected,
+                disconnected: this.socket.disconnected,
+                id: this.socket.id,
+              } : 'socket is null'
+              console.error(`[SocketIO] ❌ Connection timeout after 20 seconds`, {
+                serverUrl,
+                roomId: this.roomId,
+                currentPlayerId: this.currentPlayerId,
+                socketState,
+                note: 'Socket.io server may not be running or not accessible'
+              })
+              reject(new Error(`Socket.io connection timeout. Server at ${serverUrl} did not respond. Make sure the server is running.`))
             }
           }, 20000)
         }

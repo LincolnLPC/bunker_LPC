@@ -21,6 +21,7 @@ export function PlayerGrid({
   onSelectPlayer,
   mutedPlayers,
   onTogglePlayerMute,
+  vdoNinjaCameraUrl,
 }: PlayerGridProps) {
   // Create array with empty slots
   const slots = Array.from({ length: maxPlayers }, (_, i) => {
@@ -48,6 +49,7 @@ export function PlayerGrid({
               onSelect={() => onSelectPlayer?.(player)}
               isMuted={mutedPlayers?.has(player.id) ?? false}
               onToggleMute={() => onTogglePlayerMute?.(player.id)}
+              vdoNinjaCameraUrl={player.id === currentPlayerId ? vdoNinjaCameraUrl : undefined}
             />
           ) : (
             <EmptySlot slotNumber={index + 1} />

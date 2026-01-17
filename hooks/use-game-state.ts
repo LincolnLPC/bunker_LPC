@@ -67,6 +67,10 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
     })
     .sort((a, b) => a.slot - b.slot) // Фиксируем порядок игроков по slot
 
+  // Use bunker_info from database if available
+  // For backward compatibility: old rooms without bunker_info will not show detailed info
+  const bunkerInfo = room.bunker_info || undefined
+
   const state: GameState = {
     id: room.id,
     roomCode: room.room_code,
@@ -75,6 +79,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
     maxPlayers: room.max_players || 12,
     catastrophe: room.catastrophe || "",
     bunkerDescription: room.bunker_description || "",
+    bunkerInfo: bunkerInfo,
     players,
     hostId: room.host_id || "",
     votes: [], // Votes will be loaded separately if needed
@@ -169,7 +174,18 @@ export function useGameState(roomCode: string) {
           isInitialLoadRef.current = false
           return
         }
-        console.error("[GameState] Error fetching room:", roomError)
+        // Enhanced error logging
+        console.error("[GameState] Error fetching room:", {
+          code: roomError.code,
+          message: roomError.message,
+          details: roomError.details,
+          hint: roomError.hint,
+          error: roomError,
+          roomCode,
+          errorString: String(roomError),
+          errorType: typeof roomError,
+          errorKeys: roomError ? Object.keys(roomError) : [],
+        })
         throw roomError
       }
       if (!room) {
@@ -229,11 +245,24 @@ export function useGameState(roomCode: string) {
         try {
           await retry(
             async () => {
-              const joinResponse = await fetch("/api/game/join", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ roomCode }),
-              })
+              try {
+                const joinResponse = await fetch("/api/game/join", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ roomCode }),
+                }).catch((fetchError) => {
+                  // Handle fetch errors (network, abort, etc.)
+                  if (fetchError instanceof Error && fetchError.name === "AbortError") {
+                    console.log("[GameState] Fetch request was aborted - this may be expected")
+                    throw new Error("Request was cancelled")
+                  }
+                  console.error("[GameState] Fetch error:", {
+                    error: fetchError,
+                    errorName: fetchError instanceof Error ? fetchError.name : typeof fetchError,
+                    errorMessage: fetchError instanceof Error ? fetchError.message : String(fetchError),
+                  })
+                  throw fetchError
+                })
 
               // Read response as text first (can only read once)
               const contentType = joinResponse.headers.get("content-type")
@@ -396,6 +425,19 @@ export function useGameState(roomCode: string) {
               // Force reload of game state to ensure characteristics are loaded
               console.log("[GameState] Triggering full state reload after join")
               // We'll reload at the end of the function
+              } catch (innerError) {
+                // Handle errors within the retry function
+                if (innerError instanceof Error && innerError.name === "AbortError") {
+                  console.log("[GameState] Request aborted during join - may be expected")
+                  throw new Error("Request was cancelled")
+                }
+                console.error("[GameState] Error during join attempt:", {
+                  error: innerError,
+                  errorName: innerError instanceof Error ? innerError.name : typeof innerError,
+                  errorMessage: innerError instanceof Error ? innerError.message : String(innerError),
+                })
+                throw innerError
+              }
             },
             {
               maxAttempts: 3,
@@ -407,12 +449,26 @@ export function useGameState(roomCode: string) {
             }
           )
         } catch (joinError) {
+          // Enhanced error logging
+          const errorInfo = {
+            error: joinError,
+            errorType: typeof joinError,
+            errorName: joinError instanceof Error ? joinError.name : typeof joinError,
+            errorMessage: joinError instanceof Error ? joinError.message : String(joinError),
+            errorCode: (joinError as any)?.code,
+            isAbortError: joinError instanceof Error && joinError.name === "AbortError",
+            roomCode,
+          }
+          
           // Check if error is because user is already in room - this is OK, not an error
           const errorMessage = joinError instanceof Error ? joinError.message.toLowerCase() : String(joinError).toLowerCase()
-          if (errorMessage.includes("already") || errorMessage.includes("уже") || errorMessage.includes("existing")) {
-            console.log("[GameState] User already in room (expected during auto-join), continuing...")
+          if (errorMessage.includes("already") || errorMessage.includes("уже") || errorMessage.includes("existing") || errorMessage.includes("request was cancelled")) {
+            console.log("[GameState] User already in room or request cancelled (expected), continuing...", errorInfo)
+          } else if (errorInfo.isAbortError) {
+            console.log("[GameState] Join request was aborted - this may be expected during navigation or retries")
+            // Don't treat abort as critical error
           } else {
-            console.error("[GameState] Error auto-joining room after retries:", joinError)
+            console.error("[GameState] Error auto-joining room after retries:", errorInfo)
             // Continue with existing state if join fails
             // This is not critical - user can manually join if needed
           }
@@ -563,8 +619,37 @@ export function useGameState(roomCode: string) {
       setIsRefreshing(false)
       loadingRef.current = false
     } catch (err) {
-      console.error("Error loading game state:", err)
-      setError(err instanceof Error ? err.message : "Failed to load game state")
+      // Enhanced error logging with detailed information
+      const errorInfo = {
+        error: err,
+        errorType: typeof err,
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+        errorStack: err instanceof Error ? err.stack : undefined,
+        errorCode: (err as any)?.code,
+        errorDetails: (err as any)?.details,
+        errorHint: (err as any)?.hint,
+        isAbortError: err instanceof Error && err.name === "AbortError",
+        roomCode,
+        timestamp: new Date().toISOString(),
+      }
+      
+      console.error("Error loading game state:", errorInfo)
+      
+      // Handle AbortError separately (request was cancelled - usually not critical)
+      if (err instanceof Error && err.name === "AbortError") {
+        console.log("[GameState] Request was aborted (may be due to navigation or retry) - this is usually OK")
+        // Don't set error state for aborted requests - they're usually expected
+        isInitialLoadRef.current = false
+        setLoading(false)
+        setIsRefreshing(false)
+        loadingRef.current = false
+        return
+      }
+      
+      // For other errors, set error state
+      const errorMessage = err instanceof Error ? err.message : "Failed to load game state"
+      setError(errorMessage)
       isInitialLoadRef.current = false
       setLoading(false)
       setIsRefreshing(false)
@@ -641,6 +726,10 @@ export function useGameState(roomCode: string) {
           // Reload game state when phase or other important fields change
           if (payload.new?.phase !== payload.old?.phase) {
             console.log("[Realtime] Phase changed:", payload.old?.phase, "->", payload.new?.phase)
+          }
+          // Also reload when roundStartedAt changes (catastrophe intro skip)
+          if (payload.new?.round_started_at !== payload.old?.round_started_at) {
+            console.log("[Realtime] Round started at changed:", payload.old?.round_started_at, "->", payload.new?.round_started_at)
           }
           loadGameState()
         },
@@ -839,16 +928,29 @@ export function useGameState(roomCode: string) {
 
   // Start game
   const startGame = useCallback(async () => {
+    console.log("[GameState] 🎮 startGame() called")
+    console.log("[GameState] Current game state:", {
+      roomId: gameState?.id,
+      phase: gameState?.phase,
+      currentRound: gameState?.currentRound,
+      playersCount: gameState?.players?.length || 0,
+    })
+    
     // Check if game is already started before making API call
     if (gameState.phase !== "waiting") {
-      console.log("[GameState] Game already started, skipping start request. Current phase:", gameState.phase)
+      console.log("[GameState] ⚠️ Game already started, skipping start request. Current phase:", gameState.phase)
       // Just refresh the state to ensure we're in sync
       await loadGameState()
       return
     }
-    if (!gameState) return
+    if (!gameState) {
+      console.error("[GameState] ❌ Cannot start game: gameState is null")
+      return
+    }
 
     try {
+      console.log(`[GameState] 🚀 Sending start game request for room ${gameState.id}`)
+      
       await retry(
         async () => {
           const response = await fetch("/api/game/start", {
@@ -857,18 +959,31 @@ export function useGameState(roomCode: string) {
             body: JSON.stringify({ roomId: gameState.id }),
           })
 
+          console.log(`[GameState] 📥 Start game response: ${response.status} ${response.statusText}`)
+
           if (!response.ok) {
             const data = await response.json()
             const errorMessage = data.error || "Failed to start game"
             
+            console.error("[GameState] ❌ Start game failed:", {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorMessage,
+              data,
+            })
+            
             // If game is already started, just refresh state instead of throwing error
             if (errorMessage.includes("already started") || errorMessage.includes("уже запущена") || response.status === 400) {
-              console.log("[GameState] Game already started, refreshing state instead of throwing error")
+              console.log("[GameState] ℹ️ Game already started, refreshing state instead of throwing error")
               await loadGameState()
               return
             }
             
             throw new Error(errorMessage)
+          } else {
+            console.log("[GameState] ✅ Game started successfully, refreshing state...")
+            const responseData = await response.json().catch(() => ({}))
+            console.log("[GameState] Start game response data:", responseData)
           }
         },
         {
@@ -878,9 +993,15 @@ export function useGameState(roomCode: string) {
         }
       )
 
-      loadGameState()
+      console.log("[GameState] 🔄 Refreshing game state after start...")
+      await loadGameState()
+      console.log("[GameState] ✅ Game state refreshed after start")
     } catch (err) {
-      console.error("Error starting game:", err)
+      console.error("[GameState] ❌ Error starting game:", {
+        error: err,
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: err instanceof Error ? err.message : String(err),
+      })
       setError(err instanceof Error ? err.message : "Failed to start game")
     }
   }, [gameState, loadGameState])

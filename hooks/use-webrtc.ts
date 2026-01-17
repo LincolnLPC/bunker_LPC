@@ -52,6 +52,21 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     let audioConstraints: MediaTrackConstraints | boolean = false
     
     try {
+      // Если указан VDO.ninja URL, пропускаем getUserMedia для видео
+      // VDO.ninja будет отображаться через iframe в PlayerCard
+      if (mediaSettings?.vdoNinjaCameraUrl && requestVideo) {
+        console.log("[WebRTC] VDO.ninja camera URL detected:", mediaSettings.vdoNinjaCameraUrl)
+        console.log("[WebRTC] VDO.ninja will be displayed via iframe in PlayerCard. Skipping getUserMedia for video.")
+        
+        // Если нужно только видео, возвращаем null (iframe будет показан в PlayerCard)
+        if (!requestAudio) {
+          return null
+        }
+        
+        // Если нужен также аудио, продолжаем только для аудио
+        console.log("[WebRTC] Requesting audio only (video via VDO.ninja iframe)")
+      }
+
       // Check if browser supports getUserMedia
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         const errorMsg = "Ваш браузер не поддерживает доступ к камере/микрофону"
@@ -144,16 +159,17 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       
       console.log("[WebRTC] Calling getUserMedia now...")
       
-      // Добавляем таймаут для getUserMedia (максимум 10 секунд)
+      // Добавляем таймаут для getUserMedia (максимум 15 секунд для медленных камер)
       const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: audioConstraints,
       })
       
+      const timeoutMs = 15000 // 15 секунд таймаут (увеличено для медленных камер)
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new DOMException("Timeout starting video/audio source. Camera might be busy or not responding.", "AbortError"))
-        }, 10000) // 10 секунд таймаут
+        }, timeoutMs)
       })
       
       const stream = await Promise.race([getUserMediaPromise, timeoutPromise])
@@ -257,8 +273,6 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         hasAudioConstraints: !!audioConstraints,
       }
       
-      console.error("[WebRTC] ❌ Error initializing media:", JSON.stringify(errorDetails, null, 2))
-      
       // Отправляем ошибку на сервер для логирования
       try {
         await fetch('/api/log/error', {
@@ -326,14 +340,11 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       if (isNotReadableError || isTimeoutError) {
         // NotReadableError and timeout errors are recoverable - camera might be busy, user can retry
         const message = isTimeoutError
-          ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Попробуйте закрыть другие приложения, использующие камеру, и нажмите кнопку 'Включить камеру' для повторной попытки."
-          : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'."
+          ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Это не критично - игра продолжит работать без видеосвязи. Вы можете попробовать включить камеру позже, нажав кнопку 'Включить камеру'."
+          : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'. Это не критично - игра продолжит работать без видеосвязи."
         setError(message)
-        console.warn(`[WebRTC] ⚠️ ${isTimeoutError ? 'Timeout' : 'NotReadableError'} - camera/microphone might be in use or slow to respond`, {
-          errorName: errorName,
-          errorMessage: errorMessage,
-          note: "Camera might be busy from previous session or slow to respond. User should close other apps and retry.",
-        })
+        // Для recoverable ошибок используем console.warn, а не console.error
+        console.warn(`[WebRTC] ⚠️ ${isTimeoutError ? 'Timeout' : 'NotReadableError'} - camera/microphone might be in use or slow to respond. This is not critical - game will continue without video/audio.`, errorDetails)
         return null
       }
       

@@ -77,7 +77,12 @@ export function PlayerDetailModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[oklch(0.05_0.01_60/0.9)] backdrop-blur-sm">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[oklch(0.05_0.01_60/0.9)] backdrop-blur-sm" onClick={(e) => {
+      // Close modal when clicking on backdrop
+      if (e.target === e.currentTarget) {
+        onClose()
+      }
+    }}>
       <div className="w-full max-w-lg mx-4 rounded-lg bg-card border-2 border-primary overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-4 bg-[oklch(0.1_0.02_50)] border-b border-border">

@@ -39,10 +39,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Room ID required" }, { status: 400 })
     }
 
-    // Get room and verify host
+    // Get room and verify host (including bunker_info)
     const { data: room, error: roomError } = await supabase
       .from("game_rooms")
-      .select("id, host_id, phase, current_round, settings")
+      .select("id, host_id, phase, current_round, settings, bunker_info")
       .eq("id", roomId)
       .single()
 
@@ -237,11 +237,86 @@ export async function POST(request: Request) {
       })
     }
 
+    // Reveal next bunker characteristic
+    const newRound = (room.current_round || 0) + 1
+    let revealedCharacteristic: { name: string; type: "equipment" | "supply" } | null = null
+    
+    if (room.bunker_info) {
+      try {
+        let bunkerInfo: any = room.bunker_info
+        if (typeof bunkerInfo === 'string') {
+          bunkerInfo = JSON.parse(bunkerInfo)
+        }
+        
+        const totalCharacteristics = 5 // Total equipment + supplies
+        const currentRevealed = bunkerInfo.revealedCharacteristics || []
+        const totalRevealed = bunkerInfo.totalRevealed || 0
+        
+        // If not all characteristics are revealed yet, reveal the next one
+        if (totalRevealed < totalCharacteristics) {
+          // Get all characteristics (equipment + supplies)
+          const allCharacteristics: { name: string; type: "equipment" | "supply" }[] = []
+          
+          // Add equipment
+          if (bunkerInfo.equipment && Array.isArray(bunkerInfo.equipment)) {
+            bunkerInfo.equipment.forEach((item: string) => {
+              allCharacteristics.push({ name: item, type: "equipment" })
+            })
+          }
+          
+          // Add supplies
+          if (bunkerInfo.supplies && Array.isArray(bunkerInfo.supplies)) {
+            bunkerInfo.supplies.forEach((item: string) => {
+              allCharacteristics.push({ name: item, type: "supply" })
+            })
+          }
+          
+          // Find the next unrevealed characteristic
+          const revealedNames = new Set(currentRevealed.map((c: any) => c.name))
+          const nextCharacteristic = allCharacteristics.find(c => !revealedNames.has(c.name))
+          
+          if (nextCharacteristic) {
+            // Add to revealed characteristics
+            const updatedRevealed = [...currentRevealed, {
+              name: nextCharacteristic.name,
+              type: nextCharacteristic.type,
+              isRevealed: true
+            }]
+            
+            // Update bunker_info
+            bunkerInfo.revealedCharacteristics = updatedRevealed
+            bunkerInfo.totalRevealed = totalRevealed + 1
+            
+            revealedCharacteristic = {
+              name: nextCharacteristic.name,
+              type: nextCharacteristic.type
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Error processing bunker info:", error)
+        // Continue without revealing characteristic if there's an error
+      }
+    }
+
     // Advance to next round
     // In manual mode, don't start timer (round_started_at stays null)
     const updateData: any = {
       phase: "playing",
-      current_round: (room.current_round || 0) + 1,
+      current_round: newRound,
+    }
+    
+    // Update bunker_info if we revealed a characteristic
+    if (revealedCharacteristic && room.bunker_info) {
+      try {
+        let bunkerInfo: any = room.bunker_info
+        if (typeof bunkerInfo === 'string') {
+          bunkerInfo = JSON.parse(bunkerInfo)
+        }
+        updateData.bunker_info = bunkerInfo
+      } catch (error) {
+        console.error("Error updating bunker_info:", error)
+      }
     }
     
     // Only start timer in automatic mode
@@ -263,11 +338,32 @@ export async function POST(request: Request) {
     await supabase.from("chat_messages").insert({
       room_id: roomId,
       player_id: null,
-      message: `Начался раунд ${(room.current_round || 0) + 1}`,
+      message: `Начался раунд ${newRound}`,
       message_type: "system",
     })
 
-    return NextResponse.json({ success: true, newRound: (room.current_round || 0) + 1 })
+    // Add message about revealed bunker characteristic if one was revealed
+    // Also broadcast the event to all players for modal display
+    if (revealedCharacteristic) {
+      const characteristicTypeLabel = revealedCharacteristic.type === "equipment" ? "Оснащение" : "Запас"
+      
+      // Add system message to chat
+      await supabase.from("chat_messages").insert({
+        room_id: roomId,
+        player_id: null,
+        message: `Исследуя бункер вы обнаружили в нем ${characteristicTypeLabel.toLowerCase()}: ${revealedCharacteristic.name}`,
+        message_type: "system",
+      })
+      
+      // Note: Broadcast to clients will be handled via postgres_changes subscription
+      // Clients will detect bunker_info changes and show the modal
+    }
+
+    return NextResponse.json({ 
+      success: true, 
+      newRound,
+      revealedCharacteristic: revealedCharacteristic || undefined
+    })
   } catch (error) {
     console.error("Error advancing round:", error)
     return NextResponse.json({ error: "Failed to advance round" }, { status: 500 })

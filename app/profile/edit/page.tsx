@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useCallback } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -21,6 +21,7 @@ interface MediaSettings {
   defaultMicrophoneEnabled: boolean
   cameraDeviceId?: string | null
   microphoneDeviceId?: string | null
+  vdoNinjaCameraUrl?: string | null
 }
 
 interface MediaDevice {
@@ -31,6 +32,7 @@ interface MediaDevice {
 
 export default function EditProfilePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -45,6 +47,7 @@ export default function EditProfilePage() {
     defaultMicrophoneEnabled: true,
     cameraDeviceId: null,
     microphoneDeviceId: null,
+    vdoNinjaCameraUrl: null,
   })
   const [availableCameras, setAvailableCameras] = useState<MediaDevice[]>([])
   const [availableMicrophones, setAvailableMicrophones] = useState<MediaDevice[]>([])
@@ -82,6 +85,7 @@ export default function EditProfilePage() {
             defaultMicrophoneEnabled: profile.media_settings.defaultMicrophoneEnabled ?? true,
             cameraDeviceId: profile.media_settings.cameraDeviceId ?? null,
             microphoneDeviceId: profile.media_settings.microphoneDeviceId ?? null,
+            vdoNinjaCameraUrl: profile.media_settings.vdoNinjaCameraUrl ?? null,
           })
         }
       }
@@ -283,7 +287,15 @@ export default function EditProfilePage() {
         throw new Error("Профиль не был обновлен. Возможно, у вас нет прав на обновление или профиль не найден.")
       }
 
-      router.push("/profile")
+      // Проверяем, есть ли параметр returnTo для возврата в игру
+      const returnTo = searchParams.get("returnTo")
+      if (returnTo && returnTo.startsWith("/game/")) {
+        // Возвращаем игрока в игру
+        router.push(returnTo)
+      } else {
+        // Обычное перенаправление на страницу профиля
+        router.push("/profile")
+      }
     } catch (err) {
       console.error("Error saving profile:", {
         error: err,
@@ -319,7 +331,7 @@ export default function EditProfilePage() {
       <div className="absolute inset-0 bg-gradient-to-br from-orange-950/20 via-background to-background" />
 
       <header className="relative z-10 flex items-center gap-4 px-6 py-4 border-b border-border/50">
-        <Link href="/profile">
+        <Link href={searchParams.get("returnTo") || "/profile"}>
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-5 w-5" />
           </Button>
@@ -594,6 +606,36 @@ export default function EditProfilePage() {
                     </Select>
                   )}
                 </div>
+
+                <Separator />
+
+                {/* VDO.ninja Camera URL */}
+                <div className="space-y-2">
+                  <div>
+                    <Label htmlFor="vdoNinjaCameraUrl" className="text-base">
+                      Ссылка на камеру VDO.ninja
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Укажите ссылку на камеру из сайта vdo.ninja (например: https://vdo.ninja/?view=abc123)
+                    </p>
+                  </div>
+                  <Input
+                    id="vdoNinjaCameraUrl"
+                    type="url"
+                    value={mediaSettings.vdoNinjaCameraUrl || ""}
+                    onChange={(e) =>
+                      setMediaSettings({
+                        ...mediaSettings,
+                        vdoNinjaCameraUrl: e.target.value.trim() || null,
+                      })
+                    }
+                    placeholder="https://vdo.ninja/?view=..."
+                    className="font-mono text-sm"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Если указана ссылка VDO.ninja, она будет использоваться вместо обычной веб-камеры
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -608,7 +650,7 @@ export default function EditProfilePage() {
                   "Сохранить"
                 )}
               </Button>
-              <Link href="/profile">
+              <Link href={searchParams.get("returnTo") || "/profile"}>
                 <Button variant="outline">Отмена</Button>
               </Link>
             </div>

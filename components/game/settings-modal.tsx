@@ -107,7 +107,7 @@ export function SettingsModal({ gameState, isHost, onClose, onLeaveGame }: Setti
           {/* Account */}
           <div className="space-y-3">
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Аккаунт</h3>
-            <Link href="/profile">
+            <Link href={`/profile?returnTo=${encodeURIComponent(`/game/${gameState.roomCode}`)}`}>
               <Button variant="outline" className="w-full justify-start">
                 <User className="w-4 h-4 mr-2" />
                 Профиль и настройки

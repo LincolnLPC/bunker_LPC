@@ -19,6 +19,13 @@ app.prepare().then(() => {
   const httpServer = createServer(async (req, res) => {
     try {
       const parsedUrl = parse(req.url, true)
+      
+      // Skip Next.js handler for Socket.io path - let Socket.io handle it
+      if (parsedUrl.pathname === '/api/socket' || parsedUrl.pathname?.startsWith('/socket.io/')) {
+        // Don't handle this request - let Socket.io handle it
+        return
+      }
+      
       await handle(req, res, parsedUrl)
     } catch (err) {
       console.error('Error occurred handling', req.url, err)
@@ -35,6 +42,7 @@ app.prepare().then(() => {
       methods: ['GET', 'POST'],
     },
     transports: ['websocket', 'polling'],
+    allowEIO3: true, // Allow Engine.IO v3 clients
   })
 
   // Логирование всех событий Socket.io для диагностики

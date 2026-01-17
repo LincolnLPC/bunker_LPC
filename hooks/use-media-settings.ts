@@ -10,6 +10,7 @@ export interface MediaSettings {
   defaultMicrophoneEnabled: boolean
   cameraDeviceId?: string | null
   microphoneDeviceId?: string | null
+  vdoNinjaCameraUrl?: string | null
 }
 
 const DEFAULT_MEDIA_SETTINGS: MediaSettings = {
@@ -53,6 +54,7 @@ export function useMediaSettings() {
             profile.media_settings.defaultMicrophoneEnabled ?? DEFAULT_MEDIA_SETTINGS.defaultMicrophoneEnabled,
           cameraDeviceId: profile.media_settings.cameraDeviceId ?? null,
           microphoneDeviceId: profile.media_settings.microphoneDeviceId ?? null,
+          vdoNinjaCameraUrl: profile.media_settings.vdoNinjaCameraUrl ?? null,
         })
       } else {
         setSettings(DEFAULT_MEDIA_SETTINGS)

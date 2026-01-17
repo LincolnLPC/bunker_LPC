@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -31,6 +31,7 @@ interface ProfileData {
 
 export default function ProfilePage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -203,7 +204,7 @@ export default function ProfilePage() {
                   </Badge>
                 </div>
                 <p className="text-muted-foreground mb-4">@{profile.username}</p>
-                <Link href="/profile/edit">
+                <Link href={`/profile/edit${searchParams.get("returnTo") ? `?returnTo=${encodeURIComponent(searchParams.get("returnTo")!)}` : ""}`}>
                   <Button variant="outline" size="sm">
                     <Edit className="w-4 h-4 mr-2" />
                     Редактировать профиль
@@ -316,7 +317,7 @@ export default function ProfilePage() {
             <CardTitle>Настройки</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Link href="/profile/edit">
+            <Link href={`/profile/edit${searchParams.get("returnTo") ? `?returnTo=${encodeURIComponent(searchParams.get("returnTo")!)}` : ""}`}>
               <Button variant="outline" className="w-full justify-start">
                 <Edit className="w-4 h-4 mr-2" />
                 Редактировать профиль и настройки медиа

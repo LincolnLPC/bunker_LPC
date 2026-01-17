@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 
 // POST - Start game
 export async function POST(request: Request) {
@@ -63,18 +63,12 @@ export async function POST(request: Request) {
       .eq("room_id", roomId)
 
     // Update room to playing phase
-    // In manual mode, don't start timer (round_started_at stays null)
+    // Don't start timer yet - wait for catastrophe intro screen to be skipped
+    // Timer will be started when host skips the catastrophe intro
     const updateData: any = {
       phase: "playing",
       current_round: 1,
-    }
-    
-    // Only start timer in automatic mode
-    if (roundMode === "automatic") {
-      updateData.round_started_at = new Date().toISOString()
-    } else {
-      // In manual mode, clear any existing timer
-      updateData.round_started_at = null
+      round_started_at: null, // Keep null until catastrophe intro is skipped
     }
     
     const { error: updateError } = await supabase
@@ -85,10 +79,72 @@ export async function POST(request: Request) {
     if (updateError) throw updateError
 
     // Grant special cards to all players
+    console.log("[GameStart] === Starting card granting process ===")
+    console.log("[GameStart] Room ID:", roomId)
+    console.log("[GameStart] Players in room:", room.game_players?.length || 0)
+    
     try {
-      // TEMPORARY: All card types for testing
-      const cardTypes: Array<"exchange" | "immunity" | "reroll" | "reveal" | "steal" | "double-vote" | "no-vote-against" | "reshuffle" | "revote" | "replace-profession" | "replace-health"> = [
+      // Check if players are loaded
+      if (!room.game_players || room.game_players.length === 0) {
+        console.error("[GameStart] ❌ No players found in room - cannot grant cards")
+        console.error("[GameStart] Room data:", { roomId, hasGamePlayers: !!room.game_players, gamePlayersLength: room.game_players?.length })
+        // Don't fail game start, but log error
+      } else {
+        console.log(`[GameStart] ✅ Found ${room.game_players.length} players to grant cards to`)
+        console.log("[GameStart] Player IDs:", room.game_players.map((p: any) => ({ id: p.id, name: p.name, userId: p.user_id })))
+      }
+      
+      // All available card types
+      // Excluding: "exchange-skill" (Обмен навык) and all "reshuffle-*" cards (Давайте на чистоту)
+      const allCardTypes: Array<
+        | "exchange"
+        | "exchange-gender"
+        | "exchange-age"
+        | "exchange-profession"
+        | "exchange-bio"
+        | "exchange-health"
+        | "exchange-hobby"
+        | "exchange-phobia"
+        | "exchange-baggage"
+        | "exchange-fact"
+        | "exchange-special"
+        | "exchange-skill"
+        | "exchange-trait"
+        | "exchange-additional"
+        | "peek"
+        | "immunity"
+        | "reroll"
+        | "reveal"
+        | "steal"
+        | "double-vote"
+        | "no-vote-against"
+        | "reshuffle"
+        | "reshuffle-health"
+        | "reshuffle-bio"
+        | "reshuffle-fact"
+        | "reshuffle-baggage"
+        | "reshuffle-hobby"
+        | "revote"
+        | "replace-profession"
+        | "replace-health"
+      > = [
+        // Category-specific exchange cards
+        "exchange-gender",
+        "exchange-age",
+        "exchange-profession",
+        "exchange-bio",
+        "exchange-health",
+        "exchange-hobby",
+        "exchange-phobia",
+        "exchange-baggage",
+        "exchange-fact",
+        "exchange-special",
+        "exchange-skill", // Исключаем эту карту
+        "exchange-trait",
+        "exchange-additional",
+        // Other cards
         "exchange",
+        "peek",
         "immunity",
         "reroll",
         "reveal",
@@ -96,33 +152,141 @@ export async function POST(request: Request) {
         "double-vote",
         "no-vote-against",
         "reshuffle",
+        // Category-specific reshuffle cards (Давайте на чистоту) - все исключаем
+        "reshuffle-health",
+        "reshuffle-bio",
+        "reshuffle-fact",
+        "reshuffle-baggage",
+        "reshuffle-hobby",
         "revote",
         "replace-profession",
         "replace-health",
       ]
 
-      // TEMPORARY: Give ALL cards to each player for testing
-      const cardsToInsert = room.game_players.flatMap((player: any) => {
-        return cardTypes.map((cardType) => ({
+      // Исключаем карты:
+      // - exchange-skill (Обмен навык)
+      // - reshuffle (общая карта "Давайте на чистоту")
+      // НЕ исключаем категориальные reshuffle-* карты (Давайте на чистоту: Здоровья, Биологии и т.д.)
+      const cardTypes = allCardTypes.filter(
+        (cardType) => cardType !== "exchange-skill" && cardType !== "reshuffle"
+      )
+
+      console.log(`[GameStart] Available card types (after filtering): ${cardTypes.length} types`)
+      console.log("[GameStart] Card types list:", cardTypes)
+      console.log("[GameStart] Excluded cards: exchange-skill, reshuffle (general reshuffle card)")
+      console.log("[GameStart] Included category reshuffle cards: reshuffle-health, reshuffle-bio, reshuffle-fact, reshuffle-baggage, reshuffle-hobby")
+
+      // Выдаем одну случайную карту каждому игроку
+      const cardsToInsert = room.game_players.map((player: any) => {
+        // Выбираем случайную карту из доступных
+        const randomCardType = cardTypes[Math.floor(Math.random() * cardTypes.length)]
+        return {
           player_id: player.id,
           room_id: roomId,
-          card_type: cardType,
+          card_type: randomCardType,
           is_used: false,
-        }))
+        }
       })
 
+      console.log(`[GameStart] Prepared ${cardsToInsert.length} cards to insert (${room.game_players.length} players × 1 random card each)`)
+      console.log("[GameStart] Cards to grant:", cardsToInsert.map((c: any) => ({ playerId: c.player_id.substring(0, 8) + "...", cardType: c.card_type })))
+      
       if (cardsToInsert.length > 0) {
-        const { error: insertError } = await supabase.from("special_cards").insert(cardsToInsert)
+        console.log(`[GameStart] 🔄 Inserting ${cardsToInsert.length} special cards into database...`)
+        console.log("[GameStart] First 3 cards sample:", cardsToInsert.slice(0, 3))
+        
+        // Try to insert with regular client first (will work if RLS policy allows host to insert)
+        let insertError: any = null
+        let insertedCards: any = null
+        
+        const { error: insertError1, data: insertedCards1 } = await supabase
+          .from("special_cards")
+          .insert(cardsToInsert)
+          .select()
+
+        if (insertError1) {
+          console.warn("[GameStart] ⚠️ Insert with regular client failed, trying service role client:", {
+            code: insertError1.code,
+            message: insertError1.message,
+            details: insertError1.details,
+            hint: insertError1.hint,
+          })
+          
+          // If regular client fails, try with service role client (bypasses RLS)
+          try {
+            const serviceRoleClient = createServiceRoleClient()
+            const { error: insertError2, data: insertedCards2 } = await serviceRoleClient
+              .from("special_cards")
+              .insert(cardsToInsert)
+              .select()
+            
+            if (insertError2) {
+              insertError = insertError2
+              console.error("[GameStart] ❌ Service role client also failed:", insertError2)
+            } else {
+              insertedCards = insertedCards2
+              console.log("[GameStart] ✅ Service role client succeeded - cards granted via service role")
+            }
+          } catch (serviceRoleError: any) {
+            console.error("[GameStart] ❌ Failed to create service role client:", {
+              error: serviceRoleError,
+              message: serviceRoleError?.message,
+              hasServiceRoleKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+            })
+            insertError = insertError1 // Use original error
+          }
+        } else {
+          insertedCards = insertedCards1
+          console.log("[GameStart] ✅ Regular client succeeded - cards granted via host RLS policy")
+        }
 
         if (insertError) {
-          console.warn("[GameStart] Failed to grant special cards:", insertError)
+          console.error("[GameStart] ❌ Failed to grant special cards after all attempts:", insertError)
+          console.error("[GameStart] Error details:", {
+            code: insertError.code,
+            message: insertError.message,
+            details: insertError.details,
+            hint: insertError.hint,
+            error: insertError,
+          })
           // Don't fail game start if card granting fails
+        } else if (insertedCards) {
+          console.log(`[GameStart] ✅ Successfully granted ${insertedCards?.length || 0} special cards`)
+          console.log("[GameStart] First 3 inserted cards:", insertedCards?.slice(0, 3))
+          
+          // Verify cards were inserted for each player
+          const cardsByPlayer = new Map<string, number>()
+          insertedCards?.forEach((card: any) => {
+            const count = cardsByPlayer.get(card.player_id) || 0
+            cardsByPlayer.set(card.player_id, count + 1)
+          })
+          
+          console.log("[GameStart] Cards granted per player:")
+          cardsByPlayer.forEach((count, playerId) => {
+            const player = room.game_players.find((p: any) => p.id === playerId)
+            console.log(`[GameStart]   - Player ${player?.name || playerId}: ${count} cards`)
+          })
         }
+      } else {
+        console.warn("[GameStart] ⚠️ No cards to insert - cardTypes array might be empty or no players")
+        console.warn("[GameStart] Debug info:", {
+          playersCount: room.game_players?.length || 0,
+          cardTypesCount: cardTypes.length,
+          cardsToInsertLength: cardsToInsert.length,
+        })
       }
-    } catch (grantError) {
-      console.warn("[GameStart] Error granting special cards:", grantError)
+    } catch (grantError: any) {
+      console.error("[GameStart] ❌ Exception while granting special cards:", grantError)
+      console.error("[GameStart] Error details:", {
+        error: grantError,
+        errorName: grantError?.name,
+        errorMessage: grantError?.message,
+        errorStack: grantError?.stack,
+      })
       // Don't fail game start if card granting fails
     }
+    
+    console.log("[GameStart] === Card granting process completed ===")
 
     return NextResponse.json({ success: true })
   } catch (error) {

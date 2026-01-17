@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback, useRef } from "react"
+import { useEffect, useState, useCallback, useRef, useMemo } from "react"
 import { useParams, useRouter } from "next/navigation"
 import dynamic from "next/dynamic"
 import { GameHeader } from "@/components/game/game-header"
@@ -89,8 +89,17 @@ const SpecialCardUsedModal = dynamic(() => import("@/components/game/special-car
   loading: () => null,
 })
 
-// Import constants separately (they're small and needed immediately)
-import { DEFAULT_BUNKER_INFO } from "@/components/game/bunker-info"
+const BunkerCharacteristicRevealedModal = dynamic(() => import("@/components/game/bunker-characteristic-revealed-modal").then(mod => ({ default: mod.BunkerCharacteristicRevealedModal })), {
+  ssr: false,
+  loading: () => null,
+})
+
+const CatastropheIntroScreen = dynamic(() => import("@/components/game/catastrophe-intro-screen").then(mod => ({ default: mod.CatastropheIntroScreen })), {
+  ssr: false,
+  loading: () => null,
+})
+
+// BunkerInfoModal imported dynamically above
 
 export default function GamePage() {
   const params = useParams()
@@ -195,7 +204,27 @@ export default function GamePage() {
     cardDescription: string
     cardType: string
   } | null>(null)
+  
+  // State for bunker characteristic revealed modal
+  const [bunkerCharacteristicData, setBunkerCharacteristicData] = useState<{
+    characteristicName: string
+    characteristicType: "equipment" | "supply"
+  } | null>(null)
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
+
+  // Debug: Log when selectedPlayer changes
+  useEffect(() => {
+    if (selectedPlayer) {
+      console.log("[GamePage] Selected player changed:", {
+        playerId: selectedPlayer.id,
+        playerName: selectedPlayer.name,
+        isCurrentPlayer: selectedPlayer.id === currentPlayerId,
+      })
+    } else {
+      console.log("[GamePage] Selected player cleared")
+    }
+  }, [selectedPlayer, currentPlayerId])
+
   const [votedPlayerId, setVotedPlayerId] = useState<string | undefined>()
   const [voteResults, setVoteResults] = useState<{ playerId: string; votes: number }[]>([])
   const [eliminatedId, setEliminatedId] = useState<string | undefined>()
@@ -203,6 +232,7 @@ export default function GamePage() {
   const [sendingMessage, setSendingMessage] = useState(false)
   const [showDebugInfo, setShowDebugInfo] = useState(false) // Hidden by default
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false) // Hidden by default
+  // Removed catastropheIntroSkipped - now using server state (roundStartedAt) via realtime subscription
 
   // Load vote results when phase changes to results
   useEffect(() => {
@@ -647,6 +677,14 @@ export default function GamePage() {
   const eliminatedPlayers = gameState.players.filter((p) => p.isEliminated)
   const survivors = gameState.players.filter((p) => !p.isEliminated)
 
+  // Debug: Log when showCharacteristicsManager changes (after isHost is defined)
+  useEffect(() => {
+    console.log("[GamePage] showCharacteristicsManager changed:", {
+      isOpen: showCharacteristicsManager,
+      isHost,
+    })
+  }, [showCharacteristicsManager, isHost])
+
   // Handle voting
   const handleVote = useCallback((targetId: string) => {
     setVotedPlayerId(targetId)
@@ -955,36 +993,190 @@ export default function GamePage() {
   // Handle start game
   const handleStartGame = useCallback(async () => {
     await startGame()
+    // Don't manage local state - rely on server state
     // System message will be added via API
     refresh()
   }, [startGame, refresh])
 
+  // Handle skipping catastrophe intro screen
+  // This will update roundStartedAt on the server, which will trigger realtime updates for all players
+  const handleSkipCatastropheIntro = useCallback(async () => {
+    if (!gameState.id) return
+    try {
+      const response = await fetch("/api/game/catastrophe/skip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: gameState.id }),
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        console.error("Error skipping catastrophe intro:", error)
+        return
+      }
+
+      // Don't set local state - rely on server state update via realtime subscription
+      // All players will automatically get the update when roundStartedAt changes
+      refresh() // Refresh game state to start timer immediately
+    } catch (err) {
+      console.error("Error skipping catastrophe intro:", err)
+    }
+  }, [gameState.id, refresh])
+
+  // Check if catastrophe intro should be shown
+  // Show intro only if: playing phase, round 1, and timer hasn't started yet
+  // This will automatically hide for all players when host skips (roundStartedAt is set)
+  // Use useMemo to stabilize the condition and prevent flickering
+  const showCatastropheIntro = useMemo(() => {
+    // Only check when game is loaded and not refreshing
+    if (loading || !gameState.id) return false
+    
+    // Must be in playing phase, round 1
+    if (gameState.phase !== "playing" || gameState.currentRound !== 1) return false
+    
+    // Must have catastrophe set
+    if (!gameState.catastrophe) return false
+    
+    // Timer must not have started (roundStartedAt must be null/undefined)
+    if (gameState.roundStartedAt) return false
+    
+    return true
+  }, [
+    loading,
+    gameState.id,
+    gameState.phase,
+    gameState.currentRound,
+    gameState.roundStartedAt, // Only this should change to hide the intro
+    gameState.catastrophe,
+  ])
+  
+  // Debug logging for catastrophe intro display (only log when condition changes)
+  const prevShowCatastropheIntro = useRef(false)
+  useEffect(() => {
+    if (prevShowCatastropheIntro.current !== showCatastropheIntro) {
+      prevShowCatastropheIntro.current = showCatastropheIntro
+      console.log("[CatastropheIntro] Display state changed:", {
+        loading,
+        phase: gameState.phase,
+        currentRound: gameState.currentRound,
+        roundStartedAt: gameState.roundStartedAt,
+        hasCatastrophe: !!gameState.catastrophe,
+        shouldShow: showCatastropheIntro,
+      })
+    }
+  }, [showCatastropheIntro, loading, gameState.phase, gameState.currentRound, gameState.roundStartedAt, gameState.catastrophe])
+
   // Load special cards when game state changes
   useEffect(() => {
-    if (gameState?.phase !== "waiting" && currentPlayerId && useSpecialCard) {
+    console.log("[SpecialCards] 🔄 useEffect triggered:", {
+      phase: gameState?.phase,
+      playerId: currentPlayerId,
+      roomId: gameState?.id,
+      shouldLoad: gameState?.phase !== "waiting" && currentPlayerId && gameState?.id,
+    })
+    
+    if (gameState?.phase !== "waiting" && currentPlayerId && gameState?.id) {
       // Fetch special cards from API
       const loadCards = async () => {
         try {
+          console.log("[SpecialCards] 🔍 Loading cards for player:", currentPlayerId, "room:", gameState.id)
+          console.log("[SpecialCards] Request URL:", `/api/game/special-cards?playerId=${currentPlayerId}&roomId=${gameState.id}`)
+          
           const response = await fetch(
             `/api/game/special-cards?playerId=${currentPlayerId}&roomId=${gameState.id}`
           )
+          
+          console.log("[SpecialCards] 📥 Response status:", response.status, response.statusText)
+          
           if (response.ok) {
             const data = await response.json()
+            console.log("[SpecialCards] ✅ Received cards data:", data)
             // Transform database cards to component format
-            const transformedCards = (data.cards || []).map((card: any) => ({
-              id: card.id,
-              name: getCardName(card.card_type),
-              description: getCardDescription(card.card_type),
-              type: card.card_type,
-              isUsed: card.is_used,
-            }))
+            const rawCards = data.cards || []
+            console.log(`[SpecialCards] 📊 Raw cards count: ${rawCards.length}`)
+            
+            if (rawCards.length === 0) {
+              console.warn(`[SpecialCards] ⚠️ No cards returned from API for player ${currentPlayerId} in room ${gameState.id}`)
+              console.warn("[SpecialCards] This means cards were not granted when game started, or player ID doesn't match")
+              console.warn("[SpecialCards] Check server logs for [GameStart] messages to see if cards were granted")
+            }
+            
+            const transformedCards = rawCards.map((card: any) => {
+              const cardName = getCardName(card.card_type)
+              const cardDescription = getCardDescription(card.card_type)
+              console.log(`[SpecialCards] 🔄 Transforming card ${card.id}: type="${card.card_type || 'null'}", name="${cardName || 'empty'}", description="${cardDescription || 'empty'}", is_used=${card.is_used}`)
+              
+              // Filter out cards without name (invalid card types)
+              // Description can be empty for some cards, but name must exist
+              if (!cardName || cardName.trim() === "") {
+                console.warn(`[SpecialCards] ⚠️ Card ${card.id} has invalid type "${card.card_type || 'null'}" - missing name. Card data:`, card)
+                return null
+              }
+              
+              return {
+                id: card.id,
+                name: cardName,
+                description: cardDescription || `Карта типа "${card.card_type}"`, // Fallback description
+                type: card.card_type,
+                isUsed: card.is_used || false,
+              }
+            }).filter((card: any) => card !== null) // Remove invalid cards
+            
+            const invalidCount = rawCards.length - transformedCards.length
+            if (invalidCount > 0) {
+              console.warn(`[SpecialCards] ⚠️ Filtered out ${invalidCount} invalid card(s)`)
+            }
+            
+            console.log("[SpecialCards] ✅ Transformed cards (after filtering):", transformedCards)
+            console.log("[SpecialCards] 📊 Available cards (not used):", transformedCards.filter((c) => !c.isUsed))
+            
+            if (transformedCards.length === 0) {
+              // This is expected if cards haven't been granted yet or all cards are used
+              if (rawCards.length === 0) {
+                console.warn(`[SpecialCards] ⚠️ No cards found for player ${currentPlayerId} in room ${gameState.id}`)
+                console.warn("[SpecialCards] Possible reasons:")
+                console.warn("[SpecialCards]   1. Cards were not granted when game started")
+                console.warn("[SpecialCards]   2. Player ID doesn't match any granted cards")
+                console.warn("[SpecialCards]   3. Room ID doesn't match any granted cards")
+                console.warn("[SpecialCards] Check server logs for [GameStart] messages")
+              } else {
+                console.warn(`[SpecialCards] ⚠️ No valid cards after transformation! Raw cards: ${rawCards.length}, Invalid: ${invalidCount}`)
+                if (rawCards.length > 0) {
+                  console.warn("[SpecialCards] Raw card types:", rawCards.map((c: any) => c.card_type))
+                }
+              }
+            } else if (transformedCards.filter((c) => !c.isUsed).length === 0) {
+              console.log("[SpecialCards] ℹ️ All cards are marked as used (this is normal after using all cards)")
+            } else {
+              console.log(`[SpecialCards] ✅ Successfully loaded ${transformedCards.length} cards (${transformedCards.filter((c) => !c.isUsed).length} available)`)
+            }
+            
             setSpecialCards(transformedCards)
+          } else {
+            const errorData = await response.json().catch(() => ({}))
+            console.error("[SpecialCards] ❌ Failed to load cards:", {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorData,
+            })
           }
         } catch (err) {
-          console.error("Error loading special cards:", err)
+          console.error("[SpecialCards] ❌ Error loading special cards:", {
+            error: err,
+            errorName: err instanceof Error ? err.name : typeof err,
+            errorMessage: err instanceof Error ? err.message : String(err),
+          })
         }
       }
       loadCards()
+    } else {
+      console.log("[SpecialCards] ⏭️ Skipping load - conditions not met:", {
+        phase: gameState?.phase,
+        playerId: currentPlayerId,
+        roomId: gameState?.id,
+      })
+      // Clear cards when conditions are not met
+      setSpecialCards([])
     }
   }, [gameState?.phase, gameState?.id, currentPlayerId])
 
@@ -1009,6 +1201,13 @@ export default function GamePage() {
       })
     })
 
+    channel.on("broadcast", { event: "bunker_characteristic_revealed" }, ({ payload }) => {
+      setBunkerCharacteristicData({
+        characteristicName: payload.characteristicName,
+        characteristicType: payload.characteristicType,
+      })
+    })
+
     channel.subscribe()
     specialCardChannelRef.current = channel
 
@@ -1017,6 +1216,39 @@ export default function GamePage() {
       specialCardChannelRef.current = null
     }
   }, [gameState?.id])
+  
+  // Track previous bunker info to detect new reveals via state changes
+  const prevBunkerInfoRef = useRef<{ totalRevealed?: number } | null>(null)
+  
+  // Check for newly revealed bunker characteristic when gameState changes
+  useEffect(() => {
+    if (!gameState?.bunkerInfo) {
+      prevBunkerInfoRef.current = null
+      return
+    }
+    
+    const currentTotalRevealed = gameState.bunkerInfo.totalRevealed || 0
+    const currentRevealed = gameState.bunkerInfo.revealedCharacteristics || []
+    const prevTotalRevealed = prevBunkerInfoRef.current?.totalRevealed || 0
+    
+    // If totalRevealed increased, a new characteristic was revealed
+    if (currentTotalRevealed > prevTotalRevealed && currentRevealed.length > 0) {
+      // Get the most recently revealed characteristic (last in array)
+      const lastRevealed = currentRevealed[currentRevealed.length - 1]
+      
+      if (lastRevealed && lastRevealed.name && lastRevealed.type) {
+        setBunkerCharacteristicData({
+          characteristicName: lastRevealed.name,
+          characteristicType: lastRevealed.type,
+        })
+      }
+    }
+    
+    // Update ref with current state
+    prevBunkerInfoRef.current = {
+      totalRevealed: currentTotalRevealed,
+    }
+  }, [gameState?.bunkerInfo?.totalRevealed])
 
   // Handle Shift+U to toggle debug info and refresh indicator
   useEffect(() => {
@@ -1050,7 +1282,58 @@ export default function GamePage() {
     }
   }, [])
 
-  const getCardDescription = (type: string) => {
+  const getCardDescription = (type: string | null | undefined) => {
+    // Handle null/undefined types
+    if (!type || typeof type !== "string" || type.trim() === "") {
+      return ""
+    }
+    
+    // Category-specific exchange cards
+    if (type.startsWith("exchange-")) {
+      const category = type.replace("exchange-", "")
+      const categoryLabels: Record<string, string> = {
+        gender: "Пол",
+        age: "Возраст",
+        profession: "Профессия",
+        health: "Здоровье",
+        hobby: "Хобби",
+        phobia: "Фобия",
+        baggage: "Багаж",
+        fact: "Факт",
+        special: "Особое",
+        bio: "Биология",
+        skill: "Навык",
+        trait: "Черта",
+        additional: "Дополнительное",
+      }
+      const categoryLabel = categoryLabels[category] || category
+      // Only return valid description if category is recognized
+      if (categoryLabels[category]) {
+        return `Обменяйте свою характеристику категории "${categoryLabel}" с другим игроком`
+      }
+      // Invalid exchange category
+      return ""
+    }
+    
+    // Category-specific reshuffle cards
+    if (type.startsWith("reshuffle-")) {
+      const category = type.replace("reshuffle-", "")
+      const categoryLabels: Record<string, string> = {
+        health: "здоровья",
+        bio: "биологии",
+        fact: "фактов",
+        baggage: "багажа",
+        hobby: "хобби",
+      }
+      const categoryLabel = categoryLabels[category] || category
+      // Only return valid description if category is recognized
+      if (categoryLabels[category]) {
+        return `Соберите все открытые карты категории "${categoryLabel}", перемешайте и перераздайте`
+      }
+      // Invalid reshuffle category
+      return ""
+    }
+    
     const descriptions: Record<string, string> = {
       exchange: "Обменяйте одну из своих характеристик с другим игроком",
       peek: "Посмотрите одну скрытую характеристику другого игрока",
@@ -1068,7 +1351,58 @@ export default function GamePage() {
     return descriptions[type] || ""
   }
 
-  const getCardName = (type: string) => {
+  const getCardName = (type: string | null | undefined) => {
+    // Handle null/undefined types
+    if (!type || typeof type !== "string" || type.trim() === "") {
+      return ""
+    }
+    
+    // Category-specific exchange cards
+    if (type.startsWith("exchange-")) {
+      const category = type.replace("exchange-", "")
+      const categoryLabels: Record<string, string> = {
+        gender: "Пол",
+        age: "Возраст",
+        profession: "Профессия",
+        health: "Здоровье",
+        hobby: "Хобби",
+        phobia: "Фобия",
+        baggage: "Багаж",
+        fact: "Факт",
+        special: "Особое",
+        bio: "Биология",
+        skill: "Навык",
+        trait: "Черта",
+        additional: "Дополнительное",
+      }
+      const categoryLabel = categoryLabels[category] || category
+      // Only return valid name if category is recognized, otherwise empty string
+      if (categoryLabels[category]) {
+        return `Обмен ${categoryLabel.toLowerCase()}`
+      }
+      // Invalid exchange category
+      return ""
+    }
+    
+    // Category-specific reshuffle cards
+    if (type.startsWith("reshuffle-")) {
+      const category = type.replace("reshuffle-", "")
+      const categoryLabels: Record<string, string> = {
+        health: "Здоровья",
+        bio: "Биологии",
+        fact: "Фактов",
+        baggage: "Багажа",
+        hobby: "Хобби",
+      }
+      const categoryLabel = categoryLabels[category] || category
+      // Only return valid name if category is recognized, otherwise empty string
+      if (categoryLabels[category]) {
+        return `Давайте начистоту: ${categoryLabel}`
+      }
+      // Invalid reshuffle category
+      return ""
+    }
+    
     const names: Record<string, string> = {
       exchange: "Обмен характеристикой",
       peek: "Подглядывание",
@@ -1083,7 +1417,8 @@ export default function GamePage() {
       "replace-profession": "Фейковый диплом",
       "replace-health": "Просроченные таблетки",
     }
-    return names[type] || type
+    // Return empty string for unknown types instead of the type itself
+    return names[type] || ""
   }
 
   const handleUseSpecialCard = useCallback(
@@ -1113,14 +1448,8 @@ export default function GamePage() {
           })
         }
 
-        // Add system message
-        const systemMessage: ChatMessage = {
-          id: Math.random().toString(36).substring(7),
-          message: `${currentPlayer?.name} использовал карту: ${card.name}`,
-          type: "system",
-          timestamp: new Date(),
-        }
-        setChatMessages((prev) => [...prev, systemMessage])
+        // System message will be added by API via realtime subscription
+        // No need to manually add it here - it will appear in gameState.chatMessages
       } catch (err) {
         // Error is already handled in useSpecialCard
         // Don't log expected errors for eliminated players
@@ -1269,6 +1598,17 @@ export default function GamePage() {
       )}
       <OnlineStatus />
 
+      {/* Catastrophe Intro Screen */}
+      {showCatastropheIntro && gameState.catastrophe && (
+        <CatastropheIntroScreen
+          catastrophe={gameState.catastrophe}
+          bunkerDescription={gameState.bunkerDescription}
+          roundMode={gameState.settings?.roundMode || "automatic"}
+          isHost={isHost}
+          onContinue={handleSkipCatastropheIntro}
+        />
+      )}
+
       {/* Media error banner */}
       {mediaError && !localStream && (
         <div className="bg-destructive/20 border-b border-destructive/50 px-4 py-2 text-sm text-destructive">
@@ -1288,49 +1628,54 @@ export default function GamePage() {
         </div>
       )}
 
-      <GameHeader
-        gameState={gameState}
-        unreadMessagesCount={unreadMessagesCount}
-        onOpenChat={() => {
-          setShowChat(true)
-          // Mark messages as read when opening chat
-          if (chatMessages.length > 0) {
-            lastReadMessageIdRef.current = chatMessages[chatMessages.length - 1]?.id || null
-            setUnreadMessagesCount(0)
-          }
-        }}
-        unreadMessagesCount={unreadMessagesCount}
-        onOpenSettings={() => setShowSettings(true)}
-        onOpenJournal={() => setShowJournal(true)}
-        onOpenAltar={() => setShowAltar(true)}
-        onTimerEnd={() => {
-          // Автоматически начать голосование когда таймер истекает
-          // Проверяем, что игра еще в фазе playing (может быть уже автоматически перешла через сервер)
-          if (gameState.phase === "playing" && isHost) {
-            startVoting().catch((err) => {
-              // Если произошла ошибка (например, игра уже в voting), просто обновим состояние
-              console.log("[Timer] Error starting voting from timer:", err)
-              refresh()
-            })
-          }
-        }}
-      />
+      {/* Hide main game content when showing catastrophe intro */}
+      {/* Fallback: Always show content if not in waiting/finished phase and catastrophe intro conditions are not met */}
+      {(!showCatastropheIntro || gameState.phase !== "playing" || gameState.currentRound !== 1) && (
+        <>
+          <GameHeader
+            gameState={gameState}
+            unreadMessagesCount={unreadMessagesCount}
+            onOpenChat={() => {
+              setShowChat(true)
+              // Mark messages as read when opening chat
+              if (chatMessages.length > 0) {
+                lastReadMessageIdRef.current = chatMessages[chatMessages.length - 1]?.id || null
+                setUnreadMessagesCount(0)
+              }
+            }}
+            unreadMessagesCount={unreadMessagesCount}
+            onOpenSettings={() => setShowSettings(true)}
+            onOpenJournal={() => setShowJournal(true)}
+            onOpenAltar={() => setShowAltar(true)}
+            onTimerEnd={() => {
+              // Автоматически начать голосование когда таймер истекает
+              // Проверяем, что игра еще в фазе playing (может быть уже автоматически перешла через сервер)
+              if (gameState.phase === "playing" && isHost) {
+                startVoting().catch((err) => {
+                  // Если произошла ошибка (например, игра уже в voting), просто обновим состояние
+                  console.log("[Timer] Error starting voting from timer:", err)
+                  refresh()
+                })
+              }
+            }}
+          />
 
-      <CatastropheBanner catastrophe={gameState.catastrophe} bunkerDescription={gameState.bunkerDescription} />
+          <CatastropheBanner catastrophe={gameState.catastrophe} bunkerDescription={gameState.bunkerDescription} />
 
-      <main className="flex-1 pb-20">
-        <PlayerGrid
-          players={playersWithStream}
-          maxPlayers={gameState.maxPlayers}
-          currentPlayerId={currentPlayerId}
-          onToggleCharacteristic={toggleCharacteristic}
-          onSelectPlayer={setSelectedPlayer}
-          mutedPlayers={mutedPlayers}
-          onTogglePlayerMute={togglePlayerMute}
-        />
-      </main>
+          <main className="flex-1 pb-20">
+            <PlayerGrid
+              players={playersWithStream}
+              maxPlayers={gameState.maxPlayers}
+              currentPlayerId={currentPlayerId}
+              onToggleCharacteristic={toggleCharacteristic}
+              onSelectPlayer={setSelectedPlayer}
+              mutedPlayers={mutedPlayers}
+              onTogglePlayerMute={togglePlayerMute}
+              vdoNinjaCameraUrl={mediaSettings.vdoNinjaCameraUrl}
+            />
+          </main>
 
-      <GameControls
+          <GameControls
         isHost={isHost}
         currentPhase={gameState.phase}
         allPlayersMuted={allPlayersMuted}
@@ -1431,8 +1776,20 @@ export default function GamePage() {
         }}
         onRevealCharacteristic={() => setShowRevealModal(true)}
         onViewMyCharacteristics={() => {
+          console.log("[GameControls] onViewMyCharacteristics clicked", {
+            currentPlayerId,
+            currentPlayer: currentPlayer ? { id: currentPlayer.id, name: currentPlayer.name } : null,
+            playersCount: gameState.players.length,
+            allPlayerIds: gameState.players.map(p => p.id),
+          })
           if (currentPlayer) {
             setSelectedPlayer(currentPlayer)
+            console.log("[GameControls] Selected player set:", currentPlayer.id)
+          } else {
+            console.warn("[GameControls] ⚠️ Cannot open characteristics - currentPlayer is null/undefined", {
+              currentPlayerId,
+              players: gameState.players.map(p => ({ id: p.id, name: p.name })),
+            })
           }
         }}
         onStartVoting={startVoting}
@@ -1440,12 +1797,25 @@ export default function GamePage() {
         onEndVoting={handleEndVoting}
         onOpenSpecialCards={() => setShowSpecialCards(true)}
         onOpenBunkerInfo={() => setShowBunkerInfo(true)}
-        onOpenCharacteristicsManager={() => setShowCharacteristicsManager(true)}
+        onOpenCharacteristicsManager={() => {
+          console.log("[GameControls] onOpenCharacteristicsManager clicked", {
+            isHost,
+            showCharacteristicsManager,
+          })
+          if (isHost) {
+            setShowCharacteristicsManager(true)
+            console.log("[GameControls] Characteristics manager opened")
+          } else {
+            console.warn("[GameControls] ⚠️ Cannot open characteristics manager - user is not host")
+          }
+        }}
         roundMode={gameState.settings?.roundMode || "automatic"}
         onOpenVoteCounts={
           gameState.phase === "voting" ? () => setShowVoteCountsModal(true) : undefined
         }
-      />
+          />
+        </>
+      )}
 
       {/* Voting Panel */}
       {gameState.phase === "voting" && voteResults.length === 0 && showVotingPanel && (
@@ -1512,7 +1882,10 @@ export default function GamePage() {
       {currentPlayerId && (
         <SpecialActionCards
           isOpen={showSpecialCards}
-          onClose={() => setShowSpecialCards(false)}
+          onClose={() => {
+            console.log("[GamePage] Closing special cards modal")
+            setShowSpecialCards(false)
+          }}
           cards={specialCards}
           players={playersWithStream}
           currentPlayerId={currentPlayerId}
@@ -1520,11 +1893,13 @@ export default function GamePage() {
         />
       )}
 
-      <BunkerInfoModal
-        isOpen={showBunkerInfo}
-        onClose={() => setShowBunkerInfo(false)}
-        bunkerInfo={DEFAULT_BUNKER_INFO}
-      />
+      {gameState?.bunkerDescription && gameState?.bunkerInfo && (
+        <BunkerInfoModal
+          isOpen={showBunkerInfo}
+          onClose={() => setShowBunkerInfo(false)}
+          bunkerInfo={gameState.bunkerInfo}
+        />
+      )}
 
       {/* Characteristic Reveal Modal */}
       {showRevealModal && currentPlayer && (
@@ -1544,6 +1919,26 @@ export default function GamePage() {
           cardDescription={usedCardData.cardDescription}
           cardType={usedCardData.cardType}
           onClose={() => setUsedCardData(null)}
+        />
+      )}
+
+      {/* Bunker Characteristic Revealed Modal */}
+      {bunkerCharacteristicData && (
+        <BunkerCharacteristicRevealedModal
+          isOpen={true}
+          characteristicName={bunkerCharacteristicData.characteristicName}
+          characteristicType={bunkerCharacteristicData.characteristicType}
+          onClose={() => setBunkerCharacteristicData(null)}
+        />
+      )}
+
+      {/* Bunker Characteristic Revealed Modal */}
+      {bunkerCharacteristicData && (
+        <BunkerCharacteristicRevealedModal
+          isOpen={true}
+          characteristicName={bunkerCharacteristicData.characteristicName}
+          characteristicType={bunkerCharacteristicData.characteristicType}
+          onClose={() => setBunkerCharacteristicData(null)}
         />
       )}
       
@@ -1604,7 +1999,7 @@ export default function GamePage() {
       {/* Characteristics Manager (Host only) */}
       {isHost && (
         <CharacteristicsManager
-          isOpen={showCharacteristicsManager}
+            isOpen={showCharacteristicsManager}
           onClose={() => setShowCharacteristicsManager(false)}
           players={playersWithStream}
           currentPlayerId={currentPlayerId}

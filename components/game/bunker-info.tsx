@@ -3,21 +3,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Home, Users, Clock, Package, Zap, Droplets, Utensils, Shield } from "lucide-react"
-
-interface BunkerInfo {
-  description: string
-  area: number
-  capacity: number
-  duration: string
-  supplies: {
-    food: string
-    water: string
-    power: string
-    medical: string
-  }
-  features: string[]
-  threats: string[]
-}
+import type { BunkerInfo } from "@/types/game"
 
 interface BunkerInfoProps {
   isOpen: boolean
@@ -40,7 +26,7 @@ export function BunkerInfoModal({ isOpen, onClose, bunkerInfo }: BunkerInfoProps
           <div className="space-y-6">
             {/* Description */}
             <div className="p-4 bg-[oklch(0.15_0.02_60)] rounded-lg border border-[oklch(0.25_0.01_60)]">
-              <p className="text-sm leading-relaxed">{bunkerInfo.description}</p>
+              <p className="text-sm leading-relaxed whitespace-pre-wrap">{bunkerInfo.description}</p>
             </div>
 
             {/* Stats Grid */}
@@ -62,69 +48,68 @@ export function BunkerInfoModal({ isOpen, onClose, bunkerInfo }: BunkerInfoProps
               </div>
             </div>
 
-            {/* Supplies */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-[oklch(0.7_0.2_50)]">Запасы</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center gap-2 p-2 bg-[oklch(0.15_0.02_60)] rounded-lg">
-                  <Utensils className="w-4 h-4 text-[oklch(0.7_0.2_50)]" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Еда</p>
-                    <p className="text-sm">{bunkerInfo.supplies.food}</p>
+            {/* Supplies - Show only revealed */}
+            {bunkerInfo.revealedCharacteristics && bunkerInfo.revealedCharacteristics.length > 0 && (
+              <>
+                {bunkerInfo.revealedCharacteristics.filter((c: any) => c.type === "supply").length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-[oklch(0.7_0.2_50)]">Запасы</h3>
+                    <div className="grid grid-cols-1 gap-2">
+                      {bunkerInfo.revealedCharacteristics
+                        .filter((c: any) => c.type === "supply")
+                        .map((char: any, index: number) => (
+                          <div key={index} className="flex items-center gap-2 p-2 bg-[oklch(0.15_0.02_60)] rounded-lg">
+                            <Package className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                            <p className="text-sm">{char.name}</p>
+                          </div>
+                        ))}
+                    </div>
                   </div>
-                </div>
-                <div className="flex items-center gap-2 p-2 bg-[oklch(0.15_0.02_60)] rounded-lg">
-                  <Droplets className="w-4 h-4 text-cyan-400" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Вода</p>
-                    <p className="text-sm">{bunkerInfo.supplies.water}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 p-2 bg-[oklch(0.15_0.02_60)] rounded-lg">
-                  <Zap className="w-4 h-4 text-yellow-400" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Энергия</p>
-                    <p className="text-sm">{bunkerInfo.supplies.power}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 p-2 bg-[oklch(0.15_0.02_60)] rounded-lg">
-                  <Package className="w-4 h-4 text-green-400" />
-                  <div>
-                    <p className="text-xs text-muted-foreground">Медикаменты</p>
-                    <p className="text-sm">{bunkerInfo.supplies.medical}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
+                )}
 
-            {/* Features */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-[oklch(0.7_0.2_50)]">Оснащение</h3>
-              <ul className="space-y-1">
-                {bunkerInfo.features.map((feature, index) => (
-                  <li key={index} className="flex items-center gap-2 text-sm p-2 bg-[oklch(0.15_0.02_60)] rounded">
-                    <Shield className="w-3 h-3 text-green-400" />
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-            </div>
+                {/* Equipment - Show only revealed */}
+                {bunkerInfo.revealedCharacteristics.filter((c: any) => c.type === "equipment").length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="text-sm font-semibold text-[oklch(0.7_0.2_50)]">Оснащение</h3>
+                    <ul className="space-y-1">
+                      {bunkerInfo.revealedCharacteristics
+                        .filter((c: any) => c.type === "equipment")
+                        .map((charItem: any, index: number) => (
+                          <li key={index} className="flex items-center gap-2 text-sm p-2 bg-[oklch(0.15_0.02_60)] rounded">
+                            <Shield className="w-3 h-3 text-green-400 flex-shrink-0" />
+                            {charItem.name}
+                          </li>
+                        ))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Show message if no characteristics revealed yet */}
+            {(!bunkerInfo.revealedCharacteristics || bunkerInfo.revealedCharacteristics.length === 0) && (
+              <div className="text-center py-4 text-muted-foreground text-sm">
+                Характеристики бункера будут открываться по мере исследования (по одной на каждый раунд)
+              </div>
+            )}
 
             {/* Threats */}
-            <div className="space-y-2">
-              <h3 className="text-sm font-semibold text-destructive">Угрозы</h3>
-              <ul className="space-y-1">
-                {bunkerInfo.threats.map((threat, index) => (
-                  <li
-                    key={index}
-                    className="flex items-center gap-2 text-sm p-2 bg-[oklch(0.15_0.02_60)] rounded text-destructive/80"
-                  >
-                    <span className="w-2 h-2 bg-destructive rounded-full" />
-                    {threat}
-                  </li>
-                ))}
-              </ul>
-            </div>
+            {bunkerInfo.threats && bunkerInfo.threats.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold text-destructive">Угрозы</h3>
+                <ul className="space-y-1">
+                  {bunkerInfo.threats.map((threat, index) => (
+                    <li
+                      key={index}
+                      className="flex items-center gap-2 text-sm p-2 bg-[oklch(0.15_0.02_60)] rounded text-destructive/80"
+                    >
+                      <span className="w-2 h-2 bg-destructive rounded-full flex-shrink-0" />
+                      {threat}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
         </ScrollArea>
       </DialogContent>

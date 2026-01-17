@@ -108,8 +108,28 @@ export default function CreateGamePage() {
 
     try {
       // Determine catastrophe and bunker
-      const catastrophe = customCatastrophe.trim() || selectedCatastrophe || SAMPLE_CATASTROPHES[0]
-      const bunkerDescription = customBunker.trim() || selectedBunker || SAMPLE_BUNKERS[0]
+      let catastrophe = customCatastrophe.trim()
+      let bunkerDescription = customBunker.trim()
+      
+      if (!catastrophe) {
+        if (selectedCatastrophe === "random") {
+          catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
+        } else if (selectedCatastrophe && selectedCatastrophe !== "custom") {
+          catastrophe = selectedCatastrophe
+        } else {
+          catastrophe = SAMPLE_CATASTROPHES[0]
+        }
+      }
+      
+      if (!bunkerDescription) {
+        if (selectedBunker === "random") {
+          bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
+        } else if (selectedBunker && selectedBunker !== "custom") {
+          bunkerDescription = selectedBunker
+        } else {
+          bunkerDescription = SAMPLE_BUNKERS[0]
+        }
+      }
 
       // Prepare characteristics settings
       const characteristicsSettings: Record<string, { enabled: boolean; customList?: string[] }> = {}
@@ -417,6 +437,7 @@ export default function CreateGamePage() {
                   <SelectValue placeholder="Выберите катастрофу или создайте свою" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="random">🎲 Случайная катастрофа</SelectItem>
                   {SAMPLE_CATASTROPHES.map((cat) => (
                     <SelectItem key={cat} value={cat}>
                       {cat}
@@ -438,10 +459,16 @@ export default function CreateGamePage() {
                   </p>
                 </div>
               )}
-              {selectedCatastrophe && selectedCatastrophe !== "custom" && (
+              {selectedCatastrophe && selectedCatastrophe !== "custom" && selectedCatastrophe !== "random" && (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-border/50">
                   <AlertTriangle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                   <p className="text-sm text-muted-foreground">{selectedCatastrophe}</p>
+                </div>
+              )}
+              {selectedCatastrophe === "random" && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-border/50">
+                  <AlertTriangle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">🎲 Катастрофа будет выбрана случайным образом при создании игры</p>
                 </div>
               )}
             </div>
@@ -454,6 +481,7 @@ export default function CreateGamePage() {
                   <SelectValue placeholder="Выберите бункер или создайте свой" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="random">🎲 Случайный бункер</SelectItem>
                   {SAMPLE_BUNKERS.map((bunker, index) => (
                     <SelectItem key={index} value={bunker}>
                       {bunker.length > 60 ? `${bunker.substring(0, 60)}...` : bunker}
@@ -475,10 +503,16 @@ export default function CreateGamePage() {
                   </p>
                 </div>
               )}
-              {selectedBunker && selectedBunker !== "custom" && (
+              {selectedBunker && selectedBunker !== "custom" && selectedBunker !== "random" && (
                 <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-border/50">
                   <Home className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
                   <p className="text-sm text-muted-foreground">{selectedBunker}</p>
+                </div>
+              )}
+              {selectedBunker === "random" && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-muted/50 border border-border/50">
+                  <Home className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-muted-foreground">🎲 Бункер будет выбран случайным образом при создании игры</p>
                 </div>
               )}
             </div>

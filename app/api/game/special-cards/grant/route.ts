@@ -65,11 +65,73 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No players in room" }, { status: 400 })
     }
 
-    // Card types to grant to each player
-    const cardTypes: Array<"exchange" | "peek" | "immunity" | "reroll" | "reveal" | "steal"> = [
+    // TEMPORARY: All card types for testing
+    // Card types to grant to each player - ALL types
+    const cardTypes: Array<
+      | "exchange"
+      | "exchange-gender"
+      | "exchange-age"
+      | "exchange-profession"
+      | "exchange-bio"
+      | "exchange-health"
+      | "exchange-hobby"
+      | "exchange-phobia"
+      | "exchange-baggage"
+      | "exchange-fact"
+      | "exchange-special"
+      | "exchange-skill"
+      | "exchange-trait"
+      | "exchange-additional"
+      | "peek"
+      | "immunity"
+      | "reroll"
+      | "reveal"
+      | "steal"
+      | "double-vote"
+      | "no-vote-against"
+      | "reshuffle"
+      | "reshuffle-health"
+      | "reshuffle-bio"
+      | "reshuffle-fact"
+      | "reshuffle-baggage"
+      | "reshuffle-hobby"
+      | "revote"
+      | "replace-profession"
+      | "replace-health"
+    > = [
+      // Category-specific exchange cards
+      "exchange-gender",
+      "exchange-age",
+      "exchange-profession",
+      "exchange-bio",
+      "exchange-health",
+      "exchange-hobby",
+      "exchange-phobia",
+      "exchange-baggage",
+      "exchange-fact",
+      "exchange-special",
+      "exchange-skill",
+      "exchange-trait",
+      "exchange-additional",
+      // Other cards
       "exchange",
       "peek",
       "immunity",
+      "reroll",
+      "reveal",
+      "steal",
+      "double-vote",
+      "no-vote-against",
+      "reshuffle",
+      // Category-specific reshuffle cards
+      "reshuffle-health",
+      "reshuffle-bio",
+      "reshuffle-fact",
+      "reshuffle-baggage",
+      "reshuffle-hobby",
+      "revote",
+      "replace-profession",
+      "replace-health",
     ]
 
     // Grant cards to each player

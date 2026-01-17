@@ -42,6 +42,11 @@ export function SpecialCardUsedModal({
   }, [isOpen, onClose])
 
   const getCardIcon = (type: string) => {
+    // All exchange cards use the same icon
+    if (type.startsWith("exchange-")) {
+      return <Shuffle className="w-16 h-16" />
+    }
+    
     switch (type) {
       case "exchange":
         return <Shuffle className="w-16 h-16" />
