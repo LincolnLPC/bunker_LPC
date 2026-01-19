@@ -18,6 +18,7 @@ interface VoteCountsModalProps {
   currentPlayerId: string
   onVote?: (targetId: string) => Promise<void>
   votedPlayerId?: string
+  isSpectator?: boolean
 }
 
 export function VoteCountsModal({
@@ -29,6 +30,7 @@ export function VoteCountsModal({
   currentPlayerId,
   onVote,
   votedPlayerId,
+  isSpectator = false,
 }: VoteCountsModalProps) {
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
@@ -39,6 +41,7 @@ export function VoteCountsModal({
     setLoading(true)
     try {
       const supabase = createClient()
+      console.log("[VoteCountsModal] Fetching votes for:", { roomId, currentRound, isSpectator })
       const { data: votes, error } = await supabase
         .from("votes")
         .select("target_id, vote_weight")
@@ -47,10 +50,13 @@ export function VoteCountsModal({
 
       if (error) {
         console.error("[VoteCountsModal] Error fetching votes:", error)
+        setVoteCounts({})
         return
       }
       
-      if (votes) {
+      console.log("[VoteCountsModal] Raw votes data:", votes)
+      
+      if (votes && votes.length > 0) {
         const counts: Record<string, number> = {}
         for (const vote of votes) {
           const weight = vote.vote_weight || 1
@@ -59,11 +65,12 @@ export function VoteCountsModal({
         setVoteCounts(counts)
         console.log("[VoteCountsModal] Fetched vote counts:", counts)
       } else {
-        console.log("[VoteCountsModal] No votes found")
+        console.log("[VoteCountsModal] No votes found for room:", roomId, "round:", currentRound)
         setVoteCounts({})
       }
     } catch (err) {
-      console.error("Error fetching vote counts:", err)
+      console.error("[VoteCountsModal] Error fetching vote counts:", err)
+      setVoteCounts({})
     } finally {
       setLoading(false)
     }
@@ -71,6 +78,7 @@ export function VoteCountsModal({
 
   useEffect(() => {
     if (isOpen && roomId && currentRound !== undefined) {
+      // Fetch immediately when modal opens
       fetchVoteCounts()
       // Auto-refresh every 2 seconds as fallback
       const interval = setInterval(fetchVoteCounts, 2000)
@@ -108,8 +116,11 @@ export function VoteCountsModal({
   useEffect(() => {
     if (!isOpen) {
       setSelectedPlayerId(null)
+    } else if (isSpectator) {
+      // For spectators, always show results tab
+      setActiveTab("results")
     }
-  }, [isOpen])
+  }, [isOpen, isSpectator])
 
   const sortedResults = Object.entries(voteCounts)
     .map(([playerId, count]) => ({
@@ -140,14 +151,18 @@ export function VoteCountsModal({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className={isSpectator ? "grid w-full grid-cols-1" : "grid w-full grid-cols-2"}>
             <TabsTrigger value="results">Голоса</TabsTrigger>
-            <TabsTrigger value="vote">Проголосовать</TabsTrigger>
+            {!isSpectator && <TabsTrigger value="vote">Проголосовать</TabsTrigger>}
           </TabsList>
 
           <TabsContent value="results" className="space-y-4 mt-4">
             <div className="space-y-2 max-h-[50vh] overflow-y-auto">
-              {sortedResults.length > 0 ? (
+              {loading && sortedResults.length === 0 ? (
+                <div className="text-center text-muted-foreground py-8">
+                  Загрузка голосов...
+                </div>
+              ) : sortedResults.length > 0 ? (
                 sortedResults.map((result) => {
                   const player = players.find((p) => p.id === result.playerId && !p.isEliminated)
                   if (!player) return null

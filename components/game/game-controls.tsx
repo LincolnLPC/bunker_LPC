@@ -5,6 +5,7 @@ import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Spa
 
 interface GameControlsProps {
   isHost: boolean
+  isSpectator?: boolean
   currentPhase: "waiting" | "playing" | "voting" | "results" | "finished"
   onToggleMic?: () => void
   onToggleVideo?: () => void
@@ -28,6 +29,7 @@ interface GameControlsProps {
 
 export function GameControls({
   isHost,
+  isSpectator = false,
   currentPhase,
   onToggleMic,
   onToggleVideo,
@@ -101,7 +103,7 @@ export function GameControls({
         {/* Game actions */}
         {currentPhase === "playing" && (
           <>
-            {onViewMyCharacteristics && (
+            {!isSpectator && onViewMyCharacteristics && (
               <Button
                 variant="outline"
                 className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
@@ -112,14 +114,16 @@ export function GameControls({
               </Button>
             )}
 
-            <Button
-              variant="outline"
-              className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
-              onClick={onOpenSpecialCards}
-            >
-              <Sparkles className="w-4 h-4 mr-2" />
-              Спец. карты
-            </Button>
+            {!isSpectator && (
+              <Button
+                variant="outline"
+                className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                onClick={onOpenSpecialCards}
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Спец. карты
+              </Button>
+            )}
 
             <Button
               variant="outline"

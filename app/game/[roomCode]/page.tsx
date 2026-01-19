@@ -674,8 +674,49 @@ export default function GamePage() {
   }, [])
   
   const isHost = gameState.hostId === currentUserId
+  
+  // Check if user is a spectator (no currentPlayerId and user is in spectators list)
+  const isSpectator = !currentPlayerId && currentUserId && gameState.spectators?.some((s) => s.userId === currentUserId)
   const eliminatedPlayers = gameState.players.filter((p) => p.isEliminated)
   const survivors = gameState.players.filter((p) => !p.isEliminated)
+
+  // Handle host closing tab/window - close the room
+  useEffect(() => {
+    if (!isHost || !gameState.id || !currentPlayerId) return
+
+    const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
+      // Try to close the room when host closes the tab
+      // Use sendBeacon for reliable delivery even when page is closing
+      const roomId = gameState.id
+      const playerId = currentPlayerId
+      
+      if (roomId && playerId) {
+        try {
+          // Use sendBeacon for reliable delivery
+          const data = JSON.stringify({ roomId, playerId })
+          navigator.sendBeacon("/api/game/leave", new Blob([data], { type: "application/json" }))
+        } catch (err) {
+          console.error("[GamePage] Error sending leave request on unload:", err)
+        }
+      }
+    }
+
+    const handleVisibilityChange = async () => {
+      // If page becomes hidden (tab switched, minimized, etc.), check if we should close room
+      if (document.hidden && gameState.id && currentPlayerId) {
+        // Don't close immediately - wait a bit to see if user comes back
+        // This is handled by heartbeat mechanism instead
+      }
+    }
+
+    window.addEventListener("beforeunload", handleBeforeUnload)
+    document.addEventListener("visibilitychange", handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload)
+      document.removeEventListener("visibilitychange", handleVisibilityChange)
+    }
+  }, [isHost, gameState.id, currentPlayerId])
 
   // Debug: Log when showCharacteristicsManager changes (after isHost is defined)
   useEffect(() => {
@@ -1677,6 +1718,7 @@ export default function GamePage() {
 
           <GameControls
         isHost={isHost}
+        isSpectator={isSpectator}
         currentPhase={gameState.phase}
         allPlayersMuted={allPlayersMuted}
         onToggleAllPlayersMute={toggleAllPlayersMute}
@@ -1817,8 +1859,8 @@ export default function GamePage() {
         </>
       )}
 
-      {/* Voting Panel */}
-      {gameState.phase === "voting" && voteResults.length === 0 && showVotingPanel && (
+      {/* Voting Panel - Only show for players, not spectators */}
+      {gameState.phase === "voting" && voteResults.length === 0 && showVotingPanel && !isSpectator && (
         <VotingPanel
           players={playersWithStream}
           currentPlayerId={currentPlayerId}
@@ -2022,8 +2064,8 @@ export default function GamePage() {
           players={playersWithStream}
           roomId={gameState.id}
           currentRound={gameState.currentRound}
-          currentPlayerId={currentPlayerId}
-          onVote={async (targetId: string) => {
+          currentPlayerId={currentPlayerId || ""}
+          onVote={isSpectator ? undefined : async (targetId: string) => {
             if (castVote) {
               await castVote(targetId)
               setVotedPlayerId(targetId)
@@ -2031,6 +2073,7 @@ export default function GamePage() {
             }
           }}
           votedPlayerId={votedPlayerId}
+          isSpectator={isSpectator}
         />
       )}
     </div>

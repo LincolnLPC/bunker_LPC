@@ -124,22 +124,40 @@ async function checkAndRemoveInactivePlayers(roomId: string, supabase: any) {
       return
     }
 
-    // Remove inactive regular players
-    if (inactiveRegularPlayers.length > 0) {
-      const inactivePlayerIds = inactiveRegularPlayers.map((p: any) => p.id)
-      console.log("[Heartbeat] Removing inactive players:", inactivePlayerIds)
-      
-      const { error: deleteError } = await supabase
-        .from("game_players")
-        .delete()
-        .in("id", inactivePlayerIds)
+      // Remove inactive regular players
+      if (inactiveRegularPlayers.length > 0) {
+        const inactivePlayerIds = inactiveRegularPlayers.map((p: any) => p.id)
+        console.log("[Heartbeat] Removing inactive players:", inactivePlayerIds)
+        
+        const { error: deleteError } = await supabase
+          .from("game_players")
+          .delete()
+          .in("id", inactivePlayerIds)
 
-      if (deleteError) {
-        console.error("[Heartbeat] Error removing inactive players:", deleteError)
-      } else {
-        console.log("[Heartbeat] Removed inactive players:", inactivePlayerIds)
+        if (deleteError) {
+          console.error("[Heartbeat] Error removing inactive players:", deleteError)
+        } else {
+          console.log("[Heartbeat] Removed inactive players:", inactivePlayerIds)
+          
+          // Check if room is now empty after removing players
+          const { data: remainingPlayers, error: checkError } = await supabase
+            .from("game_players")
+            .select("id")
+            .eq("room_id", roomId)
+          
+          if (!checkError && (!remainingPlayers || remainingPlayers.length === 0)) {
+            console.log("[Heartbeat] Room is now empty, deleting room:", roomId)
+            // Delete all related data
+            await Promise.all([
+              supabase.from("votes").delete().eq("room_id", roomId),
+              supabase.from("chat_messages").delete().eq("room_id", roomId),
+            ])
+            // Delete room
+            await supabase.from("game_rooms").delete().eq("id", roomId)
+            console.log("[Heartbeat] Empty room deleted")
+          }
+        }
       }
-    }
   } catch (error) {
     console.error("[Heartbeat] Error in checkAndRemoveInactivePlayers:", error)
   }

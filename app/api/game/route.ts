@@ -192,6 +192,11 @@ export async function POST(request: Request) {
     const { generateBunkerInfo } = await import("@/lib/game/bunkers")
     const bunkerInfo = generateBunkerInfo(finalBunkerDescription, maxPlayers)
 
+    // Extract password and is_hidden from settings or body
+    const { password, isHidden } = body
+    // Store password as plain text for now (TODO: implement hashing)
+    // In production, hash the password before storing
+    
     const { data: room, error } = await supabase
       .from("game_rooms")
       .insert({
@@ -205,6 +210,8 @@ export async function POST(request: Request) {
         current_round: 0,
         round_timer_seconds: roundTimerSeconds,
         settings,
+        password: password || null, // Store password (plain text for now)
+        is_hidden: isHidden === true || isHidden === "true", // Convert to boolean
       })
       .select()
       .single()

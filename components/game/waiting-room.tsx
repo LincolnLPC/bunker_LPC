@@ -34,12 +34,13 @@ export function WaitingRoom({
     setTimeout(() => setCopied(false), 2000)
   }
 
-  // Temporarily allow starting with 1 player for testing
   const minPlayers = 1
-  const readyPlayers = gameState.players.filter((p) => p.isReady).length
-  const allReady = gameState.players.length > 0 && gameState.players.every((p) => p.isReady)
-  // Host can always start if there's at least 1 player (themselves) AND game is in waiting phase
-  const canStart = isHost && gameState.phase === "waiting" && gameState.players.length >= minPlayers
+  // Only check non-host players for readiness
+  const playersToCheck = gameState.players.filter((p) => !p.isHost)
+  const readyPlayers = playersToCheck.filter((p) => p.isReady).length
+  const allReady = playersToCheck.length > 0 && playersToCheck.every((p) => p.isReady)
+  // Host can start only if all non-host players are ready AND there's at least 1 player
+  const canStart = isHost && gameState.phase === "waiting" && gameState.players.length >= minPlayers && allReady
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -158,7 +159,7 @@ export function WaitingRoom({
                 <div>
                   <p className="text-lg font-semibold mb-2">Статус готовности</p>
                   <p className="text-sm text-muted-foreground">
-                    Готово: {readyPlayers} / {gameState.players.length}
+                    Готово: {readyPlayers} / {playersToCheck.length}
                   </p>
                 </div>
                 <Button

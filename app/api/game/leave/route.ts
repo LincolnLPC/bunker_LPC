@@ -14,7 +14,23 @@ export async function POST(request: Request) {
   }
 
   try {
-    const body = await request.json()
+    // Handle both JSON body and Blob (from sendBeacon)
+    let body: any
+    const contentType = request.headers.get("content-type")
+    
+    if (contentType?.includes("application/json")) {
+      body = await request.json()
+    } else {
+      // Handle Blob from sendBeacon
+      const blob = await request.blob()
+      const text = await blob.text()
+      try {
+        body = JSON.parse(text)
+      } catch {
+        return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+      }
+    }
+    
     const { roomId, playerId } = body
 
     if (!roomId || !playerId) {
@@ -97,7 +113,10 @@ export async function POST(request: Request) {
       console.log("[Leave] Room closed successfully:", roomId)
       return NextResponse.json({ success: true, roomClosed: true })
     } else {
-      // Regular player leaving - just remove them from game_players
+      // Regular player leaving - remove them from game_players
+      // If game has started (not in waiting phase), add them as spectator with was_player = true
+      const gameStarted = room.phase !== "waiting" && room.phase !== "finished"
+      
       const { error: deleteError } = await supabase
         .from("game_players")
         .delete()
@@ -106,6 +125,30 @@ export async function POST(request: Request) {
       if (deleteError) {
         console.error("[Leave] Error deleting player:", deleteError)
         throw deleteError
+      }
+
+      // If game has started, add player as spectator so they can rejoin
+      if (gameStarted) {
+        console.log("[Leave] Game has started, adding player as spectator with was_player=true")
+        const { error: spectatorError } = await supabase
+          .from("game_spectators")
+          .upsert({
+            room_id: roomId,
+            user_id: user.id,
+            joined_at: new Date().toISOString(),
+            last_seen_at: new Date().toISOString(),
+            was_player: true, // Mark as previous player
+          }, {
+            onConflict: "room_id,user_id",
+            ignoreDuplicates: false
+          })
+
+        if (spectatorError) {
+          console.error("[Leave] Error adding spectator:", spectatorError)
+          // Don't throw - player is already removed, spectator is optional
+        } else {
+          console.log("[Leave] Player added as spectator with was_player=true")
+        }
       }
 
       console.log("[Leave] Player removed successfully:", playerId)

@@ -46,7 +46,25 @@ export async function POST(request: Request) {
     // Get round mode setting
     const roundMode = (room.settings as any)?.roundMode || "automatic"
     
-    // Count actual players (excluding host if in "host_only" mode)
+    // Get players that should be checked for readiness:
+    // 1. Exclude host (host doesn't need to be ready)
+    // 2. Only players who have joined (are in game_players table)
+    const playersToCheck = room.game_players.filter((p: any) => p.user_id !== room.host_id)
+
+    // Check if all non-host players are ready
+    const readyPlayers = playersToCheck.filter((p: any) => p.is_ready === true)
+    const allReady = playersToCheck.length > 0 && playersToCheck.every((p: any) => p.is_ready === true)
+
+    if (!allReady) {
+      return NextResponse.json({ 
+        error: "Not all players are ready",
+        readyCount: readyPlayers.length,
+        totalCount: playersToCheck.length,
+        message: `Готово ${readyPlayers.length} из ${playersToCheck.length} игроков. Все игроки должны быть готовы для начала игры.`
+      }, { status: 400 })
+    }
+
+    // Count actual players for game start (excluding host if in "host_only" mode)
     const actualPlayers = hostRole === "host_only" 
       ? room.game_players.filter((p: any) => p.user_id !== room.host_id)
       : room.game_players

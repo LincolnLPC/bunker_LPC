@@ -345,8 +345,13 @@ export default function RoomsListPage() {
                       Комната заполнена
                     </Button>
                   ) : room.phase !== "waiting" ? (
-                    <Button variant="outline" className="w-full mt-2" size="sm" disabled>
-                      Игра уже началась
+                    <Button 
+                      variant="outline" 
+                      className="w-full mt-2" 
+                      size="sm"
+                      onClick={() => router.push(`/lobby/join?code=${room.roomCode}`)}
+                    >
+                      Присоединиться
                     </Button>
                   ) : null}
                 </CardContent>

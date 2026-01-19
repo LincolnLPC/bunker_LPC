@@ -75,6 +75,13 @@ export interface BunkerInfo {
   totalRevealed?: number
 }
 
+export interface Spectator {
+  id: string
+  userId: string
+  userName?: string
+  joinedAt: string
+}
+
 export interface GameState {
   id: string
   roomCode: string
@@ -85,6 +92,7 @@ export interface GameState {
   bunkerDescription: string
   bunkerInfo?: BunkerInfo // Full bunker information with equipment and supplies
   players: Player[]
+  spectators?: Spectator[] // Users watching the game
   hostId: string
   votes: Vote[]
   chatMessages: ChatMessage[]

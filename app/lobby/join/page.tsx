@@ -17,8 +17,10 @@ export default function JoinGamePage() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [roomCode, setRoomCode] = useState("")
+  const [roomPassword, setRoomPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [requiresPassword, setRequiresPassword] = useState(false)
 
   // Auto-fill room code from URL parameter
   useEffect(() => {
@@ -62,31 +64,45 @@ export default function JoinGamePage() {
     try {
       console.log("[JoinPage] Attempting to join room:", cleanedCode)
       
-      const { data, error: fetchError } = await safeFetch<{ player: any; roomId: string; isExisting?: boolean }>("/api/game/join", {
+      const result = await safeFetch<{ player: any; roomId: string; isExisting?: boolean; isSpectator?: boolean; spectatorId?: string; requiresPassword?: boolean; wasPlayer?: boolean; error?: string }>("/api/game/join", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ roomCode: cleanedCode }),
+        body: JSON.stringify({ roomCode: cleanedCode, password: roomPassword.trim() || undefined }),
       })
 
-      if (fetchError) {
-        console.error("[JoinPage] Join error:", fetchError)
+      if (!result.success || result.error) {
+        console.error("[JoinPage] Join error:", result.error, result)
+        
+        // Check if password is required - check both error message and response data
+        const errorMessage = (result.error || "").toLowerCase()
+        const responseData = result.data as any
+        
+        if (result.status === 403 && (responseData?.requiresPassword || errorMessage.includes("паролем"))) {
+          setRequiresPassword(true)
+          setError(result.error || "Эта комната защищена паролем")
+          setLoading(false)
+          return
+        }
         
         // If user is already in room, redirect anyway (they can continue playing)
-        const errorMessage = fetchError.message?.toLowerCase() || ""
-        if (errorMessage.includes("already") || errorMessage.includes("уже") || fetchError.status === 409 || fetchError.status === 200) {
+        if (errorMessage.includes("already") || errorMessage.includes("уже") || result.status === 409 || result.status === 200) {
           console.log("[JoinPage] User already in room, redirecting anyway:", cleanedCode)
           router.push(`/game/${cleanedCode}`)
           return
         }
         
-        throw new Error(fetchError.message || "Не удалось присоединиться к игре")
+        throw new Error(result.error || "Не удалось присоединиться к игре")
       }
 
-      // Check if user is already in room (existing player) - this is OK, just redirect
-      if (data?.isExisting || data?.player) {
-        console.log("[JoinPage] Successfully joined or already in room, redirecting:", cleanedCode, {
+      const data = result.data
+
+      // Check if user joined as player, spectator, or is already in room
+      if (data && (data.isExisting || data.player || data.isSpectator)) {
+        console.log("[JoinPage] Successfully joined, redirecting:", cleanedCode, {
           isExisting: data.isExisting,
+          isSpectator: data.isSpectator,
           playerId: data.player?.id,
+          spectatorId: data.spectatorId,
           characteristicsCount: data.characteristicsCount
         })
         router.push(`/game/${cleanedCode}`)
@@ -94,8 +110,8 @@ export default function JoinGamePage() {
       }
 
       // If we get here, something is wrong
-      console.error("[JoinPage] No player in response:", data)
-      throw new Error("Не удалось присоединиться к игре (нет данных об игроке)")
+      console.error("[JoinPage] No player or spectator in response:", data)
+      throw new Error("Не удалось присоединиться к игре (нет данных об игроке или зрителе)")
     } catch (err) {
       console.error("[JoinPage] Error joining room:", err)
       setError(err instanceof Error ? err.message : "Не удалось присоединиться к игре")
@@ -147,6 +163,7 @@ export default function JoinGamePage() {
                     const cleaned = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").substring(0, 6)
                     setRoomCode(cleaned)
                     setError(null) // Clear error when user types
+                    setRequiresPassword(false) // Reset password requirement when code changes
                   }}
                   className="bg-background/50 text-center text-2xl font-bold tracking-widest uppercase"
                   maxLength={6}
@@ -158,6 +175,27 @@ export default function JoinGamePage() {
                   6 символов (буквы и цифры)
                 </p>
               </div>
+
+              {requiresPassword && (
+                <div className="space-y-2">
+                  <Label htmlFor="password">Пароль комнаты</Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="Введите пароль..."
+                    value={roomPassword}
+                    onChange={(e) => {
+                      setRoomPassword(e.target.value)
+                      setError(null) // Clear error when user types
+                    }}
+                    className="bg-background/50"
+                    autoComplete="off"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Эта комната защищена паролем
+                  </p>
+                </div>
+              )}
 
               <Button type="submit" className="w-full bg-primary hover:bg-primary/90" disabled={loading}>
                 {loading ? (

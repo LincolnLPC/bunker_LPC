@@ -2,8 +2,8 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { X, BookOpen, ChevronLeft, ChevronRight } from "lucide-react"
-import type { Player, GameState } from "@/types/game"
+import { X, BookOpen, ChevronLeft, ChevronRight, Eye } from "lucide-react"
+import type { Player, GameState, Spectator } from "@/types/game"
 
 interface MysteryJournalProps {
   isOpen: boolean
@@ -120,6 +120,33 @@ export function MysteryJournal({ isOpen, onClose, gameState, players }: MysteryJ
                   </div>
                 </div>
               ))
+          )}
+        </div>
+      ),
+    },
+    {
+      title: "Зрители",
+      content: (
+        <div className="space-y-3">
+          {gameState.spectators && gameState.spectators.length > 0 ? (
+            gameState.spectators.map((spectator) => (
+              <div key={spectator.id} className="p-3 rounded-lg bg-card/50 border border-border/50 flex items-center gap-3">
+                <Eye className="w-5 h-5 text-muted-foreground" />
+                <div className="flex-1">
+                  <div className="font-medium">{spectator.userName}</div>
+                  <div className="text-xs text-muted-foreground">
+                    Присоединился {new Date(spectator.joinedAt).toLocaleString("ru-RU", {
+                      month: "short",
+                      day: "numeric",
+                      hour: "2-digit",
+                      minute: "2-digit"
+                    })}
+                  </div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center text-muted-foreground py-8">Пока нет зрителей</div>
           )}
         </div>
       ),

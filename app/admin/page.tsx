@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye } from "lucide-react"
+import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { CreateBanModal } from "@/components/admin/create-ban-modal"
@@ -60,6 +60,24 @@ interface Ban {
   banned_by_name: string | null
 }
 
+interface GameRoom {
+  id: string
+  room_code: string
+  host_id: string
+  host_name: string
+  max_players: number
+  phase: string
+  current_round: number
+  player_count: number
+  active_player_count: number
+  real_player_count?: number
+  is_empty?: boolean
+  catastrophe: string
+  bunker_description: string
+  created_at: string
+  updated_at: string
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [user, setUser] = useState<SupabaseUser | null>(null)
@@ -67,8 +85,11 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true)
   const [reports, setReports] = useState<Report[]>([])
   const [bans, setBans] = useState<Ban[]>([])
+  const [rooms, setRooms] = useState<GameRoom[]>([])
   const [loadingReports, setLoadingReports] = useState(true)
   const [loadingBans, setLoadingBans] = useState(true)
+  const [loadingRooms, setLoadingRooms] = useState(false)
+  const [cleaningRooms, setCleaningRooms] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showBanModal, setShowBanModal] = useState(false)
   const [selectedReportForBan, setSelectedReportForBan] = useState<Report | null>(null)
@@ -97,13 +118,23 @@ export default function AdminPage() {
         .eq("user_id", user.id)
         .single()
 
+      // Debug logging
+      console.log("[Admin Check] User ID:", user.id)
+      console.log("[Admin Check] Admin Role Data:", adminRole)
+      console.log("[Admin Check] Admin Error:", adminError)
+
       if (adminError || !adminRole) {
-        setError("У вас нет доступа к админ-панели")
+        // More detailed error message
+        const errorMessage = adminError
+          ? `Ошибка проверки доступа: ${adminError.message}. Код: ${adminError.code || "unknown"}`
+          : "Запись админа не найдена в базе данных"
+        setError(`У вас нет доступа к админ-панели. ${errorMessage}`)
         setIsAdmin(false)
       } else {
         setIsAdmin(true)
         loadReports()
         loadBans()
+        loadRooms()
       }
 
       setLoading(false)
@@ -182,6 +213,126 @@ export default function AdminPage() {
       setError("Не удалось загрузить баны")
     } finally {
       setLoadingBans(false)
+    }
+  }
+
+  const loadRooms = async () => {
+    setLoadingRooms(true)
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean; rooms: GameRoom[] }>(
+        "/api/admin/rooms",
+        {
+          method: "GET",
+        }
+      )
+
+      if (fetchError) {
+        setError(fetchError.message || "Не удалось загрузить комнаты")
+        return
+      }
+
+      if (data?.success && data.rooms) {
+        setRooms(data.rooms)
+      }
+    } catch (err) {
+      console.error("Error loading rooms:", err)
+      setError("Произошла ошибка при загрузке комнат")
+    } finally {
+      setLoadingRooms(false)
+    }
+  }
+
+  const handleDeleteRoom = async (roomId: string, roomCode: string) => {
+    if (!confirm(`Вы уверены, что хотите удалить комнату ${roomCode}? Это действие нельзя отменить.`)) {
+      return
+    }
+
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean; message: string }>(
+        `/api/admin/rooms?roomId=${roomId}`,
+        {
+          method: "DELETE",
+        }
+      )
+
+      if (fetchError) {
+        setError(fetchError.message || "Не удалось удалить комнату")
+        return
+      }
+
+      if (data?.success) {
+        // Reload rooms
+        loadRooms()
+      }
+    } catch (err) {
+      console.error("Error deleting room:", err)
+      setError("Произошла ошибка при удалении комнаты")
+    }
+  }
+
+  const getPhaseLabel = (phase: string) => {
+    const labels: Record<string, string> = {
+      waiting: "Ожидание",
+      playing: "Игра",
+      voting: "Голосование",
+      results: "Результаты",
+      finished: "Завершена",
+    }
+    return labels[phase] || phase
+  }
+
+  const getPhaseBadgeVariant = (phase: string) => {
+    switch (phase) {
+      case "waiting":
+        return "secondary"
+      case "playing":
+        return "default"
+      case "voting":
+        return "default"
+      case "results":
+        return "outline"
+      case "finished":
+        return "outline"
+      default:
+        return "ghost"
+    }
+  }
+
+  const handleCleanupRooms = async () => {
+    if (!confirm("Запустить автоматическую очистку пустых комнат? Это удалит все комнаты без игроков.")) {
+      return
+    }
+
+    setCleaningRooms(true)
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean; deletedCount: number; message: string }>(
+        "/api/game/cleanup",
+        {
+          method: "POST",
+        }
+      )
+
+      if (fetchError) {
+        setError(fetchError.message || "Не удалось выполнить очистку")
+        return
+      }
+
+      if (data?.success) {
+        // Reload rooms
+        loadRooms()
+        alert(`Очистка завершена. Удалено комнат: ${data.deletedCount || 0}`)
+      }
+    } catch (err) {
+      console.error("Error cleaning up rooms:", err)
+      setError("Произошла ошибка при очистке комнат")
+    } finally {
+      setCleaningRooms(false)
     }
   }
 
@@ -330,6 +481,10 @@ export default function AdminPage() {
             <TabsTrigger value="bans" className="flex items-center gap-2">
               <Ban className="h-4 w-4" />
               Баны ({bans.filter((b) => b.is_active).length})
+            </TabsTrigger>
+            <TabsTrigger value="rooms" className="flex items-center gap-2">
+              <Gamepad2 className="h-4 w-4" />
+              Комнаты ({rooms.length})
             </TabsTrigger>
           </TabsList>
 
@@ -494,6 +649,111 @@ export default function AdminPage() {
                               <Badge variant={ban.is_active ? "destructive" : "outline"}>
                                 {ban.is_active ? "Активен" : "Неактивен"}
                               </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Rooms Tab */}
+          <TabsContent value="rooms">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Игровые комнаты</CardTitle>
+                    <CardDescription>
+                      Список всех созданных игровых комнат. Вы можете просматривать и удалять комнаты.
+                    </CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleCleanupRooms}
+                      disabled={cleaningRooms || loadingRooms}
+                    >
+                      {cleaningRooms ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4 mr-2" />
+                      )}
+                      Очистить пустые
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={loadRooms} disabled={loadingRooms}>
+                      {loadingRooms ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Eye className="h-4 w-4 mr-2" />
+                      )}
+                      Обновить
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loadingRooms ? (
+                  <div className="flex justify-center items-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : rooms.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">Нет активных комнат</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Код</TableHead>
+                          <TableHead>Хост</TableHead>
+                          <TableHead>Фаза</TableHead>
+                          <TableHead>Игроки</TableHead>
+                          <TableHead>Раунд</TableHead>
+                          <TableHead>Создана</TableHead>
+                          <TableHead>Действия</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {rooms.map((room) => (
+                          <TableRow key={room.id}>
+                            <TableCell className="font-mono font-bold">{room.room_code}</TableCell>
+                            <TableCell>{room.host_name}</TableCell>
+                            <TableCell>
+                              <Badge variant={getPhaseBadgeVariant(room.phase)}>
+                                {getPhaseLabel(room.phase)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              {room.is_empty ? (
+                                <span className="text-muted-foreground">Пустая</span>
+                              ) : (
+                                <>
+                                  {room.real_player_count || room.active_player_count} / {room.max_players}
+                                  {room.player_count !== (room.real_player_count || room.active_player_count) && (
+                                    <span className="text-muted-foreground text-xs ml-1">
+                                      ({room.player_count} в БД)
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </TableCell>
+                            <TableCell>{room.current_round}</TableCell>
+                            <TableCell className="text-sm">
+                              {new Date(room.created_at).toLocaleString("ru-RU")}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleDeleteRoom(room.id, room.room_code)}
+                                title="Удалить комнату"
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
                             </TableCell>
                           </TableRow>
                         ))}

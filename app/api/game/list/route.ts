@@ -92,6 +92,9 @@ export async function GET(request: Request) {
       )
       .order("created_at", { ascending: false })
 
+    // Exclude hidden rooms from public list
+    query = query.eq("is_hidden", false)
+
     // Filter by phase (exclude finished games)
     if (phase) {
       query = query.eq("phase", phase)

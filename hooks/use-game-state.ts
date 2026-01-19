@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRealtimeGame } from "@/hooks/use-realtime-game"
 import { retry, isRetryableError } from "@/lib/error-handling/connection-recovery"
-import type { GameState, Player, Characteristic, Vote, ChatMessage } from "@/types/game"
+import type { GameState, Player, Characteristic, Vote, ChatMessage, Spectator } from "@/types/game"
 
 // Transform database row to GameState
 function transformRoomToGameState(room: any, currentUserId: string): { state: GameState; currentPlayerId: string } {
@@ -71,6 +71,14 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
   // For backward compatibility: old rooms without bunker_info will not show detailed info
   const bunkerInfo = room.bunker_info || undefined
 
+  // Transform spectators
+  const spectators: Spectator[] = (room.game_spectators || []).map((s: any) => ({
+    id: s.id,
+    userId: s.user_id,
+    userName: s.profiles?.display_name || s.profiles?.username || "Неизвестно",
+    joinedAt: s.joined_at,
+  }))
+
   const state: GameState = {
     id: room.id,
     roomCode: room.room_code,
@@ -81,6 +89,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
     bunkerDescription: room.bunker_description || "",
     bunkerInfo: bunkerInfo,
     players,
+    spectators,
     hostId: room.host_id || "",
     votes: [], // Votes will be loaded separately if needed
     chatMessages: [], // Chat messages will be loaded separately
@@ -147,7 +156,7 @@ export function useGameState(roomCode: string) {
         return
       }
 
-      // Fetch room data with user_id in game_players
+      // Fetch room data with user_id in game_players and spectators
       let { data: room, error: roomError } = await supabase
         .from("game_rooms")
         .select(
@@ -156,6 +165,12 @@ export function useGameState(roomCode: string) {
           game_players (
             *,
             player_characteristics (*)
+          ),
+          game_spectators (
+            id,
+            user_id,
+            joined_at,
+            profiles:user_id (username, display_name)
           )
         `,
         )
@@ -230,6 +245,9 @@ export function useGameState(roomCode: string) {
         })
       }
       
+      // Check if user is already a spectator
+      const isSpectator = room.game_spectators?.some((s: any) => s.user_id === user.id)
+      
       // If user is already a player, they should be able to rejoin regardless of phase
       // This handles page refreshes during active games
       if (isPlayer) {
@@ -237,6 +255,81 @@ export function useGameState(roomCode: string) {
         // Player ID will be set in transformRoomToGameState below
         // No need to call join API - just continue with room data
         // Skip auto-join logic and proceed directly to transformRoomToGameState
+      } else if (isSpectator) {
+        // User is already a spectator - restore spectator state
+        console.log("[GameState] User is already a spectator, restoring game state")
+        setCurrentPlayerId(null) // No player ID for spectators
+        // Continue with room data - no need to call join API
+      } else if (room.phase !== "waiting") {
+        // Game has started and user is not a player or spectator - try to join as spectator
+        // But first check if spectators are enabled
+        const roomSettings = room.settings as any || {}
+        const spectatorsEnabled = roomSettings.spectators !== false // Default to true if not set
+        
+        if (!spectatorsEnabled) {
+          console.log("[GameState] Spectators are disabled for this room")
+          setError("Зрители отключены для этой комнаты")
+          return
+        }
+        
+        console.log("[GameState] Game already started, attempting to join as spectator")
+        try {
+          const joinResponse = await fetch("/api/game/join", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ roomCode }),
+          })
+          
+          const text = await joinResponse.text()
+          let responseData: any
+          try {
+            responseData = text ? JSON.parse(text) : {}
+          } catch (parseError) {
+            console.error("[GameState] Failed to parse spectator join response:", parseError)
+            // Continue anyway
+            responseData = {}
+          }
+          
+          if (joinResponse.ok && (responseData.isSpectator || !responseData.error)) {
+            console.log("[GameState] Successfully joined as spectator:", responseData.spectatorId)
+            setCurrentPlayerId(null)
+            // Reload room to get updated state with spectator
+            const { data: updatedRoom } = await supabase
+              .from("game_rooms")
+              .select(
+                `
+                *,
+                game_players (
+                  *,
+                  player_characteristics (*)
+                ),
+                game_spectators (
+                  id,
+                  user_id,
+                  joined_at,
+                  profiles:user_id (username, display_name)
+                )
+              `,
+              )
+              .eq("room_code", roomCode)
+              .single()
+            
+            if (updatedRoom) {
+              room = updatedRoom
+            }
+          } else if (joinResponse.status === 403 && (responseData?.requiresPassword || responseData?.error?.includes("паролем"))) {
+            // Room requires password - don't try to join automatically
+            console.log("[GameState] Room requires password, cannot auto-join as spectator")
+            setError("Эта комната защищена паролем. Пожалуйста, введите пароль на странице присоединения.")
+          } else {
+            console.error("[GameState] Failed to join as spectator:", responseData)
+            // Don't throw error - allow user to view anyway
+            console.log("[GameState] Continuing despite spectator join failure")
+          }
+        } catch (spectatorError) {
+          console.error("[GameState] Error joining as spectator:", spectatorError)
+          // Continue anyway - user might still be able to view
+        }
       } else if (shouldAutoJoin) {
         // Auto-join if user is not yet a player and room is in waiting phase
         // This is especially important for the room creator who should automatically join
@@ -302,6 +395,13 @@ export function useGameState(roomCode: string) {
                   }
                 }
                 
+                // Check if room requires password - don't throw, just set error message
+                if (joinResponse.status === 403 && (responseData?.requiresPassword || errorMessage.includes("паролем") || errorMessage.includes("password"))) {
+                  console.log("[GameState] Room requires password, skipping auto-join")
+                  setError("Эта комната защищена паролем. Пожалуйста, введите пароль на странице присоединения.")
+                  throw new Error("Room requires password")
+                }
+                
                 // Check if error is because user is already in room - this is OK, just continue
                 if (errorMessage.includes("already") || errorMessage.includes("уже") || joinResponse.status === 409) {
                   console.log("[GameState] User already in room (expected), continuing...")
@@ -323,6 +423,11 @@ export function useGameState(roomCode: string) {
               if (responseData.hostOnly) {
                 console.log("[GameState] Host is in host-only mode, skipping player creation")
                 setCurrentPlayerId(null)
+                // Continue with room reload below
+              } else if (responseData.isSpectator) {
+                // User joined as spectator - this is OK, continue with room reload
+                console.log("[GameState] User joined as spectator:", responseData.spectatorId)
+                setCurrentPlayerId(null) // No player ID for spectators
                 // Continue with room reload below
               } else if (responseData.isExisting || responseData.player) {
                 // User already in room OR successfully joined - update player ID
@@ -348,6 +453,12 @@ export function useGameState(roomCode: string) {
                     game_players (
                       *,
                       player_characteristics (*)
+                    ),
+                    game_spectators (
+                      id,
+                      user_id,
+                      joined_at,
+                      profiles:user_id (username, display_name)
                     )
                   `,
                   )
@@ -484,6 +595,12 @@ export function useGameState(roomCode: string) {
             game_players (
               *,
               player_characteristics (*)
+            ),
+            game_spectators (
+              id,
+              user_id,
+              joined_at,
+              profiles:user_id (username, display_name)
             )
           `,
           )

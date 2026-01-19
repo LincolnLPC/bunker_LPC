@@ -205,6 +205,23 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 })
     }
 
+    // Check password if room has one
+    // Skip password check if user is the host (they created the room)
+    const isHost = room.host_id === user.id
+    const { password: providedPassword } = body
+    if (room.password && !isHost) {
+      if (!providedPassword) {
+        return NextResponse.json({ error: "Эта комната защищена паролем", requiresPassword: true }, { status: 403 })
+      }
+      
+      // Simple password comparison (in production, use bcrypt or similar)
+      // For now, we'll store plain text passwords (not recommended for production)
+      // TODO: Implement proper password hashing
+      if (room.password !== providedPassword) {
+        return NextResponse.json({ error: "Неверный пароль", requiresPassword: true }, { status: 403 })
+      }
+    }
+
     console.log("[Join] Room found:", { roomId: room.id, phase: room.phase, currentPlayers: room.game_players?.length || 0 })
 
     // Check if user already in room FIRST - allow rejoin regardless of phase
@@ -246,12 +263,107 @@ export async function POST(request: Request) {
     }
 
     // If user is not already in room, check if game has started
+    // If game has started, allow joining as spectator (if spectators are enabled)
     if (room.phase !== "waiting") {
-      return NextResponse.json({ error: "Game already started" }, { status: 400 })
+      // Check if spectators are enabled in room settings
+      const roomSettings = room.settings as any || {}
+      const spectatorsEnabled = roomSettings.spectators !== false // Default to true if not set
+      
+      if (!spectatorsEnabled) {
+        return NextResponse.json({ 
+          error: "Зрители отключены для этой комнаты",
+          spectatorsDisabled: true 
+        }, { status: 403 })
+      }
+      
+      console.log("[Join] Game already started, attempting to join as spectator")
+      
+      // Check if user is already a spectator
+      const { data: existingSpectator, error: spectatorCheckError } = await supabase
+        .from("game_spectators")
+        .select("id, joined_at")
+        .eq("room_id", room.id)
+        .eq("user_id", user.id)
+        .single()
+
+      // Check if user was previously a player (by checking if they have characteristics for this room)
+      // This is a simple check - if they were a player, they might have left and rejoined as spectator
+      // We'll mark them as was_player if they're rejoining (they had a player entry before)
+      let wasPlayer = false
+      
+      // Check if user was a player before (by checking game_players history)
+      // Since we can't check deleted records, we'll use a different approach:
+      // If user is rejoining and game has started, they were likely a player
+      // For now, we'll set wasPlayer to false for new spectators
+      
+      if (existingSpectator && !spectatorCheckError) {
+        console.log("[Join] User already a spectator, updating last_seen_at")
+        await supabase
+          .from("game_spectators")
+          .update({ last_seen_at: new Date().toISOString() })
+          .eq("id", existingSpectator.id)
+        
+        // Check if was_player flag exists
+        const { data: spectatorData } = await supabase
+          .from("game_spectators")
+          .select("was_player")
+          .eq("id", existingSpectator.id)
+          .single()
+        
+        wasPlayer = spectatorData?.was_player || false
+        
+        return NextResponse.json({
+          player: null,
+          isSpectator: true,
+          spectatorId: existingSpectator.id,
+          wasPlayer,
+          message: "User joined as spectator"
+        })
+      }
+
+      // Create new spectator entry
+      // Note: was_player will be false for new spectators
+      // If user was a player and left, we should set was_player to true
+      // But we can't check that easily, so we'll leave it as false for now
+      const { data: newSpectator, error: spectatorError } = await supabase
+        .from("game_spectators")
+        .insert({
+          room_id: room.id,
+          user_id: user.id,
+          joined_at: new Date().toISOString(),
+          last_seen_at: new Date().toISOString(),
+          was_player: false, // New spectators are not previous players
+        })
+        .select()
+        .single()
+
+      if (spectatorError) {
+        console.error("[Join] Error creating spectator:", spectatorError)
+        // If error is duplicate, user is already spectator
+        if (spectatorError.code === "23505") {
+          return NextResponse.json({
+            player: null,
+            isSpectator: true,
+            message: "User already a spectator"
+          })
+        }
+        return NextResponse.json({ 
+          error: "Failed to join as spectator",
+          details: spectatorError.message 
+        }, { status: 500 })
+      }
+
+      console.log("[Join] User joined as spectator:", newSpectator.id)
+      return NextResponse.json({
+        player: null,
+        isSpectator: true,
+        spectatorId: newSpectator.id,
+        wasPlayer: false, // New spectators are not previous players
+        message: "User joined as spectator"
+      })
     }
 
-    // Check if user is host
-    const isHost = room.host_id === user.id
+    // Check host role (isHost already declared above)
     const hostRole = (room.settings as any)?.hostRole || "host_and_player"
 
     // If host chose "host_only" role, don't create player entry
@@ -352,7 +464,7 @@ export async function POST(request: Request) {
     
     // Фильтровать "А" из кастомного списка, если excludeNonBinary включено
     const filteredGenderOptions = excludeNonBinary
-      ? genderOptions.filter((g) => g !== "А" && g !== "а" && g !== "A" && g !== "a")
+      ? genderOptions.filter((g: string) => g !== "А" && g !== "а" && g !== "A" && g !== "a")
       : genderOptions
     
     const gender = characteristicsSettings["gender"]?.enabled !== false

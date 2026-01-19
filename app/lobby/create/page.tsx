@@ -5,13 +5,14 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
-import { ArrowLeft, Flame, Loader2, Crown, Users, AlertTriangle, Home, Copy, Check, ChevronDown, ChevronUp, Settings2 } from "lucide-react"
+import { ArrowLeft, Flame, Loader2, Crown, Users, AlertTriangle, Home, Copy, Check, ChevronDown, ChevronUp, Settings2, Eye, EyeOff } from "lucide-react"
 import { SAMPLE_CATASTROPHES, SAMPLE_BUNKERS } from "@/types/game"
 import { CHARACTERISTICS_BY_CATEGORY, PROFESSIONS, HEALTH_CONDITIONS, HOBBIES, PHOBIAS, BAGGAGE, FACTS, SPECIAL, BIO, SKILLS, TRAITS } from "@/lib/game/characteristics"
 import { Badge } from "@/components/ui/badge"
@@ -37,6 +38,9 @@ export default function CreateGamePage() {
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null)
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false)
   const [excludeNonBinaryGender, setExcludeNonBinaryGender] = useState(false)
+  const [roomPassword, setRoomPassword] = useState("")
+  const [isRoomHidden, setIsRoomHidden] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
   
   // Characteristics settings
   const [showCharacteristicsSettings, setShowCharacteristicsSettings] = useState(false)
@@ -108,26 +112,29 @@ export default function CreateGamePage() {
 
     try {
       // Determine catastrophe and bunker
+      // If nothing is selected, choose random
       let catastrophe = customCatastrophe.trim()
       let bunkerDescription = customBunker.trim()
       
       if (!catastrophe) {
-        if (selectedCatastrophe === "random") {
+        if (selectedCatastrophe === "random" || !selectedCatastrophe || selectedCatastrophe === "") {
           catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
         } else if (selectedCatastrophe && selectedCatastrophe !== "custom") {
           catastrophe = selectedCatastrophe
         } else {
-          catastrophe = SAMPLE_CATASTROPHES[0]
+          // If custom is selected but no custom text, choose random
+          catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
         }
       }
       
       if (!bunkerDescription) {
-        if (selectedBunker === "random") {
+        if (selectedBunker === "random" || !selectedBunker || selectedBunker === "") {
           bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
         } else if (selectedBunker && selectedBunker !== "custom") {
           bunkerDescription = selectedBunker
         } else {
-          bunkerDescription = SAMPLE_BUNKERS[0]
+          // If custom is selected but no custom text, choose random
+          bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
         }
       }
 
@@ -164,6 +171,8 @@ export default function CreateGamePage() {
           roundTimerSeconds: roundTimer,
           catastrophe,
           bunkerDescription,
+          password: roomPassword.trim() || null, // Send password if provided
+          isHidden: isRoomHidden, // Send is_hidden flag
           settings: {
             autoReveal,
             spectators,
@@ -427,6 +436,45 @@ export default function CreateGamePage() {
                 <p className="text-sm text-muted-foreground">Не использовать небинарный пол при генерации игроков</p>
               </div>
               <Switch checked={excludeNonBinaryGender} onCheckedChange={setExcludeNonBinaryGender} />
+            </div>
+
+            {/* Room Password */}
+            <div className="space-y-3">
+              <Label>Пароль на комнату (необязательно)</Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Введите пароль для защиты комнаты..."
+                  value={roomPassword}
+                  onChange={(e) => setRoomPassword(e.target.value)}
+                  className="bg-background/50 pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Если установлен пароль, игроки должны будут ввести его для присоединения
+              </p>
+            </div>
+
+            {/* Hide Room */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label>Скрыть комнату</Label>
+                <p className="text-sm text-muted-foreground">Комната не будет отображаться в списке комнат</p>
+              </div>
+              <Switch checked={isRoomHidden} onCheckedChange={setIsRoomHidden} />
             </div>
 
             {/* Catastrophe Selection */}
