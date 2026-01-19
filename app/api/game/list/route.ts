@@ -153,12 +153,21 @@ export async function GET(request: Request) {
       }
     })
 
-    return NextResponse.json({
-      rooms: roomsWithStats,
-      total: count || 0,
-      limit,
-      offset,
-    })
+    // Добавляем краткое кеширование (5 секунд) для уменьшения нагрузки при частых запросах
+    // Комнаты обновляются часто, но это поможет при множественных одновременных запросах
+    return NextResponse.json(
+      {
+        rooms: roomsWithStats,
+        total: count || 0,
+        limit,
+        offset,
+      },
+      {
+        headers: {
+          "Cache-Control": "public, s-maxage=5, stale-while-revalidate=10",
+        },
+      }
+    )
   } catch (error) {
     console.error("Error listing rooms:", error)
     return NextResponse.json({ error: "Failed to list rooms" }, { status: 500 })

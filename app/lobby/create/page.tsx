@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
@@ -17,6 +17,8 @@ import { SAMPLE_CATASTROPHES, SAMPLE_BUNKERS } from "@/types/game"
 import { CHARACTERISTICS_BY_CATEGORY, PROFESSIONS, HEALTH_CONDITIONS, HOBBIES, PHOBIAS, BAGGAGE, FACTS, SPECIAL, BIO, SKILLS, TRAITS } from "@/lib/game/characteristics"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { GameTemplateSelector } from "@/components/lobby/game-template-selector"
+import { createClient } from "@/lib/supabase/client"
 
 export default function CreateGamePage() {
   const router = useRouter()
@@ -41,6 +43,7 @@ export default function CreateGamePage() {
   const [roomPassword, setRoomPassword] = useState("")
   const [isRoomHidden, setIsRoomHidden] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [subscriptionTier, setSubscriptionTier] = useState<"basic" | "premium">("basic")
   
   // Characteristics settings
   const [showCharacteristicsSettings, setShowCharacteristicsSettings] = useState(false)
@@ -105,6 +108,151 @@ export default function CreateGamePage() {
     skill: SKILLS,
     trait: TRAITS,
     additional: [],
+  }
+
+  // Load subscription tier on mount
+  useEffect(() => {
+    const loadSubscriptionTier = async () => {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: profile } = await supabase
+          .from("profiles")
+          .select("subscription_tier")
+          .eq("id", user.id)
+          .single()
+        if (profile) {
+          setSubscriptionTier(profile.subscription_tier as "basic" | "premium")
+        }
+      }
+    }
+    loadSubscriptionTier()
+  }, [])
+
+  // Handle template selection
+  const handleSelectTemplate = (template: any) => {
+    setMaxPlayers(template.max_players as 8 | 12 | 16 | 20)
+    setRoundMode(template.round_mode)
+    setDiscussionTime(template.discussion_time)
+    setVotingTime(template.voting_time)
+    setAutoReveal(template.auto_reveal)
+    setSpectators(template.spectators)
+    setHostRole(template.host_role)
+    setExcludeNonBinaryGender(template.exclude_non_binary_gender)
+    
+    if (template.catastrophe) {
+      setCustomCatastrophe(template.catastrophe)
+      setSelectedCatastrophe("custom")
+    }
+    if (template.bunker_description) {
+      setCustomBunker(template.bunker_description)
+      setSelectedBunker("custom")
+    }
+    
+    if (template.characteristics_settings) {
+      const enabled: Record<string, boolean> = {}
+      Object.keys(template.characteristics_settings).forEach((key) => {
+        enabled[key] = template.characteristics_settings[key].enabled ?? true
+      })
+      setCharacteristicsEnabled((prev) => ({ ...prev, ...enabled }))
+    }
+    
+    if (template.custom_characteristics) {
+      setCustomCharacteristics(template.custom_characteristics)
+    }
+  }
+
+  // Handle save template
+  const handleSaveTemplate = async (name: string, description: string) => {
+    // Determine catastrophe and bunker (same logic as handleCreate)
+    let catastrophe = customCatastrophe.trim()
+    let bunkerDescription = customBunker.trim()
+    
+    if (!catastrophe) {
+      if (selectedCatastrophe === "random" || !selectedCatastrophe || selectedCatastrophe === "") {
+        catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
+      } else if (selectedCatastrophe && selectedCatastrophe !== "custom") {
+        catastrophe = selectedCatastrophe
+      }
+    }
+    
+    if (!bunkerDescription) {
+      if (selectedBunker === "random" || !selectedBunker || selectedBunker === "") {
+        bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
+      } else if (selectedBunker && selectedBunker !== "custom") {
+        bunkerDescription = selectedBunker
+      }
+    }
+
+    // Prepare characteristics settings
+    const characteristicsSettings: Record<string, { enabled: boolean; customList?: string[] }> = {}
+    Object.keys(characteristicsEnabled).forEach((category) => {
+      const enabled = characteristicsEnabled[category]
+      let customList = customCharacteristics[category]?.trim()
+      
+      if (customList) {
+        customList = customList
+          .replace(/\(с\)/g, "")
+          .replace(/\(а\)/g, "")
+          .replace(/\s+/g, " ")
+          .trim()
+      }
+      
+      const customValues = customList
+        ? customList.split(",").map((v) => v.trim()).filter((v) => v.length > 0)
+        : undefined
+
+      characteristicsSettings[category] = {
+        enabled,
+        ...(customValues && customValues.length > 0 ? { customList: customValues } : {}),
+      }
+    })
+
+    const response = await fetch("/api/game-templates", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        description,
+        maxPlayers,
+        roundMode,
+        discussionTime,
+        votingTime,
+        autoReveal,
+        spectators,
+        hostRole,
+        catastrophe,
+        bunkerDescription,
+        excludeNonBinaryGender,
+        characteristicsSettings,
+        customCharacteristics,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.error || "Failed to save template")
+    }
+  }
+
+  // Get current settings for template saving
+  const getCurrentSettings = () => {
+    return {
+      maxPlayers,
+      roundMode,
+      discussionTime,
+      votingTime,
+      autoReveal,
+      spectators,
+      hostRole,
+      catastrophe: customCatastrophe.trim() || selectedCatastrophe,
+      bunkerDescription: customBunker.trim() || selectedBunker,
+      excludeNonBinaryGender,
+      characteristicsSettings: characteristicsEnabled,
+      customCharacteristics,
+    }
   }
 
   const handleCreate = async () => {
@@ -268,6 +416,18 @@ export default function CreateGamePage() {
 
       {/* Main Content */}
       <main className="relative z-10 max-w-2xl mx-auto px-6 py-12">
+        {/* Templates Section */}
+        {subscriptionTier === "premium" && (
+          <div className="mb-6">
+            <GameTemplateSelector
+              onSelectTemplate={handleSelectTemplate}
+              onSaveTemplate={handleSaveTemplate}
+              subscriptionTier={subscriptionTier}
+              currentSettings={getCurrentSettings()}
+            />
+          </div>
+        )}
+
         <Card className="bg-card/50 border-border/50">
           <CardHeader>
             <CardTitle>Настройки комнаты</CardTitle>

@@ -75,29 +75,27 @@ export function ContactForm() {
     setLoading(true)
 
     try {
-      // TODO: Create API endpoint for contact form submissions
-      // For now, we'll log it and show success message
-      console.log("[Contact Form] Submission:", {
-        subject: formData.subject,
-        category: formData.category,
-        message: formData.message,
-        email: formData.email || userEmail,
+      const { data, error: fetchError } = await safeFetch<{
+        success: boolean
+        message: string
+        ticketId?: string
+      }>("/api/support/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          subject: formData.subject,
+          category: formData.category,
+          message: formData.message,
+          email: formData.email || userEmail,
+        }),
       })
 
-      // Simulate API call
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-
-      // In production, this would be:
-      // const { data, error: fetchError } = await safeFetch("/api/support/contact", {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({
-      //     subject: formData.subject,
-      //     category: formData.category,
-      //     message: formData.message,
-      //     email: formData.email || userEmail,
-      //   }),
-      // })
+      if (fetchError || !data?.success) {
+        const errorMessage =
+          fetchError?.message || data?.message || "Произошла ошибка при отправке сообщения"
+        setError(errorMessage)
+        return
+      }
 
       setSuccess(true)
       setFormData({

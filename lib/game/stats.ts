@@ -134,6 +134,22 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
     }
 
     console.log(`Statistics updated for ${allUserIds.length} players, ${survivorUserIds.size} winners`)
+
+    // Check and award achievements for all participants
+    // This runs asynchronously to not block the main flow
+    for (const userId of allUserIds) {
+      try {
+        const { error: achievementError } = await supabase.rpc("check_all_achievements", {
+          user_id_param: userId,
+        })
+        
+        if (achievementError) {
+          console.error(`Error checking achievements for user ${userId}:`, achievementError)
+        }
+      } catch (achievementErr) {
+        console.error(`Error in achievement check for user ${userId}:`, achievementErr)
+      }
+    }
   } catch (error) {
     console.error("Error updating game statistics:", error)
   }

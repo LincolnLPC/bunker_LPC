@@ -118,6 +118,33 @@ export function validateDisplayName(displayName: string | null | undefined): Val
 }
 
 /**
+ * Validate email address
+ */
+export function validateEmail(email: string): ValidationResult {
+  const errors: string[] = []
+
+  if (!email) {
+    errors.push("Email обязателен")
+  } else if (typeof email !== "string") {
+    errors.push("Email должен быть строкой")
+  } else {
+    // Basic email validation regex
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    
+    if (email.length > 255) {
+      errors.push("Email не должен превышать 255 символов")
+    } else if (!emailRegex.test(email.trim())) {
+      errors.push("Неверный формат email адреса")
+    }
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+  }
+}
+
+/**
  * Validate chat message
  */
 export function validateChatMessage(message: string): ValidationResult {

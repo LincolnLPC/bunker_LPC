@@ -12,6 +12,7 @@ export interface PaymentConfig {
   apiKey?: string
   secretKey?: string
   webhookSecret?: string
+  shopId?: string // ЮKassa shop ID
   currency?: string
   successUrl?: string
   cancelUrl?: string
@@ -21,13 +22,14 @@ export interface PaymentConfig {
  * Get payment configuration from environment variables
  */
 export function getPaymentConfig(): PaymentConfig {
-  const provider = (process.env.PAYMENT_PROVIDER || "none") as PaymentProvider
+  const provider = (process.env.PAYMENT_PROVIDER || "yookassa") as PaymentProvider
 
   return {
     provider,
     apiKey: process.env.PAYMENT_API_KEY,
     secretKey: process.env.PAYMENT_SECRET_KEY,
     webhookSecret: process.env.PAYMENT_WEBHOOK_SECRET,
+    shopId: process.env.PAYMENT_SHOP_ID, // Для ЮKassa
     currency: process.env.PAYMENT_CURRENCY || "RUB",
     successUrl: process.env.PAYMENT_SUCCESS_URL || `${process.env.NEXT_PUBLIC_APP_URL}/subscription?success=true`,
     cancelUrl: process.env.PAYMENT_CANCEL_URL || `${process.env.NEXT_PUBLIC_APP_URL}/subscription?canceled=true`,

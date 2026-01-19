@@ -133,13 +133,16 @@ export function PlayerDetailModal({
         {/* Characteristics */}
         <ScrollArea className="h-[60vh]">
           <div className="p-4 space-y-2">
-            {player.characteristics.map((char) => (
+            {player.characteristics.map((char, index) => (
               <div
                 key={char.id}
                 className={cn(
-                  "p-3 rounded-lg border transition-all",
-                  canView(char) ? getCategoryColor(char.category) : "bg-muted/50 border-border",
+                  "p-3 rounded-lg border transition-all duration-300",
+                  canView(char)
+                    ? getCategoryColor(char.category) + " animate-in fade-in slide-in-from-left-4"
+                    : "bg-muted/50 border-border",
                 )}
+                style={canView(char) ? { animationDelay: `${index * 50}ms` } : undefined}
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">

@@ -41,35 +41,43 @@ export default function GameHistoryPage() {
       }
 
       try {
-        // Get all finished games where user participated
+        // First, get all finished game rooms where user participated
         const { data: playerGames, error: playerGamesError } = await supabase
           .from("game_players")
-          .select(
-            `
-            id,
-            is_eliminated,
-            game_rooms!inner (
-              id,
-              room_code,
-              catastrophe,
-              bunker_description,
-              current_round,
-              max_players,
-              created_at,
-              phase
-            )
-          `
-          )
+          .select("id, is_eliminated, room_id")
           .eq("user_id", user.id)
-          .eq("game_rooms.phase", "finished")
-          .order("game_rooms.created_at", { ascending: false })
-          .limit(50)
 
         if (playerGamesError) throw playerGamesError
 
+        if (!playerGames || playerGames.length === 0) {
+          setGames([])
+          setLoading(false)
+          return
+        }
+
+        // Get room IDs
+        const roomIds = playerGames.map((pg) => pg.room_id)
+
+        // Get finished games
+        const { data: finishedRooms, error: roomsError } = await supabase
+          .from("game_rooms")
+          .select("id, room_code, catastrophe, bunker_description, current_round, max_players, created_at, phase")
+          .in("id", roomIds)
+          .eq("phase", "finished")
+          .order("created_at", { ascending: false })
+          .limit(50)
+
+        if (roomsError) throw roomsError
+
+        // Create a map of player data by room_id
+        const playerMap = new Map<string, typeof playerGames[0]>()
+        playerGames.forEach((pg) => {
+          playerMap.set(pg.room_id, pg)
+        })
+
         // Transform and enrich data
-        const gamesData: GameHistoryItem[] = (playerGames || []).map((pg: any) => {
-          const room = pg.game_rooms
+        const gamesData: GameHistoryItem[] = (finishedRooms || []).map((room: any) => {
+          const playerData = playerMap.get(room.id)
           return {
             id: room.id,
             room_code: room.room_code,
@@ -79,17 +87,17 @@ export default function GameHistoryPage() {
             max_players: room.max_players,
             created_at: room.created_at,
             phase: room.phase,
-            was_winner: !pg.is_eliminated,
+            was_winner: playerData ? !playerData.is_eliminated : false,
           }
         })
 
         // Get player counts for each game
-        const roomIds = gamesData.map((g) => g.id)
-        if (roomIds.length > 0) {
+        const finishedRoomIds = gamesData.map((g) => g.id)
+        if (finishedRoomIds.length > 0) {
           const { data: playerCounts } = await supabase
             .from("game_players")
             .select("room_id")
-            .in("room_id", roomIds)
+            .in("room_id", finishedRoomIds)
 
           const countsMap = new Map<string, number>()
           playerCounts?.forEach((pc) => {
@@ -214,6 +222,13 @@ export default function GameHistoryPage() {
                       <Clock className="w-4 h-4" />
                       <span>Раунд {game.current_round}</span>
                     </div>
+                  </div>
+                  <div className="pt-2 border-t border-border/50">
+                    <Link href={`/profile/history/${game.id}`}>
+                      <Button variant="outline" className="w-full">
+                        Просмотреть детали
+                      </Button>
+                    </Link>
                   </div>
                 </CardContent>
               </Card>

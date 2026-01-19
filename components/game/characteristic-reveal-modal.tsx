@@ -54,8 +54,8 @@ export function CharacteristicRevealModal({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[oklch(0.05_0.01_60/0.9)] backdrop-blur-sm">
-      <div className="w-full max-w-md mx-4 p-6 rounded-lg bg-card border-2 border-primary">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-[oklch(0.05_0.01_60/0.9)] backdrop-blur-sm animate-in fade-in duration-300">
+      <div className="w-full max-w-md mx-4 p-6 rounded-lg bg-card border-2 border-primary animate-in zoom-in-95 fade-in slide-in-from-bottom-4 duration-300">
         {/* Header */}
         <div className="text-center mb-6">
           <h2 className="text-xl font-bold text-primary bunker-title mb-2">РАСКРЫТЬ ХАРАКТЕРИСТИКУ</h2>
@@ -72,12 +72,13 @@ export function CharacteristicRevealModal({
                 key={char.id}
                 onClick={() => setSelectedId(char.id)}
                 className={cn(
-                  "w-full p-3 rounded-lg border-2 transition-all text-left",
-                  "hover:border-primary hover:bg-primary/10",
+                  "w-full p-3 rounded-lg border-2 transition-all duration-300 text-left animate-in fade-in slide-in-from-left-4",
+                  "hover:border-primary hover:bg-primary/10 hover:scale-[1.02]",
                   selectedId === char.id
-                    ? "border-primary bg-primary/20 card-glow-orange"
+                    ? "border-primary bg-primary/20 card-glow-orange scale-[1.02]"
                     : "border-border bg-secondary/50",
                 )}
+                style={{ animationDelay: `${unrevealedChars.indexOf(char) * 50}ms` }}
               >
                 <div className="flex items-center gap-3">
                   <div

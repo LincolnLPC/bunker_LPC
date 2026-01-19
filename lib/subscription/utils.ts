@@ -87,3 +87,10 @@ export function canUseAdvancedFeature(tier: SubscriptionTier, feature: string): 
       return limits.canUseAdvancedFeatures
   }
 }
+
+/**
+ * Check if user can create templates
+ */
+export function canCreateTemplates(tier: SubscriptionTier): boolean {
+  return getSubscriptionLimits(tier).canCreateTemplates
+}

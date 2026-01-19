@@ -6,6 +6,7 @@ export interface SafeFetchResult<T = any> {
   success: boolean
   data?: T
   error?: string
+  message?: string
   status?: number
   statusText?: string
 }
@@ -77,10 +78,15 @@ export async function safeFetch<T = any>(
     const result = await safeJsonParse<T>(response)
     
     if (!response.ok) {
+      // Try to extract error message from response data
+      const errorMessage = result.data?.message || result.data?.error || result.error || `HTTP ${response.status}: ${response.statusText}`
+      const detailedMessage = result.data?.message || result.data?.details
+      
       return {
         ...result,
         success: false,
-        error: result.error || result.data?.error || `HTTP ${response.status}: ${response.statusText}`,
+        error: errorMessage,
+        message: detailedMessage, // Include detailed message if available
         status: response.status,
         statusText: response.statusText,
       }

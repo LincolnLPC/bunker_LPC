@@ -11,6 +11,7 @@ import { Separator } from "@/components/ui/separator"
 import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
+import { AchievementsSection } from "@/components/profile/achievements-section"
 
 interface ProfileData {
   id: string
@@ -294,6 +295,9 @@ export default function ProfilePage() {
             </CardContent>
           </Card>
         )}
+
+        {/* Achievements */}
+        <AchievementsSection />
 
         {/* Game History */}
         <Card className="bg-card/50 border-border/50">

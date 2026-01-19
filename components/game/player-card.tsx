@@ -198,10 +198,11 @@ export function PlayerCard({
             <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] via-transparent to-transparent pointer-events-none z-10">
               {/* Left side - first 5 characteristics */}
               <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
-                {revealedChars.slice(0, 5).map((char) => (
+                {revealedChars.slice(0, 5).map((char, index) => (
                   <div
                     key={char.id}
-                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate animate-in fade-in slide-in-from-bottom-2 duration-500"
+                    style={{ animationDelay: `${index * 100}ms` }}
                   >
                     {char.value}
                   </div>
@@ -210,10 +211,11 @@ export function PlayerCard({
               {/* Right side - remaining characteristics */}
               {revealedChars.length > 5 && (
                 <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
-                  {revealedChars.slice(5).map((char) => (
+                  {revealedChars.slice(5).map((char, index) => (
                     <div
                       key={char.id}
-                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate animate-in fade-in slide-in-from-bottom-2 duration-500"
+                      style={{ animationDelay: `${(index + 5) * 100}ms` }}
                     >
                       {char.value}
                     </div>
@@ -228,10 +230,11 @@ export function PlayerCard({
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[oklch(0.08_0.02_50/0.95)] to-transparent pointer-events-none z-10">
               {/* Left side - first 5 characteristics */}
               <div className="absolute bottom-0 left-0 p-2 space-y-0.5 max-w-[60%]">
-                {revealedChars.slice(0, 5).map((char) => (
+                {revealedChars.slice(0, 5).map((char, index) => (
                   <div
                     key={char.id}
-                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                    className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate animate-in fade-in slide-in-from-bottom-2 duration-500"
+                    style={{ animationDelay: `${index * 100}ms` }}
                   >
                     {char.value}
                   </div>
@@ -240,10 +243,11 @@ export function PlayerCard({
               {/* Right side - remaining characteristics */}
               {revealedChars.length > 5 && (
                 <div className="absolute bottom-0 right-0 p-2 space-y-0.5 max-w-[60%] text-right">
-                  {revealedChars.slice(5).map((char) => (
+                  {revealedChars.slice(5).map((char, index) => (
                     <div
                       key={char.id}
-                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate"
+                      className="text-[10px] leading-tight text-[oklch(0.85_0_0)] drop-shadow-lg truncate animate-in fade-in slide-in-from-bottom-2 duration-500"
+                      style={{ animationDelay: `${(index + 5) * 100}ms` }}
                     >
                       {char.value}
                     </div>

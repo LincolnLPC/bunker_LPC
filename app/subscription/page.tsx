@@ -1,12 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Crown, Check, X, Flame, Zap, Users, Settings, FileText } from "lucide-react"
+import { ArrowLeft, Crown, Check, X, Flame, Zap, Users, Settings, FileText, AlertCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -24,13 +24,40 @@ interface SubscriptionInfo {
 
 export default function SubscriptionPage() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [subscriptionInfo, setSubscriptionInfo] = useState<SubscriptionInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [upgrading, setUpgrading] = useState(false)
+  const [paymentSuccess, setPaymentSuccess] = useState(false)
+  const [paymentCanceled, setPaymentCanceled] = useState(false)
 
+  // Check for payment result in URL
   useEffect(() => {
-    const loadSubscription = async () => {
+    try {
+      const success = searchParams?.get("success")
+      const canceled = searchParams?.get("canceled")
+      
+      if (success === "true") {
+        setPaymentSuccess(true)
+        // Reload subscription info after successful payment
+        if (user) {
+          loadSubscription()
+        }
+        // Remove query param from URL
+        router.replace("/subscription")
+      } else if (canceled === "true") {
+        setPaymentCanceled(true)
+        router.replace("/subscription")
+      }
+    } catch (e) {
+      // Ignore errors from searchParams serialization in DevTools
+      console.debug("[SubscriptionPage] Could not read searchParams (DevTools issue)")
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router, user])
+
+  const loadSubscription = async () => {
       const supabase = createClient()
       const {
         data: { user },
@@ -79,49 +106,67 @@ export default function SubscriptionPage() {
     loadSubscription()
   }, [router])
 
+  // Close payment messages after 5 seconds
+  useEffect(() => {
+    if (paymentSuccess || paymentCanceled) {
+      const timer = setTimeout(() => {
+        setPaymentSuccess(false)
+        setPaymentCanceled(false)
+      }, 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [paymentSuccess, paymentCanceled])
+
   const handleUpgrade = async (planId: string = "premium_monthly") => {
+    if (!user) {
+      router.push("/auth/login")
+      return
+    }
+
     setUpgrading(true)
     
     try {
-      // Check if payment provider is configured
-      const paymentProvider = process.env.NEXT_PUBLIC_PAYMENT_PROVIDER || "none"
-      
-      if (paymentProvider === "none") {
-        // Payment provider not configured, show info message
-        alert(
-          "Интеграция с платежной системой находится в разработке.\n\n" +
-          "Для активации платежей необходимо:\n" +
-          "1. Настроить Stripe или ЮKassa\n" +
-          "2. Добавить API ключи в .env.local\n" +
-          "3. Настроить webhook endpoint\n\n" +
-          "См. документацию в lib/payment/config.ts"
-        )
+      // Create payment session
+      const response = await fetch("/api/payment/create-session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        const errorMessage = data.message || data.error || "Не удалось создать платежную сессию"
+        
+        if (data.message?.includes("not configured")) {
+          alert(
+            "Платежная система не настроена.\n\n" +
+            "Для активации платежей необходимо:\n" +
+            "1. Настроить ЮKassa\n" +
+            "2. Добавить API ключи в .env.local:\n" +
+            "   - PAYMENT_PROVIDER=yookassa\n" +
+            "   - PAYMENT_SECRET_KEY=...\n" +
+            "   - PAYMENT_SHOP_ID=...\n" +
+            "3. Настроить webhook в личном кабинете ЮKassa\n\n" +
+            "См. документацию в docs/YOOKASSA_SETUP.md"
+          )
+        } else {
+          alert(`Ошибка: ${errorMessage}`)
+        }
         setUpgrading(false)
         return
       }
 
-      // TODO: Create payment session and redirect to payment provider
-      // For Stripe:
-      // const response = await fetch("/api/payment/create-session", {
-      //   method: "POST",
-      //   headers: { "Content-Type": "application/json" },
-      //   body: JSON.stringify({ planId, userId: user.id }),
-      // })
-      // const { url } = await response.json()
-      // window.location.href = url
-      
-      // For now, show message that payment integration is in progress
-      alert(
-        "Интеграция с платежной системой почти готова.\n\n" +
-        "API endpoints созданы и готовы к подключению:\n" +
-        "• /api/subscription - управление подписками\n" +
-        "• /api/subscription/webhook - обработка платежей\n\n" +
-        "Следующий шаг: подключить Stripe или ЮKassa SDK"
-      )
+      if (data.url) {
+        // Redirect to Stripe checkout
+        window.location.href = data.url
+      } else {
+        alert("Не получен URL для оплаты. Попробуйте еще раз.")
+        setUpgrading(false)
+      }
     } catch (error) {
       console.error("Error initiating upgrade:", error)
       alert("Произошла ошибка при обработке запроса")
-    } finally {
       setUpgrading(false)
     }
   }
@@ -155,6 +200,40 @@ export default function SubscriptionPage() {
 
       {/* Main Content */}
       <main className="relative z-10 max-w-5xl mx-auto px-6 py-12">
+        {/* Payment Success Message */}
+        {paymentSuccess && (
+          <Card className="mb-6 bg-green-500/10 border-green-500/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <Check className="h-5 w-5 text-green-500" />
+                <div className="flex-1">
+                  <p className="font-medium text-green-500">Оплата успешно завершена!</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Премиум подписка активирована. Обновите страницу, если статус не обновился.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Payment Canceled Message */}
+        {paymentCanceled && (
+          <Card className="mb-6 bg-yellow-500/10 border-yellow-500/50">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <AlertCircle className="h-5 w-5 text-yellow-500" />
+                <div className="flex-1">
+                  <p className="font-medium text-yellow-500">Оплата отменена</p>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Вы можете попробовать снова в любое время.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Current Subscription */}
         <Card className="mb-8 bg-card/50 border-border/50">
           <CardHeader>
@@ -316,13 +395,52 @@ export default function SubscriptionPage() {
           </CardContent>
         </Card>
 
-        {/* Note */}
+        {/* Pricing Plans */}
         {!isPremium && (
-          <Card className="mt-6 bg-primary/10 border-primary/50">
-            <CardContent className="pt-6">
-              <p className="text-sm text-center text-muted-foreground">
-                💡 Интеграция с платежной системой находится в разработке. Следите за обновлениями!
-              </p>
+          <Card className="mt-6 bg-card/50 border-border/50">
+            <CardHeader>
+              <CardTitle>Тарифные планы</CardTitle>
+              <CardDescription>Выберите подходящий план премиум подписки</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="grid md:grid-cols-2 gap-4">
+                <Card className="border-primary/30">
+                  <CardHeader>
+                    <CardTitle className="text-lg">Премиум (месяц)</CardTitle>
+                    <CardDescription className="text-2xl font-bold text-primary">299₽</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={() => handleUpgrade("premium_monthly")}
+                      disabled={upgrading}
+                      className="w-full"
+                      variant="outline"
+                    >
+                      {upgrading ? "Обработка..." : "Выбрать месяц"}
+                    </Button>
+                  </CardContent>
+                </Card>
+
+                <Card className="border-primary/50 bg-primary/5">
+                  <CardHeader>
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      Премиум (год)
+                      <Badge variant="secondary" className="text-xs">Выгодно</Badge>
+                    </CardTitle>
+                    <CardDescription className="text-2xl font-bold text-primary">2,990₽</CardDescription>
+                    <CardDescription className="text-sm text-muted-foreground">≈249₽/месяц</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <Button
+                      onClick={() => handleUpgrade("premium_yearly")}
+                      disabled={upgrading}
+                      className="w-full"
+                    >
+                      {upgrading ? "Обработка..." : "Выбрать год"}
+                    </Button>
+                  </CardContent>
+                </Card>
+              </div>
             </CardContent>
           </Card>
         )}

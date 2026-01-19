@@ -7,13 +7,14 @@ import { canCreateRoom, getSubscriptionLimits, type SubscriptionTier } from "./u
 
 /**
  * Get user's subscription tier
+ * Checks premium_expires_at to determine if premium is still active
  */
 export async function getUserSubscription(userId: string): Promise<SubscriptionTier> {
   const supabase = await createClient()
 
   const { data: profile, error } = await supabase
     .from("profiles")
-    .select("subscription_tier")
+    .select("subscription_tier, premium_expires_at")
     .eq("id", userId)
     .single()
 
@@ -22,7 +23,20 @@ export async function getUserSubscription(userId: string): Promise<SubscriptionT
     return "basic" // Default to basic on error
   }
 
-  return (profile.subscription_tier as SubscriptionTier) || "basic"
+  const tier = (profile.subscription_tier as SubscriptionTier) || "basic"
+
+  // If user has premium, check if it's expired
+  if (tier === "premium" && profile.premium_expires_at) {
+    const expiresAt = new Date(profile.premium_expires_at)
+    const now = new Date()
+    
+    // If premium has expired, return basic
+    if (expiresAt < now) {
+      return "basic"
+    }
+  }
+
+  return tier
 }
 
 /**

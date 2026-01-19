@@ -15,10 +15,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2 } from "lucide-react"
+import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2, Crown, MessageSquare } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { CreateBanModal } from "@/components/admin/create-ban-modal"
+import { GrantPremiumModal } from "@/components/admin/grant-premium-modal"
 import { safeFetch } from "@/lib/api/safe-fetch"
 import {
   Dialog,
@@ -96,6 +97,16 @@ export default function AdminPage() {
   const [selectedReportForStatus, setSelectedReportForStatus] = useState<Report | null>(null)
   const [statusUpdateNotes, setStatusUpdateNotes] = useState("")
   const [updatingStatus, setUpdatingStatus] = useState(false)
+  const [showPremiumModal, setShowPremiumModal] = useState(false)
+  const [premiumUsers, setPremiumUsers] = useState<any[]>([])
+  const [loadingPremiumUsers, setLoadingPremiumUsers] = useState(false)
+  const [selectedPremiumUser, setSelectedPremiumUser] = useState<any | null>(null)
+  const [revokingPremium, setRevokingPremium] = useState(false)
+  const [supportTickets, setSupportTickets] = useState<any[]>([])
+  const [loadingSupportTickets, setLoadingSupportTickets] = useState(false)
+  const [selectedTicket, setSelectedTicket] = useState<any | null>(null)
+  const [ticketResponse, setTicketResponse] = useState("")
+  const [updatingTicket, setUpdatingTicket] = useState(false)
 
   useEffect(() => {
     const checkAdmin = async () => {
@@ -135,6 +146,8 @@ export default function AdminPage() {
         loadReports()
         loadBans()
         loadRooms()
+        loadPremiumUsers()
+        loadSupportTickets()
       }
 
       setLoading(false)
@@ -384,6 +397,167 @@ export default function AdminPage() {
     loadBans()
   }
 
+  const loadPremiumUsers = async () => {
+    setLoadingPremiumUsers(true)
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean; users: any[] }>(
+        "/api/admin/premium-users",
+        {
+          method: "GET",
+        }
+      )
+
+      if (fetchError) {
+        setError(fetchError.message || "Не удалось загрузить премиум пользователей")
+        return
+      }
+
+      if (data?.success && data.users) {
+        // Check if premium is expired
+        const usersWithExpiration = data.users.map((user) => ({
+          ...user,
+          isExpired: user.premium_expires_at
+            ? new Date(user.premium_expires_at) < new Date()
+            : false,
+        }))
+        setPremiumUsers(usersWithExpiration)
+      }
+    } catch (err) {
+      console.error("Error loading premium users:", err)
+      setError("Произошла ошибка при загрузке премиум пользователей")
+    } finally {
+      setLoadingPremiumUsers(false)
+    }
+  }
+
+  const handleRevokePremium = async (userId: string) => {
+    if (!confirm("Вы уверены, что хотите отменить премиум подписку у этого пользователя?")) {
+      return
+    }
+
+    setRevokingPremium(true)
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean; message: string }>(
+        "/api/admin/revoke-premium",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId }),
+        }
+      )
+
+      if (fetchError) {
+        setError(fetchError.message || "Не удалось отменить премиум подписку")
+        return
+      }
+
+      if (data?.success) {
+        setSelectedPremiumUser(null)
+        loadPremiumUsers()
+        alert("Премиум подписка успешно отменена")
+      } else {
+        setError("Не удалось отменить премиум подписку")
+      }
+    } catch (err) {
+      console.error("Error revoking premium:", err)
+      setError("Произошла ошибка при отмене премиум подписки")
+    } finally {
+      setRevokingPremium(false)
+    }
+  }
+
+  const loadSupportTickets = async () => {
+    setLoadingSupportTickets(true)
+    setError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{
+        success: boolean
+        tickets: any[]
+        total: number
+      }>("/api/admin/support-tickets", {
+        method: "GET",
+      })
+
+      if (fetchError) {
+        console.error("[Admin] Error loading support tickets:", fetchError)
+        setError(fetchError.message || "Не удалось загрузить тикеты поддержки")
+        setSupportTickets([])
+        return
+      }
+
+      if (data?.success) {
+        console.log("[Admin] Support tickets loaded:", data.tickets?.length || 0)
+        setSupportTickets(data.tickets || [])
+      } else {
+        console.error("[Admin] Failed to load support tickets:", data)
+        setSupportTickets([])
+      }
+    } catch (err) {
+      console.error("[Admin] Error loading support tickets:", err)
+      setError("Произошла ошибка при загрузке тикетов поддержки")
+      setSupportTickets([])
+    } finally {
+      setLoadingSupportTickets(false)
+    }
+  }
+
+  const handleUpdateTicketStatus = async (ticketId: string, newStatus: string, response?: string) => {
+    setUpdatingTicket(true)
+    setError(null)
+
+    try {
+      const supabase = createClient()
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+
+      if (!user) {
+        setError("Не авторизован")
+        return
+      }
+
+      const updateData: any = {
+        status: newStatus,
+        updated_at: new Date().toISOString(),
+      }
+
+      if (response && newStatus !== "open") {
+        updateData.admin_response = response
+        updateData.admin_user_id = user.id
+      }
+
+      if (newStatus === "resolved" || newStatus === "closed") {
+        updateData.resolved_at = new Date().toISOString()
+      }
+
+      const { data, error: updateError } = await supabase
+        .from("support_tickets")
+        .update(updateData)
+        .eq("id", ticketId)
+        .select()
+        .single()
+
+      if (updateError) {
+        setError(updateError.message || "Не удалось обновить тикет")
+        return
+      }
+
+      setSelectedTicket(null)
+      setTicketResponse("")
+      loadSupportTickets()
+    } catch (err) {
+      console.error("Error updating ticket:", err)
+      setError("Произошла ошибка при обновлении тикета")
+    } finally {
+      setUpdatingTicket(false)
+    }
+  }
+
   const handleUpdateStatus = async (report: Report, newStatus: string) => {
     setUpdatingStatus(true)
     setError(null)
@@ -482,9 +656,17 @@ export default function AdminPage() {
               <Ban className="h-4 w-4" />
               Баны ({bans.filter((b) => b.is_active).length})
             </TabsTrigger>
+            <TabsTrigger value="premium" className="flex items-center gap-2">
+              <Crown className="h-4 w-4" />
+              Премиум
+            </TabsTrigger>
             <TabsTrigger value="rooms" className="flex items-center gap-2">
               <Gamepad2 className="h-4 w-4" />
               Комнаты ({rooms.length})
+            </TabsTrigger>
+            <TabsTrigger value="support" className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Поддержка ({supportTickets.filter((t) => t.status === "open").length})
             </TabsTrigger>
           </TabsList>
 
@@ -660,6 +842,101 @@ export default function AdminPage() {
             </Card>
           </TabsContent>
 
+          {/* Premium Tab */}
+          <TabsContent value="premium">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Crown className="h-5 w-5 text-primary" />
+                      Управление премиум подписками
+                    </CardTitle>
+                    <CardDescription>
+                      Выдача премиум подписки зарегистрированным пользователям по email
+                    </CardDescription>
+                  </div>
+                  <Button onClick={() => setShowPremiumModal(true)}>
+                    <Crown className="w-4 h-4 mr-2" />
+                    Выдать премиум
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {loadingPremiumUsers ? (
+                    <div className="flex justify-center items-center py-8">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : premiumUsers.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground">
+                      <Crown className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>Нет премиум пользователей</p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Email</TableHead>
+                            <TableHead>Имя пользователя</TableHead>
+                            <TableHead>Игр сыграно</TableHead>
+                            <TableHead>Побед</TableHead>
+                            <TableHead>Срок действия</TableHead>
+                            <TableHead>Статус</TableHead>
+                            <TableHead>Действия</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {premiumUsers.map((premiumUser) => (
+                            <TableRow
+                              key={premiumUser.id}
+                              className="cursor-pointer hover:bg-muted/50"
+                              onClick={() => setSelectedPremiumUser(premiumUser)}
+                            >
+                              <TableCell className="font-medium">
+                                {premiumUser.email || "N/A"}
+                              </TableCell>
+                              <TableCell>
+                                {premiumUser.display_name || premiumUser.username || "N/A"}
+                              </TableCell>
+                              <TableCell>{premiumUser.games_played || 0}</TableCell>
+                              <TableCell>{premiumUser.games_won || 0}</TableCell>
+                              <TableCell>
+                                {premiumUser.premium_expires_at
+                                  ? new Date(premiumUser.premium_expires_at).toLocaleDateString("ru-RU")
+                                  : "Постоянная"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge
+                                  variant={premiumUser.isExpired ? "destructive" : "default"}
+                                >
+                                  {premiumUser.isExpired ? "Истекла" : "Активна"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setSelectedPremiumUser(premiumUser)
+                                  }}
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
           {/* Rooms Tab */}
           <TabsContent value="rooms">
             <Card className="bg-card/50 border-border/50">
@@ -764,8 +1041,197 @@ export default function AdminPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* Support Tickets Tab */}
+          <TabsContent value="support">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Тикеты поддержки</CardTitle>
+                    <CardDescription>
+                      Просмотр и обработка обращений пользователей в поддержку
+                    </CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={loadSupportTickets} disabled={loadingSupportTickets}>
+                    {loadingSupportTickets ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Eye className="h-4 w-4 mr-2" />
+                    )}
+                    Обновить
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {loadingSupportTickets ? (
+                  <div className="flex justify-center items-center py-8">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : supportTickets.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">Тикетов нет</div>
+                ) : (
+                  <div className="space-y-4">
+                    {supportTickets.map((ticket) => (
+                      <Card
+                        key={ticket.id}
+                        className={`bg-card/30 border-border/50 ${
+                          ticket.status === "open" ? "border-primary/50" : ""
+                        }`}
+                      >
+                        <CardHeader>
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2 mb-2">
+                                <CardTitle className="text-base">{ticket.subject}</CardTitle>
+                                <Badge
+                                  variant={
+                                    ticket.status === "open"
+                                      ? "default"
+                                      : ticket.status === "in_progress"
+                                        ? "secondary"
+                                        : "outline"
+                                  }
+                                >
+                                  {ticket.status === "open"
+                                    ? "Открыт"
+                                    : ticket.status === "in_progress"
+                                      ? "В работе"
+                                      : ticket.status === "resolved"
+                                        ? "Решен"
+                                        : "Закрыт"}
+                                </Badge>
+                                <Badge variant="outline" className="text-xs">
+                                  {ticket.category === "general"
+                                    ? "Общий"
+                                    : ticket.category === "technical"
+                                      ? "Технический"
+                                      : ticket.category === "billing"
+                                        ? "Подписка"
+                                        : ticket.category === "bug"
+                                          ? "Ошибка"
+                                          : ticket.category === "suggestion"
+                                            ? "Предложение"
+                                            : "Другое"}
+                                </Badge>
+                              </div>
+                              <CardDescription>
+                                {ticket.user?.displayName || ticket.user?.username || "Анонимный пользователь"} •{" "}
+                                {ticket.email} •{" "}
+                                {new Date(ticket.createdAt).toLocaleString("ru-RU", {
+                                  year: "numeric",
+                                  month: "long",
+                                  day: "numeric",
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                })}
+                              </CardDescription>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedTicket(ticket)
+                                setTicketResponse(ticket.adminResponse || "")
+                              }}
+                            >
+                              <Eye className="h-4 w-4 mr-2" />
+                              Просмотреть
+                            </Button>
+                          </div>
+                        </CardHeader>
+                        <CardContent>
+                          <p className="text-sm text-foreground whitespace-pre-wrap line-clamp-3">
+                            {ticket.message}
+                          </p>
+                          {ticket.adminResponse && (
+                            <div className="mt-3 p-3 bg-muted/50 rounded border border-border/50">
+                              <p className="text-xs text-muted-foreground mb-1">Ответ администратора:</p>
+                              <p className="text-sm whitespace-pre-wrap">{ticket.adminResponse}</p>
+                              {ticket.admin && (
+                                <p className="text-xs text-muted-foreground mt-2">
+                                  {ticket.admin.displayName || ticket.admin.username} •{" "}
+                                  {ticket.resolvedAt
+                                    ? new Date(ticket.resolvedAt).toLocaleString("ru-RU")
+                                    : new Date(ticket.updatedAt).toLocaleString("ru-RU")}
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </main>
+
+      {/* Ticket Detail Dialog */}
+      <Dialog open={!!selectedTicket} onOpenChange={(open) => !open && setSelectedTicket(null)}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{selectedTicket?.subject}</DialogTitle>
+            <DialogDescription>
+              Обращение от {selectedTicket?.user?.displayName || selectedTicket?.user?.username || "Анонимного пользователя"} ({selectedTicket?.email})
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedTicket && (
+            <div className="space-y-4">
+              <div>
+                <Label className="text-sm font-semibold mb-2 block">Сообщение</Label>
+                <div className="p-3 bg-muted/50 rounded border border-border/50">
+                  <p className="text-sm whitespace-pre-wrap">{selectedTicket.message}</p>
+                </div>
+              </div>
+
+              <div>
+                <Label htmlFor="ticket-response" className="text-sm font-semibold mb-2 block">
+                  Ответ администратора
+                </Label>
+                <Textarea
+                  id="ticket-response"
+                  value={ticketResponse}
+                  onChange={(e) => setTicketResponse(e.target.value)}
+                  placeholder="Введите ответ пользователю..."
+                  rows={6}
+                  disabled={updatingTicket}
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => handleUpdateTicketStatus(selectedTicket.id, "in_progress")}
+                  disabled={updatingTicket || selectedTicket.status === "in_progress"}
+                >
+                  В работу
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleUpdateTicketStatus(selectedTicket.id, "resolved", ticketResponse)}
+                  disabled={updatingTicket || selectedTicket.status === "resolved"}
+                >
+                  Решить
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => handleUpdateTicketStatus(selectedTicket.id, "closed", ticketResponse)}
+                  disabled={updatingTicket || selectedTicket.status === "closed"}
+                >
+                  Закрыть
+                </Button>
+                <Button variant="outline" onClick={() => setSelectedTicket(null)} disabled={updatingTicket}>
+                  Отмена
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Create Ban Modal */}
       <CreateBanModal
@@ -775,6 +1241,117 @@ export default function AdminPage() {
         userName={selectedReportForBan?.reported_user_name || undefined}
         onSuccess={handleBanSuccess}
       />
+
+      {/* Grant Premium Modal */}
+      <GrantPremiumModal
+        open={showPremiumModal}
+        onOpenChange={setShowPremiumModal}
+        onSuccess={() => {
+          setShowPremiumModal(false)
+          loadPremiumUsers()
+        }}
+      />
+
+      {/* Premium User Details Dialog */}
+      <Dialog
+        open={!!selectedPremiumUser}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedPremiumUser(null)
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Crown className="w-5 h-5 text-primary" />
+              Детали премиум пользователя
+            </DialogTitle>
+            <DialogDescription>
+              Информация о пользователе и его премиум подписке
+            </DialogDescription>
+          </DialogHeader>
+
+          {selectedPremiumUser && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Email</Label>
+                  <p className="text-sm font-medium">{selectedPremiumUser.email || "N/A"}</p>
+                </div>
+                <div>
+                  <Label>Имя пользователя</Label>
+                  <p className="text-sm font-medium">
+                    {selectedPremiumUser.display_name || selectedPremiumUser.username || "N/A"}
+                  </p>
+                </div>
+                <div>
+                  <Label>Игр сыграно</Label>
+                  <p className="text-sm font-medium">{selectedPremiumUser.games_played || 0}</p>
+                </div>
+                <div>
+                  <Label>Побед</Label>
+                  <p className="text-sm font-medium">{selectedPremiumUser.games_won || 0}</p>
+                </div>
+                <div>
+                  <Label>Дата регистрации</Label>
+                  <p className="text-sm font-medium">
+                    {new Date(selectedPremiumUser.created_at).toLocaleDateString("ru-RU")}
+                  </p>
+                </div>
+                <div>
+                  <Label>Срок действия премиум</Label>
+                  <p className="text-sm font-medium">
+                    {selectedPremiumUser.premium_expires_at
+                      ? new Date(selectedPremiumUser.premium_expires_at).toLocaleString("ru-RU")
+                      : "Постоянная"}
+                  </p>
+                </div>
+                <div>
+                  <Label>Статус</Label>
+                  <Badge variant={selectedPremiumUser.isExpired ? "destructive" : "default"}>
+                    {selectedPremiumUser.isExpired ? "Истекла" : "Активна"}
+                  </Badge>
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-lg flex items-center gap-2 text-destructive text-sm">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button
+                  variant="outline"
+                  onClick={() => setSelectedPremiumUser(null)}
+                  disabled={revokingPremium}
+                >
+                  Закрыть
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => handleRevokePremium(selectedPremiumUser.id)}
+                  disabled={revokingPremium}
+                >
+                  {revokingPremium ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Отмена...
+                    </>
+                  ) : (
+                    <>
+                      <X className="w-4 h-4 mr-2" />
+                      Отменить премиум
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Update Report Status Dialog */}
       <Dialog

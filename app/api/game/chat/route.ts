@@ -7,6 +7,7 @@ import {
   RATE_LIMIT_CONFIGS,
   createRateLimitHeaders,
 } from "@/lib/security/rate-limit"
+import { moderateMessage, shouldLogForReview } from "@/lib/security/chat-moderation"
 
 // POST - Send chat message
 export async function POST(request: Request) {
@@ -68,6 +69,33 @@ export async function POST(request: Request) {
       )
     }
 
+    // Moderate message
+    const moderationResult = moderateMessage(message)
+    
+    if (!moderationResult.allowed) {
+      return NextResponse.json(
+        {
+          error: moderationResult.reason || "Сообщение не прошло модерацию",
+        },
+        { status: 400 }
+      )
+    }
+
+    // Use filtered message if available
+    const finalMessage = moderationResult.filteredMessage || message.trim()
+
+    // Log moderated messages for admin review (optional, can be implemented later)
+    if (shouldLogForReview(moderationResult)) {
+      console.log("[Chat Moderation]", {
+        userId: user.id,
+        roomId,
+        originalMessage: message,
+        filteredMessage: finalMessage,
+        reason: moderationResult.reason,
+        severity: moderationResult.severity,
+      })
+    }
+
     // Verify user is in the room
     const { data: player, error: playerError } = await supabase
       .from("game_players")
@@ -80,13 +108,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Not in this game" }, { status: 403 })
     }
 
-    // Insert message
+    // Insert message (use filtered message)
     const { data: chatMessage, error: insertError } = await supabase
       .from("chat_messages")
       .insert({
         room_id: roomId,
         player_id: player.id,
-        message: message.trim(),
+        message: finalMessage,
         message_type: "chat",
       })
       .select(
