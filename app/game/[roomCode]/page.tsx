@@ -1740,8 +1740,8 @@ export default function GamePage() {
           
           // Проверка перед запросом
           if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            console.error("[Media] ❌ Browser doesn't support getUserMedia")
-            alert("Ваш браузер не поддерживает доступ к камере/микрофону. Пожалуйста, используйте современный браузер (Chrome, Firefox, Edge, Safari).")
+            console.warn("[Media] ⚠️ Browser doesn't support getUserMedia - media features will be unavailable")
+            // Don't show alert, just silently fail - user can still use the app without media
             return
           }
           

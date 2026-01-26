@@ -388,13 +388,38 @@ export default function CreateGamePage() {
     }
   }
 
-  const handleCopyInviteLink = () => {
+  const handleCopyInviteLink = async () => {
     if (!createdRoomCode) return
     const inviteLink = `${window.location.origin}/lobby/join?code=${createdRoomCode}`
-    navigator.clipboard.writeText(inviteLink).then(() => {
-      setInviteLinkCopied(true)
-      setTimeout(() => setInviteLinkCopied(false), 2000)
-    })
+    
+    try {
+      // Check if clipboard API is available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(inviteLink)
+        setInviteLinkCopied(true)
+        setTimeout(() => setInviteLinkCopied(false), 2000)
+      } else {
+        // Fallback for browsers that don't support clipboard API
+        const textArea = document.createElement('textarea')
+        textArea.value = inviteLink
+        textArea.style.position = 'fixed'
+        textArea.style.left = '-999999px'
+        textArea.style.top = '-999999px'
+        document.body.appendChild(textArea)
+        textArea.focus()
+        textArea.select()
+        try {
+          document.execCommand('copy')
+          setInviteLinkCopied(true)
+          setTimeout(() => setInviteLinkCopied(false), 2000)
+        } catch (err) {
+          console.error('Failed to copy:', err)
+        }
+        document.body.removeChild(textArea)
+      }
+    } catch (err) {
+      console.error('Failed to copy invite link:', err)
+    }
   }
 
   return (

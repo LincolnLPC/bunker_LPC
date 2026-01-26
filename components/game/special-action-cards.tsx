@@ -84,12 +84,7 @@ export function SpecialActionCards({
   useEffect(() => {
     if (isOpen) {
       const availableCount = cards.filter((c) => !c.isUsed).length
-      console.log("[SpecialCards] Modal opened - cards prop:", cards)
-      console.log("[SpecialCards] Total cards:", cards.length)
-      console.log("[SpecialCards] Cards with isUsed:", cards.filter((c) => c.isUsed).length)
-      console.log("[SpecialCards] Cards not used:", availableCount)
-      console.log("[SpecialCards] Available cards (after filter):", availableCount)
-      console.log("[SpecialCards] All cards details:", cards.map((c) => ({ id: c.id, type: c.type, name: c.name, isUsed: c.isUsed })))
+      // Debug logging removed - can be re-enabled for development if needed
       
       if (cards.length === 0) {
         console.warn("[SpecialCards] ⚠️ No cards received in props - cards may not have been loaded or granted yet")
@@ -102,22 +97,7 @@ export function SpecialActionCards({
   // Check if card is reveal card (needs category selection, not characteristic)
   const isRevealCard = selectedCard?.type === "reveal"
   
-  // Debug: Log all players and their characteristics when reveal card is selected
-  useEffect(() => {
-    if (isRevealCard && selectedPlayer) {
-      const targetPlayer = players.find((p) => p.id === selectedPlayer)
-      if (targetPlayer) {
-        console.log("[SpecialCards] Reveal card selected - Full player data:", {
-          playerId: targetPlayer.id,
-          playerName: targetPlayer.name,
-          allCharacteristics: targetPlayer.characteristics,
-          characteristicsCount: targetPlayer.characteristics?.length || 0,
-          revealedCharacteristics: targetPlayer.characteristics?.filter((c) => c.isRevealed) || [],
-          hiddenCharacteristics: targetPlayer.characteristics?.filter((c) => !c.isRevealed) || [],
-        })
-      }
-    }
-  }, [isRevealCard, selectedPlayer, players])
+  // Removed debug logging - can be re-enabled for development if needed
 
   const handleUseCard = () => {
     if (!selectedCard) return
@@ -314,9 +294,9 @@ export function SpecialActionCards({
                   <div className="space-y-2">
                     <p className="text-sm font-medium">
                       {isCategoryExchange
-                        ? `Выберите характеристику категории "${getCategoryLabel(exchangeCategory!)}" для обмена:`
+                        ? `Выберите свою характеристику категории "${getCategoryLabel(exchangeCategory!)}" для обмена:`
                         : selectedCard.type === "exchange"
-                          ? "Выберите характеристику для обмена:"
+                          ? "Выберите свою характеристику для обмена:"
                           : selectedCard.type === "peek"
                             ? "Выберите характеристику для просмотра:"
                             : selectedCard.type === "reveal"
@@ -331,51 +311,28 @@ export function SpecialActionCards({
                     </p>
                     <ScrollArea className="h-[200px] pr-4">
                       {(() => {
-                        const targetPlayer = players.find((p) => p.id === selectedPlayer)
-                        if (!targetPlayer) return null
+                        // For exchange cards, show current player's characteristics, not target player's
+                        const isExchangeCard = selectedCard.type === "exchange" || isCategoryExchange
+                        const playerToShow = isExchangeCard 
+                          ? players.find((p) => p.id === currentPlayerId)
+                          : players.find((p) => p.id === selectedPlayer)
+                        
+                        if (!playerToShow) return null
 
                         // For reveal card, show categories instead of characteristics
                         if (isRevealCard) {
+                          const targetPlayer = players.find((p) => p.id === selectedPlayer)
+                          if (!targetPlayer) return null
+                          
                           // Get unique categories from target player's hidden characteristics
                           // Check if characteristics exist and is an array
                           const allCharacteristics = targetPlayer.characteristics || []
                           
-                          // Debug logging - very detailed
-                          console.log("[SpecialCards] Reveal card - checking player:", {
-                            playerId: targetPlayer.id,
-                            playerName: targetPlayer.name,
-                            characteristicsCount: allCharacteristics.length,
-                            allCharacteristics: allCharacteristics.map((c: any) => ({
-                              id: c.id,
-                              category: c.category,
-                              name: c.name,
-                              value: c.value,
-                              isRevealed: c.isRevealed,
-                            })),
-                            rawCharacteristics: targetPlayer.characteristics,
-                          })
-                          
                           // Filter hidden characteristics (NOT revealed)
-                          const hiddenCharacteristics = allCharacteristics.filter((c: any) => {
-                            const isHidden = !c.isRevealed
-                            console.log(`[SpecialCards] Characteristic ${c.category} (${c.id}): isRevealed=${c.isRevealed}, isHidden=${isHidden}`)
-                            return isHidden
-                          })
+                          const hiddenCharacteristics = allCharacteristics.filter((c: any) => !c.isRevealed)
                           const hiddenCategories = Array.from(
                             new Set(hiddenCharacteristics.map((c: any) => c.category))
                           )
-                          
-                          console.log("[SpecialCards] Reveal card - filtered characteristics:", {
-                            allCount: allCharacteristics.length,
-                            hiddenCount: hiddenCharacteristics.length,
-                            hiddenCategories,
-                            hiddenCharacteristics: hiddenCharacteristics.map((c: any) => ({
-                              id: c.id,
-                              category: c.category,
-                              name: c.name,
-                              isRevealed: c.isRevealed,
-                            })),
-                          })
                           
                           const categoryLabels: Record<string, string> = {
                             gender: "Пол",
@@ -405,7 +362,6 @@ export function SpecialActionCards({
                           if (hiddenCategories.length === 0) {
                             // Player has characteristics but all are revealed
                             const totalCount = allCharacteristics.length
-                            const revealedCount = allCharacteristics.filter((c) => c.isRevealed).length
                             return (
                               <p className="text-sm text-muted-foreground text-center py-4">
                                 У игрока нет скрытых характеристик. Все {totalCount} {totalCount === 1 ? 'характеристика' : totalCount > 1 && totalCount < 5 ? 'характеристики' : 'характеристик'} уже раскрыты.
@@ -434,23 +390,29 @@ export function SpecialActionCards({
                           )
                         }
 
-                        let availableChars = targetPlayer.characteristics
+                        let availableChars = playerToShow.characteristics || []
 
                         if (selectedCard.type === "replace-profession") {
-                          availableChars = targetPlayer.characteristics.filter(
+                          const targetPlayer = players.find((p) => p.id === selectedPlayer)
+                          availableChars = (targetPlayer?.characteristics || []).filter(
                             (c) => c.category === "profession" && c.isRevealed
                           )
                         } else if (selectedCard.type === "replace-health") {
-                          availableChars = targetPlayer.characteristics.filter(
+                          const targetPlayer = players.find((p) => p.id === selectedPlayer)
+                          availableChars = (targetPlayer?.characteristics || []).filter(
                             (c) => c.category === "health" && c.isRevealed
                           )
                         } else if (isCategoryExchange) {
-                          // For category-specific exchange, show only characteristics of that category
-                          availableChars = targetPlayer.characteristics.filter(
-                            (c) => c.category === exchangeCategory && !c.isRevealed
+                          // For category-specific exchange, show current player's characteristics of that category
+                          availableChars = (playerToShow.characteristics || []).filter(
+                            (c) => c.category === exchangeCategory
                           )
-                        } else if (selectedCard.type === "exchange" || selectedCard.type === "steal") {
-                          availableChars = targetPlayer.characteristics.filter((c) => !c.isRevealed)
+                        } else if (selectedCard.type === "exchange") {
+                          // For generic exchange, show current player's characteristics
+                          availableChars = playerToShow.characteristics || []
+                        } else if (selectedCard.type === "steal") {
+                          const targetPlayer = players.find((p) => p.id === selectedPlayer)
+                          availableChars = (targetPlayer?.characteristics || []).filter((c) => !c.isRevealed)
                         } else if (selectedCard.type === "no-vote-against") {
                           // No characteristic needed for this card
                           availableChars = []
@@ -568,6 +530,7 @@ export function SpecialActionCards({
                       : isRevealCard && !selectedCategory
                         ? true
                         : (selectedCard.type === "exchange" || 
+                            isCategoryExchange ||
                             selectedCard.type === "peek" || 
                             selectedCard.type === "steal" ||
                             selectedCard.type === "replace-profession" ||

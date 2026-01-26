@@ -206,19 +206,28 @@ export async function POST(request: Request) {
     }
 
     // Check password if room has one
-    // Skip password check if user is the host (they created the room)
+    // IMPORTANT: Skip password check if user is the host (they created the room)
+    // This allows the host to join as a player without entering the password
+    // when hostRole is set to "host_and_player"
     const isHost = room.host_id === user.id
     const { password: providedPassword } = body
-    if (room.password && !isHost) {
-      if (!providedPassword) {
-        return NextResponse.json({ error: "Эта комната защищена паролем", requiresPassword: true }, { status: 403 })
-      }
-      
-      // Simple password comparison (in production, use bcrypt or similar)
-      // For now, we'll store plain text passwords (not recommended for production)
-      // TODO: Implement proper password hashing
-      if (room.password !== providedPassword) {
-        return NextResponse.json({ error: "Неверный пароль", requiresPassword: true }, { status: 403 })
+    
+    if (room.password) {
+      if (isHost) {
+        // Host can always join without password, regardless of hostRole setting
+        console.log("[Join] Host joining room - skipping password check")
+      } else {
+        // Non-host players must provide the correct password
+        if (!providedPassword) {
+          return NextResponse.json({ error: "Эта комната защищена паролем", requiresPassword: true }, { status: 403 })
+        }
+        
+        // Simple password comparison (in production, use bcrypt or similar)
+        // For now, we'll store plain text passwords (not recommended for production)
+        // TODO: Implement proper password hashing
+        if (room.password !== providedPassword) {
+          return NextResponse.json({ error: "Неверный пароль", requiresPassword: true }, { status: 403 })
+        }
       }
     }
 
