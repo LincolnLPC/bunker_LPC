@@ -1,6 +1,6 @@
 /**
  * WebRTC Signaling через Supabase Realtime
- * Обрабатывает обмен SDP offers/answers и ICE кандидатами
+ * Оптимизировано: retry, порядок событий, буферизация
  */
 
 import { createClient } from "@/lib/supabase/client"
@@ -8,10 +8,20 @@ import type { RealtimeChannel } from "@supabase/supabase-js"
 
 export interface WebRTCSignal {
   type: "offer" | "answer" | "ice-candidate"
-  from: string // playerId отправителя
-  to: string // playerId получателя
+  from: string
+  to: string
   data: RTCSessionDescriptionInit | RTCIceCandidateInit | null
   roomId: string
+}
+
+const CONNECT_RETRY_DELAYS = [1000, 2000, 4000]
+const SEND_RETRY_ATTEMPTS = 3
+const SEND_RETRY_DELAY = 300
+const SUBSCRIBE_TIMEOUT_MS = 15000
+const SIGNAL_BUFFER_WINDOW_MS = 2000 // Буфер сигналов в начале для упорядочивания
+
+function delay(ms: number) {
+  return new Promise((r) => setTimeout(r, ms))
 }
 
 export class WebRTCSignaling {
@@ -21,49 +31,36 @@ export class WebRTCSignaling {
   private currentPlayerId: string
   private onSignalCallback: ((signal: WebRTCSignal) => void) | null = null
   private connectPromise: Promise<RealtimeChannel> | null = null
-  private isConnecting: boolean = false
+  private isConnecting = false
+  private signalBuffer: WebRTCSignal[] = []
+  private bufferFlushScheduled = false
+  private connectedAt = 0
 
   constructor(roomId: string, currentPlayerId: string) {
     this.roomId = roomId
     this.currentPlayerId = currentPlayerId
   }
 
-  /**
-   * Подключиться к каналу сигналинга
-   */
   async connect(onSignal: (signal: WebRTCSignal) => void): Promise<RealtimeChannel> {
-    console.log(`[Signaling] 🚀 connect() called`, {
-      roomId: this.roomId,
-      currentPlayerId: this.currentPlayerId,
-      hasCallback: typeof onSignal === 'function',
-      hasChannel: !!this.channel,
-      channelState: this.channel?.state,
-      isConnecting: this.isConnecting,
-      hasConnectPromise: !!this.connectPromise,
-    })
-    
-    // Если уже идет подключение, вернуть существующий промис
+    if (!this.roomId || !this.currentPlayerId) {
+      throw new Error(`Cannot connect: missing roomId or playerId`)
+    }
+
     if (this.isConnecting && this.connectPromise) {
-      console.log(`[Signaling] ⏳ Connection already in progress, returning existing promise`)
       return this.connectPromise
     }
 
-    // Если канал уже подключен, вернуть его
-    if (this.channel && this.channel.state === "joined") {
-      console.log(`[Signaling] ✅ Channel already connected (joined), returning`)
+    if (this.channel?.state === "joined") {
       return this.channel
     }
 
-    // Сохранить колбэк для обработки сигналов
     this.onSignalCallback = onSignal
-
-    // Создать новый промис подключения
     this.isConnecting = true
-    this.connectPromise = this._doConnect()
-      .then((channel) => {
+    this.connectPromise = this._doConnectWithRetry()
+      .then((ch) => {
         this.isConnecting = false
         this.connectPromise = null
-        return channel
+        return ch
       })
       .catch((err) => {
         this.isConnecting = false
@@ -74,373 +71,133 @@ export class WebRTCSignaling {
     return this.connectPromise
   }
 
-  /**
-   * Внутренний метод для выполнения подключения
-   */
+  private async _doConnectWithRetry(): Promise<RealtimeChannel> {
+    let lastError: Error | null = null
+    for (let attempt = 0; attempt <= CONNECT_RETRY_DELAYS.length; attempt++) {
+      try {
+        const ch = await this._doConnect()
+        if (ch) return ch
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err))
+        console.warn(`[Signaling] Connect attempt ${attempt + 1} failed:`, lastError.message)
+        if (attempt < CONNECT_RETRY_DELAYS.length) {
+          await delay(CONNECT_RETRY_DELAYS[attempt])
+        }
+      }
+    }
+    throw lastError ?? new Error("Signaling connect failed")
+  }
+
   private async _doConnect(): Promise<RealtimeChannel> {
-    try {
-      // Если канал в процессе подключения, подождать
-      if (this.channel && this.channel.state === "joining") {
-        console.log(`[Signaling] ⏳ Channel is joining, waiting...`)
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        if (this.channel && this.channel.state === "joined") {
-          console.log(`[Signaling] ✅ Channel joined after waiting`)
-          return this.channel
-        }
+    if (this.channel?.state === "closed" || this.channel?.state === "channels_closed") {
+      try {
+        await this.channel.unsubscribe()
+      } catch {
+        /* ignore */
       }
+      this.channel = null
+    }
 
-      // Если канал закрыт или в неправильном состоянии, создать новый
-      if (this.channel && (this.channel.state === "closed" || this.channel.state === "channels_closed" || this.channel.state === "CHANNEL_ERROR")) {
-        console.log(`[Signaling] ⚠️ Channel is ${this.channel.state}, creating new channel`)
-        try {
-          await this.channel.unsubscribe()
-        } catch (err) {
-          // Игнорировать ошибки при отписке
-          console.debug("[Signaling] Error unsubscribing old channel (ignored):", err)
-        }
-        this.channel = null
-      }
-
-      // Создать новый канал, если его нет
-      if (!this.channel) {
-        console.log(`[Signaling] 🆕 Creating new channel for room: ${this.roomId}`)
-        this.channel = this.supabase.channel(`webrtc:${this.roomId}`, {
-          config: {
-            broadcast: { self: false },
-          },
-        })
-        console.log(`[Signaling] ✅ Channel created, state: ${this.channel.state}`)
-
-        // Слушаем сигналы WebRTC (только один раз при создании канала)
-        this.channel.on("broadcast", { event: "webrtc-signal" }, ({ payload }) => {
-          const signal = payload as WebRTCSignal
-          console.log(`[Signaling] 📨 Received signal: ${signal.type} from ${signal.from} to ${signal.to} (current: ${this.currentPlayerId})`, {
-            channelState: this.channel?.state,
-            hasCallback: !!this.onSignalCallback,
-            signalFrom: signal.from,
-            signalTo: signal.to,
-            currentPlayerId: this.currentPlayerId,
-            isForUs: signal.to === this.currentPlayerId,
-            isFromUs: signal.from === this.currentPlayerId,
-          })
-          // Принимаем сигналы только если они предназначены нам
-          if (signal.to === this.currentPlayerId && signal.from !== this.currentPlayerId) {
-            console.log(`[Signaling] ✅ Processing signal: ${signal.type} from ${signal.from}`, {
-              hasCallback: !!this.onSignalCallback,
-              signalData: signal.data ? (signal.type === "ice-candidate" ? "ICE candidate" : "SDP") : "null"
-            })
-            if (this.onSignalCallback) {
-              try {
-                this.onSignalCallback(signal)
-              } catch (err) {
-                console.error(`[Signaling] ❌ Error in signal callback:`, err)
-              }
-            } else {
-              console.warn(`[Signaling] ⚠️ No callback registered for signal from ${signal.from}`)
-            }
-          } else {
-            console.log(`[Signaling] ⚠️ Ignoring signal: not for us`, {
-              to: signal.to,
-              current: this.currentPlayerId,
-              from: signal.from,
-              isFromUs: signal.from === this.currentPlayerId,
-            })
-          }
-        })
-        console.log(`[Signaling] ✅ Channel event handler registered for room: ${this.roomId}, player: ${this.currentPlayerId}`)
-      }
-
-      // Проверить, что канал существует
-      console.log(`[Signaling] 🔍 Checking channel state after creation/registration:`, {
-        hasChannel: !!this.channel,
-        channelState: this.channel?.state,
-        channelTopic: this.channel?.topic,
-      })
-      
-      if (!this.channel) {
-        console.error("[Signaling] ❌ Channel is null after creation!")
-        throw new Error("Channel is null after creation")
-      }
-
-      // Если канал уже подключен, вернуть его
-      if (this.channel.state === "joined") {
-        console.log("[Signaling] ✅ Channel already subscribed, returning")
-        return this.channel
-      }
-
-      // Подписаться на канал и дождаться подключения
-      console.log(`[Signaling] 📡 Starting subscription to channel, current state: ${this.channel.state}`, {
-        channelTopic: this.channel.topic,
-        roomId: this.roomId,
-        currentPlayerId: this.currentPlayerId,
-      })
-      
-      // Убедиться, что канал существует и готов к подписке
-      if (!this.channel) {
-        throw new Error("Channel is null before subscription")
-      }
-
-      const subscribePromise = new Promise<void>((resolve, reject) => {
-        let timeout: NodeJS.Timeout | null = null
-        let resolved = false
-        let stateCheckInterval: NodeJS.Timeout | null = null
-
-        const cleanup = () => {
-          if (timeout) {
-            clearTimeout(timeout)
-            timeout = null
-          }
-          if (stateCheckInterval) {
-            clearInterval(stateCheckInterval)
-            stateCheckInterval = null
-          }
-        }
-
-        timeout = setTimeout(() => {
-          if (!resolved) {
-            resolved = true
-            cleanup()
-            console.error("[Signaling] ❌ Subscribe timeout after 10 seconds", {
-              channelState: this.channel?.state,
-              hasChannel: !!this.channel,
-              channelTopic: this.channel?.topic,
-            })
-            reject(new Error("Signaling channel subscribe timeout"))
-          }
-        }, 10000) // 10 секунд таймаут
-
-        try {
-          const channelToSubscribe = this.channel
-          if (!channelToSubscribe) {
-            throw new Error("Channel is null when calling subscribe()")
-          }
-          
-          console.log(`[Signaling] 📡 Calling subscribe() on channel, state before: ${channelToSubscribe.state}`, {
-            channelTopic: channelToSubscribe.topic,
-            channelState: channelToSubscribe.state,
-          })
-          
-          // Начать периодическую проверку состояния канала (каждые 50ms)
-          // Это поможет обнаружить, когда канал переходит в "joined" даже если callback не вызывается
-          stateCheckInterval = setInterval(() => {
-            if (!resolved && this.channel) {
-              const currentState = this.channel.state
-              if (currentState === "joined") {
-                console.warn("[Signaling] ⚠️ Channel reached 'joined' state but callback not invoked, resolving manually (periodic check)")
-                resolved = true
-                cleanup()
-                resolve()
-              } else if (currentState === "closed" || currentState === "channels_closed") {
-                console.warn("[Signaling] ⚠️ Channel closed during subscription (periodic check)")
-                resolved = true
-                cleanup()
-                reject(new Error(`Channel closed during subscription: ${currentState}`))
-              }
-            }
-          }, 50) // Проверять каждые 50ms
-          
-          channelToSubscribe.subscribe((status) => {
-            console.log(`[Signaling] 📡 Subscribe callback invoked with status: ${status}`, {
-              channelState: this.channel?.state,
-              channelTopic: this.channel?.topic,
-              resolved,
-              timestamp: new Date().toISOString(),
-            })
-            
-            if (resolved) {
-              console.debug(`[Signaling] Ignoring status ${status} (already resolved)`)
-              return
-            }
-            
-            console.log(`[Signaling] 📡 Processing subscribe status: ${status}, channel state: ${this.channel?.state}`)
-            
-            if (status === "SUBSCRIBED") {
-              resolved = true
-              cleanup()
-              console.log("[Signaling] ✅ Channel subscribed successfully (SUBSCRIBED status)", {
-                channelState: this.channel?.state,
-              })
-              resolve()
-            } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-              resolved = true
-              cleanup()
-              console.error(`[Signaling] ❌ Subscribe failed with status: ${status}`, {
-                channelState: this.channel?.state,
-              })
-              reject(new Error(`Signaling channel subscribe failed: ${status}`))
-            } else if (status === "CLOSED") {
-              // Если канал закрыт во время подписки, проверить состояние
-              const currentState = this.channel?.state
-              console.log(`[Signaling] 📡 CLOSED status received, channel state: ${currentState}`)
-              if (currentState === "closed" || currentState === "channels_closed") {
-                resolved = true
-                cleanup()
-                console.debug("[Signaling] Channel closed during subscription (likely cleanup)")
-                resolve() // Разрешаем промис успешно для cleanup
-                return
-              }
-              // Если статус CLOSED, но канал еще не закрыт - продолжаем ждать
-            } else {
-              // Для других статусов (JOINING и т.д.) - просто логируем и ждем
-              console.log(`[Signaling] 📡 Waiting for subscription, status: ${status}`, {
-                channelState: this.channel?.state,
-              })
-            }
-          })
-          console.log(`[Signaling] 📡 subscribe() called, waiting for status updates...`, {
-            channelState: channelToSubscribe.state,
-            channelTopic: channelToSubscribe.topic,
-          })
-          
-          // Немедленная проверка после вызова subscribe() - иногда канал уже в "joined" состоянии
-          // Это может произойти, если канал был создан ранее и уже подключен
-          setTimeout(() => {
-            if (!resolved && this.channel && this.channel.state === "joined") {
-              console.warn("[Signaling] ⚠️ Channel already 'joined' immediately after subscribe() call, resolving manually")
-              resolved = true
-              cleanup()
-              resolve()
-            }
-          }, 0) // Проверить в следующем тике event loop
-          
-          // Проверить состояние канала через 100ms после вызова subscribe()
-          setTimeout(() => {
-            if (!resolved && this.channel) {
-              console.log(`[Signaling] 📡 Channel state 100ms after subscribe(): ${this.channel.state}`, {
-                channelTopic: this.channel.topic,
-                resolved,
-              })
-              // Если канал уже в состоянии "joined", но callback не был вызван, разрешить промис вручную
-              if (this.channel.state === "joined" && !resolved) {
-                console.warn("[Signaling] ⚠️ Channel is 'joined' but callback not invoked, resolving manually (100ms check)")
-                resolved = true
-                cleanup()
-                resolve()
-              }
-            }
-          }, 100)
-          
-          // Дополнительная проверка через 500ms
-          setTimeout(() => {
-            if (!resolved && this.channel) {
-              console.log(`[Signaling] 📡 Channel state 500ms after subscribe(): ${this.channel.state}`, {
-                channelTopic: this.channel.topic,
-                resolved,
-              })
-              // Если канал в состоянии "joined", но callback не был вызван, разрешить промис вручную
-              if (this.channel.state === "joined" && !resolved) {
-                console.warn("[Signaling] ⚠️ Channel is 'joined' but callback not invoked after 500ms, resolving manually")
-                resolved = true
-                cleanup()
-                resolve()
-              }
-            }
-          }, 500)
-          
-          // Дополнительная проверка через 1 секунду
-          setTimeout(() => {
-            if (!resolved && this.channel) {
-              console.log(`[Signaling] 📡 Channel state 1s after subscribe(): ${this.channel.state}`, {
-                channelTopic: this.channel.topic,
-                resolved,
-              })
-              // Если канал в состоянии "joined", но callback не был вызван, разрешить промис вручную
-              if (this.channel.state === "joined" && !resolved) {
-                console.warn("[Signaling] ⚠️ Channel is 'joined' but callback not invoked after 1s, resolving manually")
-                resolved = true
-                cleanup()
-                resolve()
-              }
-            }
-          }, 1000)
-        } catch (err) {
-          console.error("[Signaling] ❌ Error calling subscribe():", err, {
-            errorName: err instanceof Error ? err.name : "Unknown",
-            errorMessage: err instanceof Error ? err.message : String(err),
-            channelState: this.channel?.state,
-            hasChannel: !!this.channel
-          })
-          if (!resolved) {
-            resolved = true
-            cleanup()
-            reject(err)
-          }
-        }
+    if (!this.channel) {
+      this.channel = this.supabase.channel(`webrtc:${this.roomId}`, {
+        config: { broadcast: { self: false } },
       })
 
-      // Дождаться завершения подписки
-      console.log("[Signaling] ⏳ Waiting for subscribe promise to resolve...")
-      await subscribePromise
-      console.log("[Signaling] ✅ Subscribe promise resolved, checking channel state:", this.channel?.state)
-      
-      // Дождаться, пока канал действительно подключится (state === "joined")
-      // Проверять состояние канала каждые 100мс, максимум 10 секунд
-      const maxWaitTime = 10000 // 10 секунд
-      const checkInterval = 100 // 100мс
-      const startTime = Date.now()
-      
-      while (this.channel && this.channel.state !== "joined") {
-        const elapsed = Date.now() - startTime
-        if (elapsed > maxWaitTime) {
-          console.warn("[Signaling] ⚠️ Channel did not reach 'joined' state within timeout", {
-            finalState: this.channel?.state,
-            elapsed
-          })
-          throw new Error(`Signaling channel did not reach 'joined' state within ${maxWaitTime}ms. Final state: ${this.channel?.state}`)
+      this.channel.on("broadcast", { event: "webrtc-signal" }, ({ payload }) => {
+        const signal = payload as WebRTCSignal
+        if (signal.to !== this.currentPlayerId || signal.from === this.currentPlayerId) return
+
+        const inBufferWindow = Date.now() - this.connectedAt < SIGNAL_BUFFER_WINDOW_MS
+        if (inBufferWindow) {
+          this.signalBuffer.push(signal)
+          this._scheduleBufferFlush()
+        } else {
+          this._deliverSignal(signal)
         }
-        // Если канал закрыт, выйти из цикла
-        if (this.channel.state === "closed" || this.channel.state === "channels_closed") {
-          console.debug("[Signaling] Channel closed while waiting for 'joined' state")
-          throw new Error("Signaling channel closed while waiting for 'joined' state")
-        }
-        // Подождать перед следующей проверкой
-        await new Promise(resolve => setTimeout(resolve, checkInterval))
-      }
-      
-      // Проверить, что канал все еще существует и подключен
-      if (this.channel && this.channel.state === "joined") {
-        console.log("[Signaling] ✅ Channel is now in 'joined' state")
-        return this.channel
-      }
-      
-      // Если мы дошли сюда, канал не в состоянии "joined" - это ошибка
-      console.error(`[Signaling] ❌ Channel not in 'joined' state. Current state: ${this.channel?.state}`)
-      throw new Error(`Signaling channel is not in 'joined' state. Current state: ${this.channel?.state}`)
-    } catch (err) {
-      // Обработка ошибок
-      const errorMessage = err instanceof Error ? err.message : String(err)
-      console.error(`[Signaling] ❌ Error in _doConnect() method:`, err, {
-        errorName: err instanceof Error ? err.name : "Unknown",
-        errorMessage,
-        channelState: this.channel?.state,
-        hasChannel: !!this.channel
       })
-      
-      // Если канал закрыт, очистить его
-      if (errorMessage.includes("closed") && !errorMessage.includes("cleanup") && !errorMessage.includes("unmount")) {
-        console.debug("[Signaling] Channel closed during connection attempt, will retry")
-        this.channel = null
+    }
+
+    if (this.channel.state === "joined") {
+      this.connectedAt = Date.now()
+      return this.channel
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let resolved = false
+      const timeout = setTimeout(() => {
+        if (resolved) return
+        resolved = true
+        reject(new Error("Signaling channel subscribe timeout"))
+      }, SUBSCRIBE_TIMEOUT_MS)
+
+      this.channel!.subscribe((status) => {
+        if (resolved) return
+        if (status === "SUBSCRIBED") {
+          resolved = true
+          clearTimeout(timeout)
+          this.connectedAt = Date.now()
+          resolve()
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          resolved = true
+          clearTimeout(timeout)
+          reject(new Error(`Signaling subscribe failed: ${status}`))
+        }
+      })
+    })
+
+    return this.channel!
+  }
+
+  private _scheduleBufferFlush() {
+    if (this.bufferFlushScheduled) return
+    this.bufferFlushScheduled = true
+    setTimeout(() => this._flushBuffer(), 100)
+  }
+
+  private _flushBuffer() {
+    this.bufferFlushScheduled = false
+    if (this.signalBuffer.length === 0) return
+
+    const signals = this.signalBuffer.splice(0)
+    const byPeer = new Map<string, WebRTCSignal[]>()
+    for (const s of signals) {
+      const key = s.from
+      if (!byPeer.has(key)) byPeer.set(key, [])
+      byPeer.get(key)!.push(s)
+    }
+
+    for (const [, peerSignals] of byPeer) {
+      const ordered = this._orderSignals(peerSignals)
+      for (const s of ordered) {
+        this._deliverSignal(s)
       }
-      
-      throw err
     }
   }
 
-  /**
-   * Отправить сигнал другому игроку
-   */
-  async sendSignal(signal: Omit<WebRTCSignal, "roomId" | "from">) {
-    if (!this.channel) {
-      throw new Error("Channel not connected. Call connect() first.")
-    }
+  private _orderSignals(signals: WebRTCSignal[]): WebRTCSignal[] {
+    const offer = signals.find((s) => s.type === "offer")
+    const answer = signals.find((s) => s.type === "answer")
+    const ice = signals.filter((s) => s.type === "ice-candidate")
+    const result: WebRTCSignal[] = []
+    if (offer) result.push(offer)
+    if (answer) result.push(answer)
+    result.push(...ice)
+    return result
+  }
 
-    const channelState = this.channel.state
-    if (channelState !== "joined" && channelState !== "joining") {
-      console.warn(`[Signaling] ⚠️ Channel state is ${channelState}, attempting to reconnect before sending signal`)
-      // Попробовать переподключиться
-      if (this.onSignalCallback) {
-        await this.connect(this.onSignalCallback)
+  private _deliverSignal(signal: WebRTCSignal) {
+    if (this.onSignalCallback) {
+      try {
+        this.onSignalCallback(signal)
+      } catch (err) {
+        console.error("[Signaling] Error in signal callback:", err)
       }
+    }
+  }
+
+  async sendSignal(signal: Omit<WebRTCSignal, "roomId" | "from">) {
+    if (!this.channel || this.channel.state !== "joined") {
+      throw new Error("Channel not connected. Call connect() first.")
     }
 
     const fullSignal: WebRTCSignal = {
@@ -448,91 +205,58 @@ export class WebRTCSignaling {
       from: this.currentPlayerId,
       roomId: this.roomId,
     }
-    
-    console.log(`[Signaling] 📤 Sending signal: ${signal.type} to ${signal.to}`, {
-      from: this.currentPlayerId,
-      to: signal.to,
-      roomId: this.roomId,
-      channelState: this.channel.state,
-      hasData: !!signal.data,
-      channelTopic: this.channel.topic,
-    })
 
-    try {
-      await this.channel.send({
-        type: "broadcast",
-        event: "webrtc-signal",
-        payload: fullSignal,
-      })
-      
-      console.log(`[Signaling] ✅ Signal sent successfully: ${signal.type} to ${signal.to}`, {
-        channelState: this.channel.state,
-      })
-    } catch (err) {
-      console.error(`[Signaling] ❌ Error sending signal: ${signal.type} to ${signal.to}:`, err, {
-        channelState: this.channel.state,
-        errorName: err instanceof Error ? err.name : "Unknown",
-        errorMessage: err instanceof Error ? err.message : String(err),
-      })
-      throw err
-    }
-  }
-
-  /**
-   * Отправить SDP offer
-   */
-  async sendOffer(to: string, offer: RTCSessionDescriptionInit) {
-    await this.sendSignal({
-      type: "offer",
-      to,
-      data: offer,
-    })
-  }
-
-  /**
-   * Отправить SDP answer
-   */
-  async sendAnswer(to: string, answer: RTCSessionDescriptionInit) {
-    await this.sendSignal({
-      type: "answer",
-      to,
-      data: answer,
-    })
-  }
-
-  /**
-   * Отправить ICE кандидат
-   */
-  async sendIceCandidate(to: string, candidate: RTCIceCandidateInit) {
-    await this.sendSignal({
-      type: "ice-candidate",
-      to,
-      data: candidate,
-    })
-  }
-
-  /**
-   * Отключиться от канала
-   */
-  async disconnect() {
-    // Сбросить флаги подключения
-    this.isConnecting = false
-    this.connectPromise = null
-    
-    if (this.channel) {
+    let lastError: Error | null = null
+    for (let attempt = 0; attempt < SEND_RETRY_ATTEMPTS; attempt++) {
       try {
-        const state = this.channel.state
-        // Не пытаться отписаться, если канал уже закрыт
-        if (state !== "closed" && state !== "channels_closed") {
-          await this.channel.unsubscribe()
-        }
+        await this.channel.send({
+          type: "broadcast",
+          event: "webrtc-signal",
+          payload: fullSignal,
+        })
+        return
       } catch (err) {
-        // Игнорировать ошибки при отписке (канал может быть уже закрыт)
-        console.debug("[Signaling] Error during disconnect (ignored):", err)
-      } finally {
-        this.channel = null
-        this.onSignalCallback = null
+        lastError = err instanceof Error ? err : new Error(String(err))
+        if (attempt < SEND_RETRY_ATTEMPTS - 1) {
+          await delay(SEND_RETRY_DELAY)
+        }
       }
     }
+    throw lastError ?? new Error("Failed to send signal")
+  }
+
+  async sendOffer(to: string, offer: RTCSessionDescriptionInit) {
+    await this.sendSignal({ type: "offer", to, data: offer })
+  }
+
+  async sendAnswer(to: string, answer: RTCSessionDescriptionInit) {
+    await this.sendSignal({ type: "answer", to, data: answer })
+  }
+
+  async sendIceCandidate(to: string, candidate: RTCIceCandidateInit) {
+    await this.sendSignal({ type: "ice-candidate", to, data: candidate })
+  }
+
+  async disconnect() {
+    this.isConnecting = false
+    this.connectPromise = null
+    this.signalBuffer = []
+    this.bufferFlushScheduled = false
+    this.onSignalCallback = null
+
+    if (this.channel) {
+      try {
+        if (this.channel.state !== "closed" && this.channel.state !== "channels_closed") {
+          await this.channel.unsubscribe()
+        }
+      } catch {
+        /* ignore */
+      }
+      this.channel = null
+    }
+  }
+
+  get connected(): boolean {
+    return this.channel?.state === "joined"
   }
 }

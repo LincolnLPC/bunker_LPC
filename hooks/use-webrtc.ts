@@ -1,11 +1,13 @@
 "use client"
 
 import { useState, useEffect, useCallback, useRef, useMemo } from "react"
-import { SocketIOSignaling } from "@/lib/webrtc/socket-signaling"
+import { WebRTCSignaling } from "@/lib/webrtc/signaling"
 import { PeerConnectionManager } from "@/lib/webrtc/peer-connection"
-import type { WebRTCSignal } from "@/lib/webrtc/socket-signaling"
+import type { WebRTCSignal } from "@/lib/webrtc/signaling"
 import { handleMediaError } from "@/lib/error-handling/connection-recovery"
 import type { MediaSettings } from "@/hooks/use-media-settings"
+import { webRTCLog } from "@/lib/webrtc/logger"
+import { RTC_OFFER_SKIPPED_REMOTE_OFFER } from "@/lib/webrtc/peer-connection"
 
 interface UseWebRTCOptions {
   roomId: string
@@ -24,7 +26,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const [connectionStates, setConnectionStates] = useState<Map<string, RTCPeerConnectionState>>(new Map())
   const [signalingConnected, setSignalingConnected] = useState(false)
 
-  const signalingRef = useRef<SocketIOSignaling | null>(null)
+  const signalingRef = useRef<WebRTCSignaling | null>(null)
   const peerConnectionsRef = useRef<Map<string, PeerConnectionManager>>(new Map())
   const pendingOffersRef = useRef<Map<string, RTCSessionDescriptionInit>>(new Map())
   const isInitiatorRef = useRef<Map<string, boolean>>(new Map())
@@ -327,10 +329,12 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       }
       
       // Check if it's a NotReadableError (camera/microphone in use)
-      const isNotReadableError = 
+      const isNotReadableError =
         errorName === "NotReadableError" ||
         errorMessage.includes("Could not start video source") ||
-        errorMessage.includes("Could not start audio source")
+        errorMessage.includes("Could not start audio source") ||
+        errorMessage.includes("Device in use") ||
+        errorMessage.toLowerCase().includes("device in use")
       
       // Check if it's a timeout error (AbortError with timeout message)
       const isTimeoutError = 
@@ -338,13 +342,15 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         (errorMessage.includes("Timeout") || errorMessage.includes("timeout"))
       
       if (isNotReadableError || isTimeoutError) {
-        // NotReadableError and timeout errors are recoverable - camera might be busy, user can retry
         const message = isTimeoutError
           ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Это не критично - игра продолжит работать без видеосвязи. Вы можете попробовать включить камеру позже, нажав кнопку 'Включить камеру'."
           : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'. Это не критично - игра продолжит работать без видеосвязи."
         setError(message)
-        // Для recoverable ошибок используем console.warn, а не console.error
-        console.warn(`[WebRTC] ⚠️ ${isTimeoutError ? 'Timeout' : 'NotReadableError'} - camera/microphone might be in use or slow to respond. This is not critical - game will continue without video/audio.`, errorDetails)
+        webRTCLog("warn", "initializeMedia", isTimeoutError ? "Timeout" : "NotReadableError (Device in use)", {
+          errorName,
+          errorMessage,
+          recoverable: true,
+        })
         return null
       }
       
@@ -387,7 +393,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     }
 
     console.log("[WebRTC] 🔌 Initializing signaling for room:", roomId, "player:", currentPlayerId)
-    const signaling = new SocketIOSignaling(roomId, currentPlayerId)
+    const signaling = new WebRTCSignaling(roomId, currentPlayerId)
     signalingRef.current = signaling
 
     // Подключиться к каналу и обработать сигналы
@@ -434,31 +440,28 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           isConnecting = false
           const connectDuration = Date.now() - connectStartTime
           if (isMounted) {
-            // Socket.io Socket имеет свойство 'connected' (boolean), а не 'state'
-            const isConnected = (channel as any)?.connected === true
-            
+            // Supabase Realtime: channel.state === 'joined'
+            const isConnected = (channel as any)?.state === "joined" || signaling.connected
+
             console.log("[WebRTC] ✅ Signaling channel connect() resolved", {
-              socketConnected: isConnected,
-              hasSocket: !!channel,
-              socketId: (channel as any)?.id,
+              connected: isConnected,
+              hasChannel: !!channel,
+              channelState: (channel as any)?.state,
               attempt: retryCount + 1,
               duration: `${connectDuration}ms`
             })
-            
-            // Если промис резолвился, сокет должен быть подключен
-            // (socket-signaling.ts гарантирует это)
+
             if (channel && isConnected) {
-              console.log("[WebRTC] ✅ Signaling socket confirmed connected")
+              console.log("[WebRTC] ✅ Signaling channel confirmed connected")
               setSignalingConnected(true)
-              setError(null) // Очистить предыдущие ошибки
+              setError(null)
             } else {
-              console.error("[WebRTC] ❌ Socket not connected after connect():", {
-                hasSocket: !!channel,
+              console.error("[WebRTC] ❌ Channel not connected after connect():", {
+                hasChannel: !!channel,
                 connected: isConnected,
-                socketId: (channel as any)?.id
+                channelState: (channel as any)?.state
               })
-              setError("Signaling socket connection failed: socket not connected")
-              // Не устанавливаем signalingConnected, если сокет не подключен
+              setError("Signaling connection failed: channel not connected")
               setSignalingConnected(false)
             }
           }
@@ -653,7 +656,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
                 handleWebRTCSignalRef.current(signal)
               }
             })
-            console.log(`[WebRTC] 📤 Sending answer to ${signal.from} via Socket.io`)
+            console.log(`[WebRTC] 📤 Sending answer to ${signal.from} via Realtime`)
             await signalingRef.current.sendAnswer(signal.from, answer)
             console.log(`[WebRTC] ✅ Answer sent successfully to ${signal.from}`)
           } catch (err) {
@@ -719,7 +722,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         try {
           await peerManager.handleAnswer(signal.data as RTCSessionDescriptionInit)
         } catch (error) {
-          // Детальное логирование ошибки
+          const errorMessage = error instanceof Error ? error.message : String(error)
           let errorDetails: any = {
             signalingState: signalingStateBefore,
             localDescription: localDescBefore ? { type: localDescBefore.type } : null,
@@ -740,13 +743,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           
           console.error(`[WebRTC] ❌ Error handling answer from ${signal.from}:`, errorDetails)
           
-          // Также логируем саму ошибку отдельно для полной информации
-          console.error(`[WebRTC] ❌ Raw error object:`, error)
-          
-          // Если это ошибка о неправильном состоянии, не пересоздавать соединение
-          // Это может быть нормальной ситуацией (например, дублирующий сигнал)
           if (errorMessage.includes('have-remote-offer') || errorMessage.includes('wrong state') || errorMessage.includes('Called in wrong state')) {
-            console.warn(`[WebRTC] ⚠️ Answer handling failed due to state mismatch, this is likely a duplicate signal or race condition`)
+            webRTCLog("info", "useWebRTC", "Answer handling failed: state mismatch (duplicate or race)", { playerId: signal.from })
             return
           }
         }
@@ -1105,7 +1103,11 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         const finalHasRemoteDesc = !!finalPeerConnection.remoteDescription
         
         if (finalSignalingState !== 'stable') {
-          console.warn(`[WebRTC] ⚠️ Skipping offer creation for ${playerId}: signaling state changed to '${finalSignalingState}'`)
+          webRTCLog("info", "useWebRTC", "Skipping offer creation: signaling state not stable", {
+            playerId,
+            signalingState: finalSignalingState,
+            reason: finalSignalingState === "have-remote-offer" ? "remote_peer_sent_offer_first" : "state_changed",
+          })
           continue
         }
         
@@ -1148,7 +1150,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
                     handleWebRTCSignalRef.current(signal)
                   }
                 })
-                console.log(`[WebRTC] 📤 Sending offer to ${playerId} via Socket.io`)
+                console.log(`[WebRTC] 📤 Sending offer to ${playerId} via Realtime`)
                 await signalingRef.current.sendOffer(playerId, offer)
                 console.log(`[WebRTC] ✅ Offer sent successfully to ${playerId}`)
               } catch (err) {
@@ -1159,30 +1161,27 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
             }
           })
           .catch((err) => {
-            // Сбросить флаг при ошибке
             isCreatingOfferRef.current.set(playerId, false)
-            
             const errorMessage = err instanceof Error ? err.message : String(err)
-            const errorName = err instanceof Error ? err.name : 'Unknown'
-            
-            console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, {
-              error: errorMessage,
-              errorName,
+            const errorCode = (err as any)?.code
+
+            // Гонка: удалённый пир отправил offer первым — не критично
+            if (errorCode === RTC_OFFER_SKIPPED_REMOTE_OFFER || errorMessage.includes("have-remote-offer")) {
+              webRTCLog("info", "useWebRTC", "Offer skipped: remote peer sent offer first", { playerId })
+              return
+            }
+
+            webRTCLog("error", "useWebRTC", "Error creating offer", {
               playerId,
+              errorMessage,
+              errorName: err instanceof Error ? err.name : "Unknown",
               signalingState: peerManager.getPeerConnection().signalingState,
-              localDescription: peerManager.getPeerConnection().localDescription ? { 
-                type: peerManager.getPeerConnection().localDescription.type,
-                sdpLength: peerManager.getPeerConnection().localDescription.sdp?.length,
-              } : null,
-              remoteDescription: peerManager.getPeerConnection().remoteDescription ? { 
-                type: peerManager.getPeerConnection().remoteDescription.type,
-                sdpLength: peerManager.getPeerConnection().remoteDescription.sdp?.length,
-              } : null,
+              localDescType: peerManager.getPeerConnection().localDescription?.type,
+              remoteDescType: peerManager.getPeerConnection().remoteDescription?.type,
             })
-            
-            // Если это ошибка о m-lines, закрыть соединение и удалить его
-            if (errorMessage.includes('m-lines') || errorMessage.includes('order')) {
-              console.warn(`[WebRTC] ⚠️ Closing connection to ${playerId} due to m-lines error, will be recreated`)
+
+            if (errorMessage.includes("m-lines") || errorMessage.includes("order")) {
+              webRTCLog("warn", "useWebRTC", "Closing connection due to m-lines error", { playerId })
               peerManager.close()
               peerConnectionsRef.current.delete(playerId)
               setRemoteStreams((prev) => {
@@ -1374,9 +1373,14 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               }
             })
             .catch((err) => {
-              // Сбросить флаг при ошибке
               isCreatingOfferRef.current.set(playerId, false)
-              console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
+              const errorCode = (err as any)?.code
+              const errorMessage = err instanceof Error ? err.message : String(err)
+              if (errorCode === RTC_OFFER_SKIPPED_REMOTE_OFFER || errorMessage.includes("have-remote-offer")) {
+                webRTCLog("info", "useWebRTC", "Offer skipped: remote peer sent offer first (recreated)", { playerId })
+                return
+              }
+              webRTCLog("error", "useWebRTC", "Error creating offer (recreated connection)", { playerId, errorMessage })
             })
         } else {
           // Соединение в стабильном состоянии, можно просто добавить поток и создать offer
@@ -1473,14 +1477,14 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               }
             })
             .catch((err) => {
-              // Сбросить флаг при ошибке
               isCreatingOfferRef.current.set(playerId, false)
-              console.error(`[WebRTC] ❌ Error creating offer for ${playerId}:`, err)
-              // Если ошибка связана с signaling state, пересоздать соединение
-              if (err instanceof Error && err.message.includes('signaling state')) {
-                console.log(`[WebRTC] 🔄 Retrying by recreating connection for ${playerId}`)
-                // Закрыть и пересоздать соединение (код выше)
+              const errorCode = (err as any)?.code
+              const errorMessage = err instanceof Error ? err.message : String(err)
+              if (errorCode === RTC_OFFER_SKIPPED_REMOTE_OFFER || errorMessage.includes("have-remote-offer")) {
+                webRTCLog("info", "useWebRTC", "Offer skipped: remote peer sent offer first (after local stream)", { playerId })
+                return
               }
+              webRTCLog("error", "useWebRTC", "Error creating offer (after local stream)", { playerId, errorMessage })
             })
         }
       } else {

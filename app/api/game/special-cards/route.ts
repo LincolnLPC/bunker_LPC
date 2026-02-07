@@ -495,6 +495,15 @@ async function handleExchangeCard(
   requiredCategory?: string | null,
 ) {
   // Exchange one characteristic with another player
+  // RLS blocks updating other players' characteristics — use service role for both updates
+  let updateClient: any = supabase
+  try {
+    const serviceRole = createServiceRoleClient()
+    updateClient = serviceRole
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable, using regular client (may fail for target update)")
+  }
+
   // Get current player's characteristic to exchange
   const { data: playerChars, error: playerCharsError } = await supabase
     .from("player_characteristics")
@@ -525,18 +534,18 @@ async function handleExchangeCard(
     throw new Error("Target player does not have a characteristic of this category")
   }
 
-  // Exchange values
+  // Exchange values — both updates via updateClient (service role) to bypass RLS
   const playerValue = playerChars.value
   const targetValue = targetChars.value
 
-  const { error: updatePlayerError } = await supabase
+  const { error: updatePlayerError } = await updateClient
     .from("player_characteristics")
     .update({ value: targetValue })
     .eq("id", characteristicId)
 
   if (updatePlayerError) throw updatePlayerError
 
-  const { error: updateTargetError } = await supabase
+  const { error: updateTargetError } = await updateClient
     .from("player_characteristics")
     .update({ value: playerValue })
     .eq("id", targetChars.id)
@@ -581,8 +590,14 @@ async function handleRevealCard(
 
   if (roomError) throw roomError
 
-  // Reveal the characteristic
-  const { error: updateError } = await supabase
+  // Reveal the characteristic — use service role (RLS blocks updating other player's char)
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for reveal")
+  }
+  const { error: updateError } = await updateClient
     .from("player_characteristics")
     .update({
       is_revealed: true,
@@ -636,7 +651,14 @@ async function handleStealCard(
   targetPlayerId: string,
   characteristicId: string,
 ) {
-  // Steal a characteristic from another player
+  // Steal a characteristic from another player — use service role for target delete/update (RLS)
+  let writeClient: any = supabase
+  try {
+    writeClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for steal")
+  }
+
   const { data: targetChar, error: targetCharError } = await supabase
     .from("player_characteristics")
     .select("*")
@@ -658,16 +680,16 @@ async function handleStealCard(
     .single()
 
   if (existingChar) {
-    // Replace existing characteristic
-    const { error: updateError } = await supabase
+    // Replace existing characteristic (own row — OK with regular client, but use writeClient for consistency)
+    const { error: updateError } = await writeClient
       .from("player_characteristics")
       .update({ value: targetChar.value })
       .eq("id", existingChar.id)
 
     if (updateError) throw updateError
 
-    // Remove from target player
-    const { error: deleteError } = await supabase
+    // Remove from target player (RLS would block — must use service role)
+    const { error: deleteError } = await writeClient
       .from("player_characteristics")
       .delete()
       .eq("id", characteristicId)
@@ -677,7 +699,7 @@ async function handleStealCard(
     return { type: "steal", characteristicId, stolenValue: targetChar.value, replacedCharacteristicId: existingChar.id }
   } else {
     // Create new characteristic for player
-    const { error: insertError } = await supabase.from("player_characteristics").insert({
+    const { error: insertError } = await writeClient.from("player_characteristics").insert({
       player_id: playerId,
       category: targetChar.category,
       name: targetChar.name,
@@ -688,8 +710,8 @@ async function handleStealCard(
 
     if (insertError) throw insertError
 
-    // Remove from target player
-    const { error: deleteError } = await supabase
+    // Remove from target player (RLS would block — must use service role)
+    const { error: deleteError } = await writeClient
       .from("player_characteristics")
       .delete()
       .eq("id", characteristicId)
@@ -1266,7 +1288,14 @@ async function handleReplaceProfessionCard(
     throw new Error("Cannot generate random profession")
   }
 
-  const { error: updateError } = await supabase
+  // Use service role (RLS blocks updating target player's characteristic)
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for replace-profession")
+  }
+  const { error: updateError } = await updateClient
     .from("player_characteristics")
     .update({ value: newValue })
     .eq("id", characteristicId)
@@ -1308,7 +1337,14 @@ async function handleReplaceHealthCard(
     throw new Error("Cannot generate random health")
   }
 
-  const { error: updateError } = await supabase
+  // Use service role (RLS blocks updating target player's characteristic)
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for replace-health")
+  }
+  const { error: updateError } = await updateClient
     .from("player_characteristics")
     .update({ value: newValue })
     .eq("id", characteristicId)

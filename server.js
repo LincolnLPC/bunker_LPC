@@ -1,6 +1,8 @@
 /**
- * Custom Next.js server with Socket.io
- * Required for WebRTC signaling
+ * Custom Next.js server with Socket.io (опционально)
+ * WebRTC signaling теперь через Supabase Realtime.
+ * Запуск: pnpm dev:socket (для отладки Socket.io)
+ * Обычная разработка: pnpm dev (next dev, Realtime)
  */
 
 const { createServer } = require('http')

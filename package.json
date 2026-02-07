@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "dev": "node server.js",
+    "dev": "next dev",
+    "dev:socket": "node server.js",
     "dev:next": "next dev",
     "lint": "eslint .",
-    "start": "NODE_ENV=production node server.js",
+    "start": "next start",
     "monitor": "node scripts/monitor-signaling.js",
     "monitor:server": "node scripts/monitor-server-logs.js",
     "dev:log": "node scripts/log-server.js",

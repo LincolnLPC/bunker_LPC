@@ -2,6 +2,11 @@
  * Управление WebRTC Peer Connections
  */
 
+import { webRTCLog, webRTCLogError } from "./logger"
+
+/** Ошибка когда offer пропущен из-за гонки (удалённый пир уже отправил offer) */
+export const RTC_OFFER_SKIPPED_REMOTE_OFFER = "RTC_OFFER_SKIPPED_REMOTE_OFFER"
+
 // STUN серверы (публичные, бесплатные)
 const STUN_SERVERS: RTCConfiguration = {
   iceServers: [
@@ -295,19 +300,19 @@ export class PeerConnectionManager {
       stackTrace: new Error().stack?.split('\n').slice(1, 6).join('\n'),
     })
     
-    // Можно создавать offer только в состоянии 'stable' и только если negotiation еще не завершена
-    // Если у нас уже есть и local и remote description, negotiation завершена, и нельзя создавать новый offer
-    if (signalingState !== 'stable') {
-      const errorMsg = `Cannot create offer: connection is in '${signalingState}' state, expected 'stable'. Current localDescription: ${localDescription?.type || 'none'}, remoteDescription: ${remoteDescription?.type || 'none'}`
-      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+    if (signalingState !== "stable") {
+      webRTCLog("warn", "PeerConnection", "createOffer: invalid state at start", {
         playerId: this.playerId,
         signalingState,
-        connectionState,
+        connectionState: connectionState,
         iceState,
-        localDescription: localDescription ? { type: localDescription.type, sdpLength: localDescription.sdp?.length } : null,
-        remoteDescription: remoteDescription ? { type: remoteDescription.type, sdpLength: remoteDescription.sdp?.length } : null,
       })
-      throw new Error(errorMsg)
+      if (signalingState === "have-remote-offer") {
+        const err = new Error(`Offer skipped: remote peer sent offer first (have-remote-offer)`)
+        ;(err as any).code = RTC_OFFER_SKIPPED_REMOTE_OFFER
+        throw err
+      }
+      throw new Error(`Cannot create offer: connection is in '${signalingState}' state`)
     }
     
     // Если уже есть local description типа 'offer', нельзя создавать новый offer
@@ -391,28 +396,26 @@ export class PeerConnectionManager {
     })
     
     // Финальная проверка перед setLocalDescription
-    // Если состояние изменилось, НЕ устанавливать новый offer - это вызовет ошибку m-lines
+    // Если состояние изменилось (гонка: удалённый пир отправил offer первым), НЕ устанавливать offer
     if (finalSignalingState !== 'stable') {
-      const errorMsg = `Cannot set local description: connection is in '${finalSignalingState}' state, expected 'stable'. State changed during offer creation.`
-      console.error(`[PeerConnection] ❌ ${errorMsg}`, {
+      webRTCLog("warn", "PeerConnection", "createOffer: state changed during offer creation", {
         playerId: this.playerId,
         signalingState: finalSignalingState,
-        localDescription: finalLocalDesc ? { 
-          type: finalLocalDesc.type,
-          sdpLength: finalLocalDesc.sdp?.length,
-        } : null,
-        remoteDescription: finalRemoteDesc ? { 
-          type: finalRemoteDesc.type,
-          sdpLength: finalRemoteDesc.sdp?.length,
-        } : null,
+        expectedState: "stable",
+        localDescType: finalLocalDesc?.type,
+        remoteDescType: finalRemoteDesc?.type,
       })
-      // Не выбрасывать ошибку, а просто вернуть существующий offer если он есть
-      // Это предотвратит ошибку m-lines
+      // have-remote-offer: удалённый пир уже отправил offer, handleOffer обработает его
+      if (finalSignalingState === 'have-remote-offer') {
+        const err = new Error(`Offer skipped: remote peer sent offer first (have-remote-offer)`)
+        ;(err as any).code = RTC_OFFER_SKIPPED_REMOTE_OFFER
+        throw err
+      }
       if (finalHasLocalDesc && finalLocalDesc.type === 'offer') {
-        console.warn(`[PeerConnection] ⚠️ Returning existing offer instead of creating new one`)
+        webRTCLog("info", "PeerConnection", "Returning existing offer", { playerId: this.playerId })
         return finalLocalDesc as RTCSessionDescriptionInit
       }
-      throw new Error(errorMsg)
+      throw new Error(`Cannot set local description: connection is in '${finalSignalingState}' state`)
     }
     
     if (finalHasLocalDesc && finalLocalDesc.type === 'offer') {
@@ -440,106 +443,48 @@ export class PeerConnectionManager {
       throw new Error(errorMsg)
     }
     
+    // Последняя проверка непосредственно перед setLocalDescription (гонка)
+    const stateBeforeSet = this.peerConnection.signalingState
+    if (stateBeforeSet === 'have-remote-offer') {
+      webRTCLog("warn", "PeerConnection", "createOffer: have-remote-offer detected right before setLocalDescription", {
+        playerId: this.playerId,
+      })
+      const err = new Error(`Offer skipped: remote peer sent offer first (have-remote-offer)`)
+      ;(err as any).code = RTC_OFFER_SKIPPED_REMOTE_OFFER
+      throw err
+    }
+
     try {
       await this.peerConnection.setLocalDescription(offer)
-      console.log(`[PeerConnection] ✅ Local description set successfully for ${this.playerId}`, {
+      webRTCLog("info", "PeerConnection", "Local description set successfully", {
+        playerId: this.playerId,
         newSignalingState: this.peerConnection.signalingState,
       })
     } catch (error) {
-      // Извлечь информацию об ошибке
       const errorMessage = error instanceof Error ? error.message : String(error)
-      const errorName = error instanceof Error ? error.name : 'Unknown'
-      
-      // Детальное логирование ошибки
-      const errorDetails: any = {
-        errorMessage,
-        errorName,
-        errorStack: error instanceof Error ? error.stack : undefined,
-        signalingState: this.peerConnection.signalingState,
+      const errorName = error instanceof Error ? error.name : "Unknown"
+      const signalingState = this.peerConnection.signalingState
+
+      // InvalidStateError + have-remote-offer = гонка, не критично
+      const isOfferSkippedRace =
+        (errorName === "InvalidStateError" || errorMessage.includes("have-remote-offer") || errorMessage.includes("wrong state")) &&
+        signalingState === "have-remote-offer"
+
+      webRTCLogError("PeerConnection", "Error setting local description", error, {
+        playerId: this.playerId,
+        signalingState,
         connectionState: this.peerConnection.connectionState,
         iceState: this.peerConnection.iceConnectionState,
-        currentLocalDescription: this.peerConnection.localDescription ? {
-          type: this.peerConnection.localDescription.type,
-          sdpLength: this.peerConnection.localDescription.sdp?.length,
-          sdpPreview: this.peerConnection.localDescription.sdp?.substring(0, 300),
-          mlinesCount: (this.peerConnection.localDescription.sdp?.match(/^m=/gm) || []).length,
-          mlines: this.peerConnection.localDescription.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
-        } : null,
-        currentRemoteDescription: this.peerConnection.remoteDescription ? {
-          type: this.peerConnection.remoteDescription.type,
-          sdpLength: this.peerConnection.remoteDescription.sdp?.length,
-          sdpPreview: this.peerConnection.remoteDescription.sdp?.substring(0, 300),
-          mlinesCount: (this.peerConnection.remoteDescription.sdp?.match(/^m=/gm) || []).length,
-          mlines: this.peerConnection.remoteDescription.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
-        } : null,
-        newOfferSdpPreview: offer.sdp?.substring(0, 300),
-        newOfferMlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
-        newOfferMlines: offer.sdp?.match(/^m=.*$/gm)?.slice(0, 5) || [],
-        transceivers: this.peerConnection.getTransceivers().map(t => ({
-          mid: t.mid,
-          direction: t.direction,
-          currentDirection: t.currentDirection,
-          senderTrack: t.sender.track ? { kind: t.sender.track.kind, id: t.sender.track.id } : null,
-          receiverTrack: t.receiver.track ? { kind: t.receiver.track.kind, id: t.receiver.track.id } : null,
-        })),
-      }
-      
-      // Правильно логировать ошибку - логировать по частям, чтобы избежать проблем с сериализацией
-      console.error(`[PeerConnection] ❌ Error setting local description for ${this.playerId}:`)
-      console.error(`  Error message: ${errorMessage}`)
-      console.error(`  Error name: ${errorName}`)
-      console.error(`  Signaling state: ${this.peerConnection.signalingState}`)
-      console.error(`  Connection state: ${this.peerConnection.connectionState}`)
-      console.error(`  ICE state: ${this.peerConnection.iceConnectionState}`)
-      console.error(`  Local description:`, this.peerConnection.localDescription ? {
-        type: this.peerConnection.localDescription.type,
-        sdpLength: this.peerConnection.localDescription.sdp?.length,
-        mlinesCount: (this.peerConnection.localDescription.sdp?.match(/^m=/gm) || []).length,
-      } : null)
-      console.error(`  Remote description:`, this.peerConnection.remoteDescription ? {
-        type: this.peerConnection.remoteDescription.type,
-        sdpLength: this.peerConnection.remoteDescription.sdp?.length,
-        mlinesCount: (this.peerConnection.remoteDescription.sdp?.match(/^m=/gm) || []).length,
-      } : null)
-      console.error(`  New offer:`, {
-        type: offer.type,
-        sdpLength: offer.sdp?.length,
-        mlinesCount: (offer.sdp?.match(/^m=/gm) || []).length,
+        localDescType: this.peerConnection.localDescription?.type,
+        remoteDescType: this.peerConnection.remoteDescription?.type,
+        isOfferSkippedRace,
       })
-      
-      // Дополнительное логирование для отладки
-      if (error instanceof DOMException) {
-        console.error(`[PeerConnection] ❌ DOMException details:`, {
-          name: error.name,
-          message: error.message,
-          code: error.code,
-        })
-      } else if (error instanceof Error) {
-        console.error(`[PeerConnection] ❌ Error details:`, {
-          name: error.name,
-          message: error.message,
-          stack: error.stack?.split('\n').slice(0, 5).join('\n'),
-        })
-      } else {
-        console.error(`[PeerConnection] ❌ Unknown error type:`, typeof error, String(error))
+
+      if (isOfferSkippedRace) {
+        const err = new Error(`Offer skipped: remote peer sent offer first (have-remote-offer)`)
+        ;(err as any).code = RTC_OFFER_SKIPPED_REMOTE_OFFER
+        throw err
       }
-      
-      // Если это ошибка о порядке m-lines, вывести детальное сравнение
-      if (errorMessage.includes('m-lines') || errorMessage.includes('order')) {
-        const currentLocalMlines = this.peerConnection.localDescription?.sdp?.match(/^m=.*$/gm) || []
-        const newOfferMlines = offer.sdp?.match(/^m=.*$/gm) || []
-        const currentRemoteMlines = this.peerConnection.remoteDescription?.sdp?.match(/^m=.*$/gm) || []
-        
-        console.error(`[PeerConnection] ❌ M-lines comparison:`, {
-          currentLocalMlines,
-          newOfferMlines,
-          currentRemoteMlines,
-          localMlinesCount: currentLocalMlines.length,
-          newOfferMlinesCount: newOfferMlines.length,
-          remoteMlinesCount: currentRemoteMlines.length,
-        })
-      }
-      
       throw error
     }
     
@@ -661,33 +606,37 @@ export class PeerConnectionManager {
       return // Уже установлен, пропускаем
     }
     
+    // Validate answer before use - DOMException often serializes as {}
+    if (!answer || typeof answer !== "object") {
+      const err = new Error("Invalid answer: expected object")
+      console.error(`[PeerConnection] ❌ Invalid answer:`, { answer, answerType: typeof answer })
+      throw err
+    }
+    if (answer.type !== "answer" || !answer.sdp) {
+      const err = new Error(`Invalid answer structure: type=${answer?.type}, hasSdp=${!!answer?.sdp}`)
+      console.error(`[PeerConnection] ❌ Invalid answer structure:`, { type: answer?.type, hasSdp: !!answer?.sdp })
+      throw err
+    }
+
     try {
       await this.peerConnection.setRemoteDescription(new RTCSessionDescription(answer))
-    } catch (setRemoteDescError) {
-      // Детальное логирование ошибки setRemoteDescription
-      let errorDetails: any = {
+    } catch (setRemoteDescError: unknown) {
+      // DOMException и другие браузерные ошибки часто сериализуются как {} — извлекаем данные вручную
+      const err = setRemoteDescError as Error & { code?: number }
+      const errorDetails: Record<string, unknown> = {
         playerId: this.playerId,
         signalingStateBefore,
         localDescriptionBefore: localDescBefore ? { type: localDescBefore.type } : null,
         remoteDescriptionBefore: remoteDescBefore ? { type: remoteDescBefore.type } : null,
-        answerType: answer.type,
-        hasAnswerSdp: !!answer.sdp,
+        answerType: answer?.type,
+        hasAnswerSdp: !!answer?.sdp,
+        errorMessage: err?.message ?? String(setRemoteDescError),
+        errorName: err?.name ?? "Unknown",
+        errorCode: err?.code,
       }
-      
-      if (setRemoteDescError instanceof Error) {
-        errorDetails.errorMessage = setRemoteDescError.message
-        errorDetails.errorName = setRemoteDescError.name
-        errorDetails.errorStack = setRemoteDescError.stack
-        if ('code' in setRemoteDescError) {
-          errorDetails.errorCode = (setRemoteDescError as any).code
-        }
-      } else {
-        errorDetails.error = String(setRemoteDescError)
-        errorDetails.errorType = typeof setRemoteDescError
-      }
-      
+      if (err?.stack) errorDetails.errorStack = err.stack
+
       console.error(`[PeerConnection] ❌ Error setting remote description (answer):`, errorDetails)
-      console.error(`[PeerConnection] ❌ Raw error object:`, setRemoteDescError)
       
       // Пробрасываем ошибку дальше
       throw setRemoteDescError
