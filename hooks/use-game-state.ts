@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client"
 import { useRealtimeGame } from "@/hooks/use-realtime-game"
 import { retry, isRetryableError } from "@/lib/error-handling/connection-recovery"
 import type { GameState, Player, Characteristic, Vote, ChatMessage, Spectator } from "@/types/game"
+import type { CameraEffectPayload } from "@/hooks/use-realtime-game"
 
 // Transform database row to GameState
 function transformRoomToGameState(room: any, currentUserId: string): { state: GameState; currentPlayerId: string } {
@@ -102,7 +103,11 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
   return { state, currentPlayerId: foundPlayerId }
 }
 
-export function useGameState(roomCode: string) {
+export interface UseGameStateOptions {
+  onCameraEffect?: (payload: CameraEffectPayload) => void
+}
+
+export function useGameState(roomCode: string, options?: UseGameStateOptions) {
   const supabase = createClient()
   const [gameState, setGameState] = useState<GameState | null>(null)
   const [currentPlayerId, setCurrentPlayerId] = useState<string>("")
@@ -676,18 +681,18 @@ export function useGameState(roomCode: string) {
           const isHostOnly = (room.settings as any)?.hostRole === "host_only" && room.host_id === user.id
           if (isHostOnly) {
             console.log("[GameState] Host is in host_only mode, not setting player ID")
-            setGameState(state)
+            setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
             setCurrentPlayerId("") // Empty for host_only mode
           } else {
             // Player should be in state but isn't - use their ID anyway
             console.log("[GameState] Player found in room but not in transformed state, using room player ID:", playerByUserId.id)
-            setGameState(state)
+            setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
             setCurrentPlayerId(playerByUserId.id)
           }
         } else {
           // Player truly not in room - this is OK if they're trying to join
           console.log("[GameState] Player not found in room - may need to join")
-          setGameState(state)
+          setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
           setCurrentPlayerId(foundPlayerId || "")
         }
       } else {
@@ -700,36 +705,37 @@ export function useGameState(roomCode: string) {
           })
         }
         
-        setGameState(state)
+        setGameState((prev) => ({ ...state, chatMessages: isInitialLoad ? [] : (prev?.chatMessages ?? []) }))
         setCurrentPlayerId(foundPlayerId)
       }
 
-      // Load chat messages
-      const { data: messages, error: messagesError } = await supabase
-        .from("chat_messages")
-        .select(
-          `
-          *,
-          game_players (name)
-        `,
-        )
-        .eq("room_id", room.id)
-        .order("created_at", { ascending: true })
+      // Load chat messages only on initial load - use realtime subscription for updates to avoid overwriting and blinking
+      if (isInitialLoad) {
+        const { data: messages, error: messagesError } = await supabase
+          .from("chat_messages")
+          .select(
+            `
+            *,
+            game_players (name)
+          `,
+          )
+          .eq("room_id", room.id)
+          .order("created_at", { ascending: true })
 
-      let chatMessages: ChatMessage[] = []
-      if (!messagesError && messages) {
-        chatMessages = messages.map((m: any) => ({
-          id: m.id,
-          playerId: m.player_id || undefined,
-          playerName: m.game_players?.name || undefined,
-          message: m.message,
-          type: (m.message_type || "chat") as ChatMessage["type"],
-          timestamp: new Date(m.created_at),
-        }))
+        let chatMessages: ChatMessage[] = []
+        if (!messagesError && messages) {
+          chatMessages = messages.map((m: any) => ({
+            id: m.id,
+            playerId: m.player_id || undefined,
+            playerName: m.game_players?.name || undefined,
+            message: m.message,
+            type: (m.message_type || "chat") as ChatMessage["type"],
+            timestamp: new Date(m.created_at),
+          }))
+        }
+
+        setGameState((prev) => (prev ? { ...prev, chatMessages } : null))
       }
-
-      // Update state with chat messages
-      setGameState((prev) => (prev ? { ...prev, chatMessages } : null))
       // Mark initial load as complete
       isInitialLoadRef.current = false
       setLoading(false)
@@ -789,8 +795,9 @@ export function useGameState(roomCode: string) {
   }, [loadGameState])
 
   // Set up realtime subscriptions
-  useRealtimeGame({
+  const { broadcastCameraEffect } = useRealtimeGame({
     roomId: gameState?.id || "",
+    onCameraEffect: options?.onCameraEffect,
     onGameStateUpdate: useCallback(
       (updates: Partial<GameState>) => {
         setGameState((prev) => (prev ? { ...prev, ...updates } : null))
@@ -1889,5 +1896,6 @@ export function useGameState(roomCode: string) {
     toggleReady,
     getSpecialCards,
     useSpecialCard,
+    broadcastCameraEffect,
   }
 }

@@ -4,6 +4,14 @@ import { useRef, useEffect, useState } from "react"
 import type { Player } from "@/types/game"
 import { cn } from "@/lib/utils"
 import { MicOff, VideoOff, User } from "lucide-react"
+import { CameraEffectOverlay } from "./camera-effect-overlay"
+import type { CameraEffectType } from "@/lib/camera-effects/config"
+import { CAMERA_EFFECT_DRAG_TYPE } from "@/lib/camera-effects/config"
+
+export interface ActiveCameraEffect {
+  id: string
+  effect: CameraEffectType
+}
 
 interface PlayerCardProps {
   player: Player
@@ -14,6 +22,9 @@ interface PlayerCardProps {
   isMuted?: boolean
   onToggleMute?: () => void
   vdoNinjaCameraUrl?: string | null
+  activeEffects?: ActiveCameraEffect[]
+  onEffectDrop?: (effect: CameraEffectType) => void
+  onEffectComplete?: (effectId: string) => void
 }
 
 export function PlayerCard({
@@ -25,7 +36,48 @@ export function PlayerCard({
   isMuted = false,
   onToggleMute,
   vdoNinjaCameraUrl,
+  activeEffects = [],
+  onEffectDrop,
+  onEffectComplete,
 }: PlayerCardProps) {
+  const [dragOver, setDragOver] = useState(false)
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(CAMERA_EFFECT_DRAG_TYPE)) {
+      e.preventDefault()
+      e.dataTransfer.dropEffect = "copy"
+      setDragOver(true)
+    }
+  }
+
+  const handleDragLeave = () => setDragOver(false)
+
+  const handleDrop = (e: React.DragEvent) => {
+    setDragOver(false)
+    e.preventDefault()
+    e.stopPropagation()
+    const effect = (e.dataTransfer.getData(CAMERA_EFFECT_DRAG_TYPE) || e.dataTransfer.getData("text/plain")) as CameraEffectType
+    const validEffects = ["tomato", "egg", "revolver"] as const
+    if (effect && validEffects.includes(effect) && onEffectDrop) {
+      onEffectDrop(effect)
+    }
+  }
+
+  const handleDragOverInner = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(CAMERA_EFFECT_DRAG_TYPE)) {
+      e.preventDefault()
+      e.stopPropagation()
+      e.dataTransfer.dropEffect = "copy"
+      setDragOver(true)
+    }
+  }
+
+  const handleDragLeaveInner = (e: React.DragEvent) => {
+    const related = e.relatedTarget as Node | null
+    if (!related || !e.currentTarget.contains(related)) {
+      setDragOver(false)
+    }
+  }
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showCharacteristics, setShowCharacteristics] = useState(true)
@@ -137,12 +189,10 @@ export function PlayerCard({
     <div
       onClick={handleCardClick}
       className={cn(
-        "relative rounded-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:scale-[1.02]",
+        "relative h-full w-full min-h-0 rounded-sm border-2 overflow-hidden transition-all duration-300 cursor-pointer hover:brightness-105",
         "bg-[oklch(0.1_0.02_50/0.9)] backdrop-blur-sm",
         player.isEliminated && "card-eliminated",
-        isCurrentPlayer ? "border-[oklch(0.7_0.15_200)] card-glow-cyan" : "border-[oklch(0.7_0.2_50)] card-glow-orange",
-        // Всегда используем aspect ratio для правильных размеров карточки
-        "aspect-[4/3]"
+        isCurrentPlayer ? "border-[oklch(0.7_0.15_200)] card-glow-cyan" : "border-[oklch(0.7_0.2_50)] card-glow-orange"
       )}
     >
       {/* Slot number */}
@@ -151,7 +201,12 @@ export function PlayerCard({
       {/* Video/Avatar area - для VDO.ninja занимает всю карточку */}
       {isCurrentPlayer && vdoNinjaCameraUrl ? (
         // Для VDO.ninja iframe занимает всю карточку
-        <div className="absolute inset-0 w-full h-full z-0">
+        <div
+          className="absolute inset-0 w-full h-full z-0"
+          onDragOver={handleDragOverInner}
+          onDragLeave={handleDragLeaveInner}
+          onDrop={handleDrop}
+        >
           <iframe
             src={vdoNinjaCameraUrl}
             allow="camera; microphone; autoplay; fullscreen"
@@ -168,11 +223,30 @@ export function PlayerCard({
           />
         </div>
       ) : (
-        <div className="relative aspect-[4/3] bg-[oklch(0.08_0.01_60)] overflow-hidden">
+        <div
+          className="relative w-full h-full min-h-0 bg-[oklch(0.08_0.01_60)] overflow-hidden"
+          onDragOver={handleDragOverInner}
+          onDragLeave={handleDragLeaveInner}
+          onDrop={handleDrop}
+        >
           {player.stream ? (
-            <video ref={videoRef} autoPlay playsInline muted={isCurrentPlayer} className="w-full h-full object-cover" />
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted={isCurrentPlayer}
+              className="w-full h-full object-cover"
+              onDragOver={handleDragOverInner}
+              onDragLeave={handleDragLeaveInner}
+              onDrop={handleDrop}
+            />
           ) : (
-            <div className="w-full h-full flex items-center justify-center">
+            <div
+              className="w-full h-full flex items-center justify-center"
+              onDragOver={handleDragOverInner}
+              onDragLeave={handleDragLeaveInner}
+              onDrop={handleDrop}
+            >
               <User className="w-12 h-12 text-[oklch(0.3_0_0)]" />
             </div>
           )}
@@ -312,6 +386,15 @@ export function PlayerCard({
           Показать
         </button>
       )}
+
+      {/* Camera effects overlay */}
+      {activeEffects.map(({ id, effect }) => (
+        <CameraEffectOverlay
+          key={id}
+          effect={effect}
+          onComplete={() => onEffectComplete?.(id)}
+        />
+      ))}
 
       {/* Eliminated overlay - lower z-index so mute button is above */}
       {player.isEliminated && (

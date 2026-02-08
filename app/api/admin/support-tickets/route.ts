@@ -126,3 +126,73 @@ export async function GET(request: Request) {
     )
   }
 }
+
+/**
+ * PATCH - Update ticket status (admin only)
+ */
+export async function PATCH(request: Request) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const { data: adminRole, error: adminError } = await supabase
+    .from("admin_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .single()
+
+  if (adminError || !adminRole) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 })
+  }
+
+  try {
+    const body = await request.json()
+    const { ticketId, status: newStatus, adminResponse } = body
+
+    if (!ticketId || !newStatus) {
+      return NextResponse.json({ error: "ticketId and status are required" }, { status: 400 })
+    }
+
+    const updateData: Record<string, unknown> = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+    }
+
+    if (adminResponse !== undefined) {
+      updateData.admin_response = adminResponse
+      updateData.admin_user_id = user.id
+    }
+
+    if (newStatus === "resolved" || newStatus === "closed") {
+      updateData.resolved_at = new Date().toISOString()
+    }
+
+    const serviceClient = createServiceRoleClient()
+
+    const { data, error } = await serviceClient
+      .from("support_tickets")
+      .update(updateData)
+      .eq("id", ticketId)
+      .select()
+      .single()
+
+    if (error) {
+      console.error("[Support Tickets API] Error updating ticket:", error)
+      return NextResponse.json({ error: error.message || "Failed to update ticket" }, { status: 500 })
+    }
+
+    return NextResponse.json({ success: true, ticket: data })
+  } catch (error) {
+    console.error("Error in support tickets PATCH:", error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
+    )
+  }
+}

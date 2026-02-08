@@ -107,6 +107,7 @@ export default function AdminPage() {
   const [selectedTicket, setSelectedTicket] = useState<any | null>(null)
   const [ticketResponse, setTicketResponse] = useState("")
   const [updatingTicket, setUpdatingTicket] = useState(false)
+  const [ticketError, setTicketError] = useState<string | null>(null)
 
   useEffect(() => {
     const checkAdmin = async () => {
@@ -508,51 +509,34 @@ export default function AdminPage() {
 
   const handleUpdateTicketStatus = async (ticketId: string, newStatus: string, response?: string) => {
     setUpdatingTicket(true)
-    setError(null)
+    setTicketError(null)
 
     try {
-      const supabase = createClient()
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+      const { data, error: fetchError } = await safeFetch<{ success: boolean }>(
+        "/api/admin/support-tickets",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ticketId,
+            status: newStatus,
+            adminResponse: response || undefined,
+          }),
+        }
+      )
 
-      if (!user) {
-        setError("Не авторизован")
-        return
-      }
-
-      const updateData: any = {
-        status: newStatus,
-        updated_at: new Date().toISOString(),
-      }
-
-      if (response && newStatus !== "open") {
-        updateData.admin_response = response
-        updateData.admin_user_id = user.id
-      }
-
-      if (newStatus === "resolved" || newStatus === "closed") {
-        updateData.resolved_at = new Date().toISOString()
-      }
-
-      const { data, error: updateError } = await supabase
-        .from("support_tickets")
-        .update(updateData)
-        .eq("id", ticketId)
-        .select()
-        .single()
-
-      if (updateError) {
-        setError(updateError.message || "Не удалось обновить тикет")
+      if (fetchError || !data?.success) {
+        setTicketError(fetchError || "Не удалось обновить тикет")
         return
       }
 
       setSelectedTicket(null)
       setTicketResponse("")
+      setTicketError(null)
       loadSupportTickets()
     } catch (err) {
       console.error("Error updating ticket:", err)
-      setError("Произошла ошибка при обновлении тикета")
+      setTicketError("Произошла ошибка при обновлении тикета")
     } finally {
       setUpdatingTicket(false)
     }
@@ -1170,7 +1154,15 @@ export default function AdminPage() {
       </main>
 
       {/* Ticket Detail Dialog */}
-      <Dialog open={!!selectedTicket} onOpenChange={(open) => !open && setSelectedTicket(null)}>
+      <Dialog
+        open={!!selectedTicket}
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedTicket(null)
+            setTicketError(null)
+          }
+        }}
+      >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedTicket?.subject}</DialogTitle>
@@ -1188,6 +1180,11 @@ export default function AdminPage() {
                 </div>
               </div>
 
+              {ticketError && (
+                <div className="p-3 bg-destructive/10 text-destructive rounded text-sm mb-4">
+                  {ticketError}
+                </div>
+              )}
               <div>
                 <Label htmlFor="ticket-response" className="text-sm font-semibold mb-2 block">
                   Ответ администратора

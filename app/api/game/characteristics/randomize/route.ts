@@ -12,6 +12,7 @@ import {
   SAMPLE_TRAITS,
   SAMPLE_PROFESSIONS,
 } from "@/types/game"
+import { getSpecialOptionsForGender } from "@/lib/game/characteristics"
 
 function getRandomItem<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]
@@ -100,12 +101,15 @@ export async function POST(request: Request) {
     // Determine options: use custom list if available and not empty, otherwise use default values
     let options: string[] = []
     const hasCustomList = categorySetting?.customList && Array.isArray(categorySetting.customList) && categorySetting.customList.length > 0
-    
-    if (hasCustomList) {
-      // Use custom list provided by user when creating the game
+
+    if (char.category === "special") {
+      const genderFiltered = getSpecialOptionsForGender(player.gender)
+      const baseOptions = hasCustomList ? categorySetting.customList : SAMPLE_SPECIAL
+      options = baseOptions.filter((v: string) => genderFiltered.includes(v))
+      if (options.length === 0) options = [...genderFiltered]
+    } else if (hasCustomList) {
       options = categorySetting.customList
     } else {
-      // Use default values from CATEGORY_OPTIONS if user didn't add custom options
       options = CATEGORY_OPTIONS[char.category] || []
     }
 

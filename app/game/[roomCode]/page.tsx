@@ -13,7 +13,7 @@ import { useWebRTC } from "@/hooks/use-webrtc"
 import { useMediaSettings } from "@/hooks/use-media-settings"
 import { createClient } from "@/lib/supabase/client"
 import type { ChatMessage, Player } from "@/types/game"
-import { Loader2 } from "lucide-react"
+import { Loader2, X } from "lucide-react"
 
 // Dynamic imports for components that are conditionally rendered or modals
 const VotingPanel = dynamic(() => import("@/components/game/voting-panel").then(mod => ({ default: mod.VotingPanel })), {
@@ -99,6 +99,11 @@ const CatastropheIntroScreen = dynamic(() => import("@/components/game/catastrop
   loading: () => null,
 })
 
+const CameraEffectsPanel = dynamic(() => import("@/components/game/camera-effects-panel").then(mod => ({ default: mod.CameraEffectsPanel })), {
+  ssr: false,
+  loading: () => null,
+})
+
 // BunkerInfoModal imported dynamically above
 
 export default function GamePage() {
@@ -106,6 +111,19 @@ export default function GamePage() {
   const router = useRouter()
   // Extract roomCode immediately to avoid serialization issues with params object
   const roomCode = (params?.roomCode as string) || ""
+
+  const [cameraEffects, setCameraEffects] = useState<Map<string, Array<{ id: string; effect: "tomato" | "egg" | "revolver" }>>>(new Map())
+  const onCameraEffectFromRoom = useCallback(
+    (payload: { sourcePlayerId: string; targetPlayerId: string; effect: "tomato" | "egg" | "revolver"; effectId: string }) => {
+      setCameraEffects((prev) => {
+        const next = new Map(prev)
+        const list = next.get(payload.targetPlayerId) ?? []
+        next.set(payload.targetPlayerId, [...list, { id: payload.effectId, effect: payload.effect }])
+        return next
+      })
+    },
+    [],
+  )
 
   const {
     gameState,
@@ -129,7 +147,8 @@ export default function GamePage() {
     exchangeCharacteristics,
     toggleReady,
     useSpecialCard,
-  } = useGameState(roomCode)
+    broadcastCameraEffect,
+  } = useGameState(roomCode, { onCameraEffect: onCameraEffectFromRoom })
 
   // Загрузить настройки медиа из профиля
   const { settings: mediaSettings, loading: mediaSettingsLoading } = useMediaSettings()
@@ -140,6 +159,7 @@ export default function GamePage() {
     audioEnabled,
     videoEnabled,
     error: mediaError,
+    clearMediaError,
     initializeMedia,
     toggleAudio,
     toggleVideo,
@@ -233,7 +253,96 @@ export default function GamePage() {
   const [sendingMessage, setSendingMessage] = useState(false)
   const [showDebugInfo, setShowDebugInfo] = useState(false) // Hidden by default
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false) // Hidden by default
+  const [topPanelVisible, setTopPanelVisible] = useState(true) // Toggle with N or T key
+  const [bottomPanelVisible, setBottomPanelVisible] = useState(true) // Toggle with И or B key
+  const [showTeasePanel, setShowTeasePanel] = useState(false)
+  const [isPremium, setIsPremium] = useState(false)
+  useEffect(() => {
+    if (!currentPlayerId) return
+    let cancelled = false
+    const supabase = createClient()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (cancelled || !user) {
+        if (!cancelled) setIsPremium(false)
+        return
+      }
+      return supabase
+        .from("profiles")
+        .select("subscription_tier, premium_expires_at")
+        .eq("id", user.id)
+        .single()
+        .then(({ data: profile }) => {
+          if (cancelled) return
+          const tier = (profile?.subscription_tier || "basic") as string
+          const isPremiumTier = tier.toLowerCase() === "premium"
+          if (!isPremiumTier) {
+            setIsPremium(false)
+            return
+          }
+          const expiresAt = profile?.premium_expires_at
+          if (expiresAt && new Date(expiresAt) < new Date()) {
+            setIsPremium(false)
+            return
+          }
+          setIsPremium(true)
+        })
+    }).catch(() => {
+      if (!cancelled) setIsPremium(false)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [currentPlayerId])
   // Removed catastropheIntroSkipped - now using server state (roundStartedAt) via realtime subscription
+
+  const handleCameraEffectDrop = useCallback(
+    async (playerId: string, effect: "tomato" | "egg" | "revolver") => {
+      if (!gameState?.id || !currentPlayerId || !broadcastCameraEffect) return
+      const effectId = `eff-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      try {
+        const res = await fetch("/api/game/camera-effect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            roomId: gameState.id,
+            sourcePlayerId: currentPlayerId,
+            targetPlayerId: playerId,
+            effect,
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          console.warn("[CameraEffect] API error:", data.error || res.statusText)
+        }
+      } catch (e) {
+        console.warn("[CameraEffect] Failed to send chat message:", e)
+      }
+      broadcastCameraEffect({
+        sourcePlayerId: currentPlayerId,
+        targetPlayerId: playerId,
+        effect,
+        effectId,
+      })
+      setCameraEffects((prev) => {
+        const next = new Map(prev)
+        const list = next.get(playerId) ?? []
+        next.set(playerId, [...list, { id: effectId, effect }])
+        return next
+      })
+    },
+    [gameState?.id, currentPlayerId, broadcastCameraEffect],
+  )
+
+  const handleCameraEffectComplete = useCallback((playerId: string, effectId: string) => {
+    setCameraEffects((prev) => {
+      const next = new Map(prev)
+      const list = next.get(playerId) ?? []
+      const filtered = list.filter((e) => e.id !== effectId)
+      if (filtered.length === 0) next.delete(playerId)
+      else next.set(playerId, filtered)
+      return next
+    })
+  }, [])
 
   // Load vote results when phase changes to results
   useEffect(() => {
@@ -1292,7 +1401,7 @@ export default function GamePage() {
     }
   }, [gameState?.bunkerInfo?.totalRevealed])
 
-  // Handle Shift+U to toggle debug info and refresh indicator
+  // Handle keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       // Ignore if user is typing in an input field
@@ -1316,13 +1425,117 @@ export default function GamePage() {
           return newValue
         })
       }
+
+      // Y or н (Cyrillic) - toggle tease panel (camera effects)
+      const teaseKeys = ["y", "Y", "н", "Н"]
+      if (!event.shiftKey && (teaseKeys.includes(event.key) || event.code === "KeyY")) {
+        event.preventDefault()
+        setShowTeasePanel((prev) => !prev)
+        return
+      }
+
+      // N or т (Cyrillic) - toggle top panel (header + catastrophe banner)
+      const topPanelKeys = ["n", "N", "т", "Т"]
+      if (!event.shiftKey && (topPanelKeys.includes(event.key) || event.code === "KeyN")) {
+        event.preventDefault()
+        setTopPanelVisible((prev) => !prev)
+        return
+      }
+
+      // Modal overlays: only one can be open. Open only when none are open; always allow toggle-close.
+      const isModalOpen =
+        showChat || showSpecialCards || showBunkerInfo || showCharacteristicsManager || selectedPlayer !== null
+
+      // е or t - toggle chat (KeyT = physical key for "е" in Russian layout)
+      if (!event.shiftKey && (event.key === "t" || event.key === "T" || event.key === "е" || event.key === "Е" || event.code === "KeyT")) {
+        event.preventDefault()
+        if (showChat) {
+          setShowChat(false)
+        } else if (!isModalOpen) {
+          setShowChat(true)
+        }
+        return
+      }
+
+      // И or B - toggle bottom panel (GameControls)
+      // event.code KeyB = physical B key (produces "и" in Russian layout)
+      if (!event.shiftKey && (event.key === "b" || event.key === "B" || event.key === "и" || event.key === "И" || event.code === "KeyB")) {
+        event.preventDefault()
+        setBottomPanelVisible((prev) => !prev)
+        return
+      }
+
+      // Shortcuts only in playing phase
+      if (gameState.phase !== "playing") return
+
+      // й or q - toggle Мои характеристики
+      const myCharsKeys = ["q", "Q", "й", "Й"]
+      if (!event.shiftKey && myCharsKeys.includes(event.key) && !isSpectator) {
+        event.preventDefault()
+        const cp = gameState.players.find((p) => p.id === currentPlayerId)
+        if (cp) {
+          const isMyCharsOpen = selectedPlayer?.id === cp.id
+          if (isMyCharsOpen) {
+            setSelectedPlayer(null)
+          } else if (!isModalOpen) {
+            setSelectedPlayer(cp)
+          }
+        }
+        return
+      }
+
+      // ц or w - toggle Спец. карты
+      const specialCardsKeys = ["w", "W", "ц", "Ц"]
+      if (!event.shiftKey && specialCardsKeys.includes(event.key) && !isSpectator) {
+        event.preventDefault()
+        if (showSpecialCards) {
+          setShowSpecialCards(false)
+        } else if (!isModalOpen) {
+          setShowSpecialCards(true)
+        }
+        return
+      }
+
+      // у or e - toggle Бункер
+      const bunkerKeys = ["e", "E", "у", "У"]
+      if (!event.shiftKey && bunkerKeys.includes(event.key)) {
+        event.preventDefault()
+        if (showBunkerInfo) {
+          setShowBunkerInfo(false)
+        } else if (!isModalOpen) {
+          setShowBunkerInfo(true)
+        }
+        return
+      }
+
+      // к or r - toggle Управление (host only)
+      const manageKeys = ["r", "R", "к", "К"]
+      if (!event.shiftKey && manageKeys.includes(event.key) && isHost) {
+        event.preventDefault()
+        if (showCharacteristicsManager) {
+          setShowCharacteristicsManager(false)
+        } else if (!isModalOpen) {
+          setShowCharacteristicsManager(true)
+        }
+      }
     }
 
     window.addEventListener("keydown", handleKeyDown, true) // Use capture phase
     return () => {
       window.removeEventListener("keydown", handleKeyDown, true)
     }
-  }, [])
+  }, [
+    gameState.phase,
+    gameState.players,
+    currentPlayerId,
+    isSpectator,
+    isHost,
+    showChat,
+    showSpecialCards,
+    showBunkerInfo,
+    showCharacteristicsManager,
+    selectedPlayer,
+  ])
 
   const getCardDescription = (type: string | null | undefined) => {
     // Handle null/undefined types
@@ -1622,7 +1835,7 @@ export default function GamePage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col relative">
+    <div className="h-dvh max-h-dvh min-h-0 bg-background flex flex-col relative overflow-hidden">
       {/* Subtle refresh indicator in top-right corner (hidden by default, toggle with Shift+U) */}
       {isRefreshing && showRefreshIndicator && (
         <div className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-lg flex items-center gap-2">
@@ -1654,18 +1867,28 @@ export default function GamePage() {
       {/* Media error banner */}
       {mediaError && !localStream && (
         <div className="bg-destructive/20 border-b border-destructive/50 px-4 py-2 text-sm text-destructive">
-          <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <span>{mediaError}</span>
-            <button
-              onClick={() => {
-                initializeMedia().catch((err) => {
-                  console.error("[Media] Failed to initialize media:", err)
-                })
-              }}
-              className="px-3 py-1 bg-destructive/20 hover:bg-destructive/30 rounded text-xs font-medium"
-            >
-              Попробовать снова
-            </button>
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
+            <span className="flex-1 min-w-0">{mediaError}</span>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={() => {
+                  initializeMedia().catch((err) => {
+                    console.error("[Media] Failed to initialize media:", err)
+                  })
+                }}
+                className="px-3 py-1 bg-destructive/20 hover:bg-destructive/30 rounded text-xs font-medium"
+              >
+                Попробовать снова
+              </button>
+              <button
+                onClick={clearMediaError}
+                className="p-1.5 rounded hover:bg-destructive/30 transition-colors"
+                title="Закрыть"
+                aria-label="Закрыть"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1674,6 +1897,16 @@ export default function GamePage() {
       {/* Fallback: Always show content if not in waiting/finished phase and catastrophe intro conditions are not met */}
       {(!showCatastropheIntro || gameState.phase !== "playing" || gameState.currentRound !== 1) && (
         <>
+          <div
+            className={`overflow-hidden transition-all duration-300 ease-in-out ${
+              topPanelVisible ? "max-h-[220px] opacity-100" : "max-h-0 opacity-0"
+            }`}
+          >
+          <div
+            className={`shrink-0 transition-transform duration-300 ease-in-out ${
+              topPanelVisible ? "translate-y-0" : "-translate-y-full"
+            }`}
+          >
           <GameHeader
             gameState={gameState}
             unreadMessagesCount={unreadMessagesCount}
@@ -1703,8 +1936,10 @@ export default function GamePage() {
           />
 
           <CatastropheBanner catastrophe={gameState.catastrophe} bunkerDescription={gameState.bunkerDescription} />
+          </div>
+          </div>
 
-          <main className="flex-1 pb-20">
+          <main className={`flex-1 min-h-0 overflow-hidden flex flex-col min-w-0 transition-[padding] duration-300 ${bottomPanelVisible ? "pb-20" : "pb-0"}`}>
             <PlayerGrid
               players={playersWithStream}
               maxPlayers={gameState.maxPlayers}
@@ -1714,10 +1949,26 @@ export default function GamePage() {
               mutedPlayers={mutedPlayers}
               onTogglePlayerMute={togglePlayerMute}
               vdoNinjaCameraUrl={mediaSettings.vdoNinjaCameraUrl}
+              cameraEffects={cameraEffects}
+              onCameraEffectDrop={handleCameraEffectDrop}
+              onCameraEffectComplete={handleCameraEffectComplete}
             />
           </main>
 
+          <CameraEffectsPanel
+            open={showTeasePanel}
+            onClose={() => setShowTeasePanel(false)}
+            isPremium={isPremium}
+          />
+
+          <div
+            className={`fixed bottom-0 left-0 right-0 z-40 min-h-[72px] transition-transform duration-300 ease-in-out ${
+              bottomPanelVisible ? "translate-y-0" : "translate-y-full"
+            }`}
+          >
           <GameControls
+            onOpenTeasePanel={() => setShowTeasePanel((p) => !p)}
+            showTeasePanel={showTeasePanel}
         isHost={isHost}
         isSpectator={isSpectator}
         currentPhase={gameState.phase}
@@ -1859,6 +2110,7 @@ export default function GamePage() {
           gameState.phase === "voting" ? () => setShowVoteCountsModal(true) : undefined
         }
           />
+          </div>
         </>
       )}
 

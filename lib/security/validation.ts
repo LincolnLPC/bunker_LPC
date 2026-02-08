@@ -225,7 +225,8 @@ export function validateRoomId(roomId: string): ValidationResult {
 }
 
 /**
- * Sanitize string to prevent XSS (basic)
+ * Sanitize string to prevent XSS (basic).
+ * Alias: sanitizeInput for API routes.
  */
 export function sanitizeString(input: string): string {
   if (typeof input !== "string") {
@@ -239,6 +240,9 @@ export function sanitizeString(input: string): string {
     .replace(/'/g, "&#x27;")
     .replace(/\//g, "&#x2F;")
 }
+
+/** Alias for sanitizeString (used in API routes) */
+export const sanitizeInput = sanitizeString
 
 /**
  * Validate and sanitize room settings object

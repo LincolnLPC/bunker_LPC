@@ -612,7 +612,6 @@ async function handleRevealCard(
 }
 
 async function handleRerollCard(supabase: any, playerId: string, roomId: string, characteristicId: string) {
-  // Reroll (randomize) one of player's characteristics
   const { data: characteristic, error: charError } = await supabase
     .from("player_characteristics")
     .select("*")
@@ -624,11 +623,21 @@ async function handleRerollCard(supabase: any, playerId: string, roomId: string,
     throw new Error("Characteristic not found")
   }
 
-  // Import characteristics utility
-  const { getRandomCharacteristic } = await import("@/lib/game/characteristics")
+  const { getRandomCharacteristic, getSpecialOptionsForGender } = await import("@/lib/game/characteristics")
 
-  // Get random value for the category
-  const newValue = getRandomCharacteristic(characteristic.category as any)
+  let newValue: string
+  if (characteristic.category === "special") {
+    const { data: player } = await supabase
+      .from("game_players")
+      .select("gender")
+      .eq("id", playerId)
+      .single()
+    const options = getSpecialOptionsForGender(player?.gender || "М")
+    if (options.length === 0) throw new Error("Cannot reroll category: special")
+    newValue = options[Math.floor(Math.random() * options.length)]
+  } else {
+    newValue = getRandomCharacteristic(characteristic.category as any)
+  }
 
   if (!newValue) {
     throw new Error(`Cannot reroll category: ${characteristic.category}`)

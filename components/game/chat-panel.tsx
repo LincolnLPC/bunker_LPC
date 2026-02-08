@@ -4,10 +4,11 @@ import type React from "react"
 
 import { useState, useRef, useEffect } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { X, Send, MessageSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { EmojiPicker } from "./emoji-picker"
+import { ChatMessageContent } from "./chat-message-content"
 
 interface ChatMessage {
   id: string
@@ -29,16 +30,40 @@ interface ChatPanelProps {
 
 export function ChatPanel({ isOpen, onClose, messages, onSendMessage, currentPlayerName, sending = false }: ChatPanelProps) {
   const [inputValue, setInputValue] = useState("")
+  const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const lastMessageIdRef = useRef<string | null>(null)
+
+  const insertEmoji = (emoji: string) => {
+    const input = inputRef.current
+    if (input) {
+      const start = input.selectionStart ?? inputValue.length
+      const end = input.selectionEnd ?? inputValue.length
+      const newValue = inputValue.slice(0, start) + emoji + inputValue.slice(end)
+      setInputValue(newValue)
+      input.focus()
+      requestAnimationFrame(() => {
+        const pos = start + emoji.length
+        input.setSelectionRange(pos, pos)
+      })
+    } else {
+      setInputValue((prev) => prev + emoji)
+    }
+  }
 
   useEffect(() => {
-    // Auto-scroll to bottom when new messages arrive
-    if (scrollRef.current) {
-      const scrollContainer = scrollRef.current.querySelector('[data-radix-scroll-area-viewport]')
-      if (scrollContainer) {
-        scrollContainer.scrollTop = scrollContainer.scrollHeight
-      } else {
-        scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    // Auto-scroll to bottom only when a new message is added (avoid scroll on every render)
+    const lastMsg = messages[messages.length - 1]
+    const lastId = lastMsg?.id ?? null
+    if (lastId && lastId !== lastMessageIdRef.current) {
+      lastMessageIdRef.current = lastId
+      if (scrollRef.current) {
+        requestAnimationFrame(() => {
+          const scrollContainer = scrollRef.current?.querySelector('[data-radix-scroll-area-viewport]')
+          if (scrollContainer) {
+            scrollContainer.scrollTop = scrollContainer.scrollHeight
+          }
+        })
       }
     }
   }, [messages])
@@ -88,7 +113,9 @@ export function ChatPanel({ isOpen, onClose, messages, onSendMessage, currentPla
               {msg.type === "chat" && (
                 <>
                   <span className="font-semibold text-primary">{msg.playerName}: </span>
-                  <span className="text-foreground">{msg.message}</span>
+                  <span className="text-foreground inline-flex flex-wrap items-center gap-0.5">
+                    <ChatMessageContent text={msg.message} />
+                  </span>
                 </>
               )}
               {msg.type !== "chat" && <span>{msg.message}</span>}
@@ -99,13 +126,20 @@ export function ChatPanel({ isOpen, onClose, messages, onSendMessage, currentPla
 
       {/* Input */}
       <div className="p-4 border-t border-border">
-        <div className="flex gap-2">
-          <Input
+        <div className="flex gap-2 items-center">
+          <EmojiPicker onSelect={insertEmoji} disabled={sending} />
+          <input
+            ref={inputRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Введите сообщение..."
-            className="flex-1"
+            className={cn(
+              "flex-1 h-9 min-w-0 rounded-md border border-input bg-transparent px-3 py-1 text-base shadow-xs outline-none",
+              "placeholder:text-muted-foreground",
+              "focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]",
+              "disabled:pointer-events-none disabled:opacity-50"
+            )}
           />
           <Button size="icon" onClick={handleSend} disabled={!inputValue.trim() || sending}>
             <Send className="w-4 h-4" />

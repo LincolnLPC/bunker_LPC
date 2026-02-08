@@ -1,14 +1,20 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
-import { getPaymentConfig, getPlanById, type SubscriptionPlan } from "@/lib/payment/config"
+import {
+  getPaymentConfig,
+  getPlanById,
+  encodeOrderMetadata,
+} from "@/lib/payment/config"
+import type { SubscriptionPlan } from "@/lib/payment/config"
+import { createHash, randomBytes } from "crypto"
 
 /**
- * POST - Create ЮKassa payment for subscription upgrade
+ * POST - Create Yandex Pay order for subscription upgrade
+ * Returns payment URL to redirect user to Yandex Pay checkout
  */
 export async function POST(request: Request) {
   const supabase = await createClient()
 
-  // Check if user is authenticated
   const {
     data: { user },
   } = await supabase.auth.getUser()
@@ -25,99 +31,118 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Plan ID is required" }, { status: 400 })
     }
 
-    // Get payment configuration
     const paymentConfig = getPaymentConfig()
 
-    if (paymentConfig.provider !== "yookassa") {
+    if (paymentConfig.provider !== "yandex-pay") {
       return NextResponse.json(
         {
           error: "Payment provider not configured",
-          message: "ЮKassa is not configured. Please set PAYMENT_PROVIDER=yookassa and ЮKassa keys in environment variables.",
+          message:
+            "Yandex Pay is not configured. Set PAYMENT_PROVIDER=yandex-pay and YANDEX_PAY_API_KEY in environment.",
         },
         { status: 500 }
       )
     }
 
-    if (!paymentConfig.secretKey || !paymentConfig.shopId) {
+    if (!paymentConfig.apiKey || !paymentConfig.merchantId) {
       return NextResponse.json(
         {
-          error: "ЮKassa credentials not configured",
-          message: "Please set PAYMENT_SECRET_KEY and PAYMENT_SHOP_ID in environment variables.",
+          error: "Yandex Pay credentials not configured",
+          message:
+            "Set YANDEX_PAY_API_KEY and NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID in environment.",
         },
         { status: 500 }
       )
     }
 
-    // Get plan details
     const plan = getPlanById(planId)
     if (!plan) {
       return NextResponse.json({ error: "Invalid plan ID" }, { status: 400 })
     }
 
-    // Calculate expiration date based on plan interval
     const expiresAt = new Date()
     if (plan.interval === "month") {
       expiresAt.setMonth(expiresAt.getMonth() + 1)
     } else if (plan.interval === "year") {
       expiresAt.setFullYear(expiresAt.getFullYear() + 1)
     }
+    const expiresAtIso = expiresAt.toISOString()
 
-    // Create ЮKassa payment
-    const yookassaApiUrl = "https://api.yookassa.ru/v3/payments"
-    
-    const paymentData = {
-      amount: {
-        value: plan.price.toFixed(2),
-        currency: plan.currency,
+    const orderId = encodeOrderMetadata(user.id, plan.id, expiresAtIso)
+
+    const baseUrl = paymentConfig.sandbox
+      ? "https://sandbox.pay.yandex.ru/api/merchant/v1"
+      : "https://pay.yandex.ru/api/merchant/v1"
+
+    const orderPayload = {
+      orderId,
+      currencyCode: plan.currency,
+      availablePaymentMethods: ["CARD", "SPLIT"],
+      fiscalContact: user.email || `user-${user.id.slice(0, 8)}@placeholder.local`,
+      redirectUrls: {
+        onSuccess: paymentConfig.successUrl!,
+        onAbort: paymentConfig.cancelUrl!,
+        onError: paymentConfig.cancelUrl!,
       },
-      confirmation: {
-        type: "redirect",
-        return_url: paymentConfig.successUrl || `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/subscription?success=true`,
+      cart: {
+        items: [
+          {
+            productId: plan.id,
+            title: plan.name,
+            quantity: { count: "1" },
+            total: plan.price.toFixed(2),
+            unitPrice: plan.price.toFixed(2),
+            discountedUnitPrice: plan.price.toFixed(2),
+            subtotal: plan.price.toFixed(2),
+          },
+        ],
+        total: {
+          amount: plan.price.toFixed(2),
+        },
       },
-      capture: true,
-      description: `${plan.name} - Премиум подписка на ${plan.interval === "month" ? "месяц" : "год"}`,
-      metadata: {
-        userId: user.id,
-        planId: plan.id,
-        planInterval: plan.interval,
-        expiresAt: expiresAt.toISOString(),
-      },
+      ttl: 1800,
+      orderSource: "WEBSITE",
     }
 
-    // Basic auth for ЮKassa: base64(shopId:secretKey)
-    const credentials = Buffer.from(`${paymentConfig.shopId}:${paymentConfig.secretKey}`).toString("base64")
+    const requestId = createHash("sha256")
+      .update(`${orderId}-${Date.now()}-${randomBytes(8).toString("hex")}`)
+      .digest("hex")
+      .slice(0, 32)
 
-    const response = await fetch(yookassaApiUrl, {
+    const response = await fetch(`${baseUrl}/orders`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "Idempotence-Key": `${user.id}-${planId}-${Date.now()}`, // Уникальный ключ для предотвращения дублирования
-        "Authorization": `Basic ${credentials}`,
+        Authorization: `Api-Key ${paymentConfig.apiKey}`,
+        "X-Request-Id": requestId,
+        "X-Request-Timeout": "10000",
+        "X-Request-Attempt": "0",
       },
-      body: JSON.stringify(paymentData),
+      body: JSON.stringify(orderPayload),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("[CreatePaymentSession] ЮKassa API error:", response.status, errorText)
+      console.error("[CreatePaymentSession] Yandex Pay API error:", response.status, errorText)
       return NextResponse.json(
         {
           error: "Failed to create payment",
-          message: `ЮKassa API error: ${response.status}`,
+          message: `Yandex Pay API error: ${response.status}`,
           details: errorText,
         },
         { status: response.status }
       )
     }
 
-    const payment = await response.json()
+    const data = await response.json()
+    const paymentUrl = data.paymentUrl || data.payment_link || data.url
 
-    // ЮKassa возвращает объект с confirmation.url для редиректа
-    if (!payment.confirmation?.confirmation_url) {
+    if (!paymentUrl) {
+      console.error("[CreatePaymentSession] No payment URL in response:", data)
       return NextResponse.json(
         {
           error: "Invalid payment response",
-          message: "No confirmation URL in payment response",
+          message: "No payment URL in Yandex Pay response",
         },
         { status: 500 }
       )
@@ -125,8 +150,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      paymentId: payment.id,
-      url: payment.confirmation.confirmation_url,
+      orderId,
+      url: paymentUrl,
     })
   } catch (error) {
     console.error("[CreatePaymentSession] Error:", error)

@@ -1567,12 +1567,17 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     }
   }, [localStream])
 
+  const clearMediaError = useCallback(() => {
+    setError(null)
+  }, [])
+
   return {
     localStream,
     remoteStreams,
     audioEnabled,
     videoEnabled,
     error,
+    clearMediaError,
     connectionStates,
     initializeMedia,
     toggleAudio,

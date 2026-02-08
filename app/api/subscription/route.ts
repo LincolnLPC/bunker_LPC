@@ -15,10 +15,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    // Fetch subscription info from profile
+    // Fetch subscription info from profile (use premium_expires_at like rest of app)
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("subscription_tier, subscription_status, subscription_expires_at")
+      .select("subscription_tier, subscription_status, premium_expires_at, subscription_expires_at")
       .eq("id", user.id)
       .single()
 
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 
     const tier = (profile?.subscription_tier || "basic") as "basic" | "premium"
     const status = profile?.subscription_status || "active"
-    const expiresAt = profile?.subscription_expires_at || null
+    const expiresAt = profile?.premium_expires_at ?? profile?.subscription_expires_at ?? null
 
     // Check if subscription is expired
     let isActive = true
@@ -42,6 +42,7 @@ export async function GET(request: NextRequest) {
           .update({
             subscription_tier: "basic",
             subscription_status: "expired",
+            premium_expires_at: null,
           })
           .eq("id", user.id)
       }

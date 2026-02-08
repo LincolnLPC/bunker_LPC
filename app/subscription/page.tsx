@@ -1,12 +1,12 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, Crown, Check, X, Flame, Zap, Users, Settings, FileText, AlertCircle } from "lucide-react"
+import { ArrowLeft, Crown, Check, X, Flame, Zap, Users, Settings, FileText, AlertCircle, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -22,7 +22,7 @@ interface SubscriptionInfo {
   }
 }
 
-export default function SubscriptionPage() {
+function SubscriptionPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [user, setUser] = useState<SupabaseUser | null>(null)
@@ -58,51 +58,52 @@ export default function SubscriptionPage() {
   }, [router, user])
 
   const loadSubscription = async () => {
-      const supabase = createClient()
-      const {
-        data: { user },
-      } = await supabase.auth.getUser()
+    const supabase = createClient()
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
 
-      if (!user) {
-        router.push("/auth/login")
-        return
-      }
-
-      setUser(user)
-
-      // Fetch subscription info
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("subscription_tier")
-        .eq("id", user.id)
-        .single()
-
-      if (error) {
-        console.error("Error loading subscription:", error)
-        setLoading(false)
-        return
-      }
-
-      const tier = (profile?.subscription_tier || "basic") as "basic" | "premium"
-
-      // Get limits for current tier
-      const limits = {
-        maxRoomsPerDay: tier === "premium" ? -1 : 3,
-        maxPlayersPerRoom: tier === "premium" ? 20 : 12,
-        canCreateCustomCharacteristics: tier === "premium",
-        canUseAdvancedFeatures: tier === "premium",
-        canCreateTemplates: tier === "premium",
-        canExportGameData: tier === "premium",
-      }
-
-      setSubscriptionInfo({
-        currentTier: tier,
-        limits,
-      })
-
-      setLoading(false)
+    if (!user) {
+      router.push("/auth/login")
+      return
     }
 
+    setUser(user)
+
+    // Fetch subscription info
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("subscription_tier")
+      .eq("id", user.id)
+      .single()
+
+    if (error) {
+      console.error("Error loading subscription:", error)
+      setLoading(false)
+      return
+    }
+
+    const tier = (profile?.subscription_tier || "basic") as "basic" | "premium"
+
+    // Get limits for current tier
+    const limits = {
+      maxRoomsPerDay: tier === "premium" ? -1 : 3,
+      maxPlayersPerRoom: tier === "premium" ? 20 : 12,
+      canCreateCustomCharacteristics: tier === "premium",
+      canUseAdvancedFeatures: tier === "premium",
+      canCreateTemplates: tier === "premium",
+      canExportGameData: tier === "premium",
+    }
+
+    setSubscriptionInfo({
+      currentTier: tier,
+      limits,
+    })
+
+    setLoading(false)
+  }
+
+  useEffect(() => {
     loadSubscription()
   }, [router])
 
@@ -140,15 +141,15 @@ export default function SubscriptionPage() {
         
         if (data.message?.includes("not configured")) {
           alert(
-            "Платежная система не настроена.\n\n" +
+            "Платежная система Yandex Pay не настроена.\n\n" +
             "Для активации платежей необходимо:\n" +
-            "1. Настроить ЮKassa\n" +
-            "2. Добавить API ключи в .env.local:\n" +
-            "   - PAYMENT_PROVIDER=yookassa\n" +
-            "   - PAYMENT_SECRET_KEY=...\n" +
-            "   - PAYMENT_SHOP_ID=...\n" +
-            "3. Настроить webhook в личном кабинете ЮKassa\n\n" +
-            "См. документацию в docs/YOOKASSA_SETUP.md"
+            "1. Зарегистрироваться в Yandex Pay: https://console.pay.yandex.ru\n" +
+            "2. Добавить в .env.local:\n" +
+            "   - YANDEX_PAY_API_KEY=...\n" +
+            "   - NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID=...\n" +
+            "   - YANDEX_PAY_SANDBOX=true (для тестов)\n" +
+            "3. Настроить Callback URL в консоли Yandex Pay\n\n" +
+            "См. docs/PAYMENT_INTEGRATION.md"
           )
         } else {
           alert(`Ошибка: ${errorMessage}`)
@@ -158,7 +159,7 @@ export default function SubscriptionPage() {
       }
 
       if (data.url) {
-        // Redirect to Stripe checkout
+        // Redirect to Yandex Pay
         window.location.href = data.url
       } else {
         alert("Не получен URL для оплаты. Попробуйте еще раз.")
@@ -446,5 +447,17 @@ export default function SubscriptionPage() {
         )}
       </main>
     </div>
+  )
+}
+
+export default function SubscriptionPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <SubscriptionPageContent />
+    </Suspense>
   )
 }

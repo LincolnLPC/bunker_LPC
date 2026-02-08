@@ -1,3 +1,5 @@
+import crypto from 'crypto'
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   typescript: {
@@ -19,8 +21,7 @@ const nextConfig = {
     imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
   },
   
-  // Оптимизация bundle size
-  swcMinify: true,
+  // Оптимизация bundle size (swcMinify удалён — в Next.js 16 по умолчанию)
   compress: true,
   
   // Оптимизация компиляции
@@ -56,7 +57,7 @@ const nextConfig = {
                 return module.size() > 160000 && /node_modules[/\\]/.test(module.identifier())
               },
               name(module) {
-                const hash = require('crypto').createHash('sha1')
+                const hash = crypto.createHash('sha1')
                 hash.update(module.identifier())
                 return hash.digest('hex').substring(0, 8)
               },

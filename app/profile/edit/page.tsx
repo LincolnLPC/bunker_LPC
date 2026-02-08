@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useEffect, useState, useCallback, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -30,7 +30,7 @@ interface MediaDevice {
   kind: MediaDeviceKind
 }
 
-export default function EditProfilePage() {
+function EditProfileForm() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [loading, setLoading] = useState(true)
@@ -658,5 +658,17 @@ export default function EditProfilePage() {
         </Card>
       </main>
     </div>
+  )
+}
+
+export default function EditProfilePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <EditProfileForm />
+    </Suspense>
   )
 }

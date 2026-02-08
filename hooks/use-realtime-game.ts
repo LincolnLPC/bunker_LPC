@@ -4,6 +4,14 @@ import { useEffect, useCallback, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import type { RealtimeChannel } from "@supabase/supabase-js"
 import type { GameState, Player, ChatMessage, Vote } from "@/types/game"
+import type { CameraEffectType } from "@/lib/camera-effects/config"
+
+export interface CameraEffectPayload {
+  sourcePlayerId: string
+  targetPlayerId: string
+  effect: CameraEffectType
+  effectId: string
+}
 
 interface UseRealtimeGameProps {
   roomId: string
@@ -13,6 +21,7 @@ interface UseRealtimeGameProps {
   onChatMessage?: (message: ChatMessage) => void
   onVoteCast?: (vote: Vote) => void
   onCharacteristicReveal?: (playerId: string, characteristicId: string) => void
+  onCameraEffect?: (payload: CameraEffectPayload) => void
 }
 
 export function useRealtimeGame({
@@ -23,6 +32,7 @@ export function useRealtimeGame({
   onChatMessage,
   onVoteCast,
   onCharacteristicReveal,
+  onCameraEffect,
 }: UseRealtimeGameProps) {
   const channelRef = useRef<RealtimeChannel | null>(null)
   const supabase = createClient()
@@ -68,6 +78,11 @@ export function useRealtimeGame({
       onCharacteristicReveal?.(payload.playerId as string, payload.characteristicId as string)
     })
 
+    // Listen for camera effects (who used which effect on whom)
+    channel.on("broadcast", { event: "camera_effect" }, ({ payload }) => {
+      onCameraEffect?.(payload as CameraEffectPayload)
+    })
+
     // Subscribe to presence for player online status
     channel.on("presence", { event: "sync" }, () => {
       const state = channel.presenceState()
@@ -93,6 +108,7 @@ export function useRealtimeGame({
     onChatMessage,
     onVoteCast,
     onCharacteristicReveal,
+    onCameraEffect,
     supabase,
   ])
 
@@ -136,6 +152,16 @@ export function useRealtimeGame({
     })
   }, [])
 
+  // Broadcast camera effect (so all players see the animation on the target)
+  const broadcastCameraEffect = useCallback(async (payload: CameraEffectPayload) => {
+    if (!channelRef.current) return
+    await channelRef.current.send({
+      type: "broadcast",
+      event: "camera_effect",
+      payload,
+    })
+  }, [])
+
   // Track presence
   const trackPresence = useCallback(async (playerData: { id: string; name: string }) => {
     if (!channelRef.current) return
@@ -147,6 +173,7 @@ export function useRealtimeGame({
     broadcastChatMessage,
     broadcastVote,
     broadcastCharacteristicReveal,
+    broadcastCameraEffect,
     trackPresence,
   }
 }

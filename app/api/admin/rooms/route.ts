@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 
 // GET - Get all rooms for admin
 export async function GET(request: Request) {
@@ -125,18 +125,17 @@ export async function DELETE(request: Request) {
 
     console.log("[AdminRooms] Deleting room:", roomId, "by admin:", user.id)
 
-    // Get room info before deletion
     const { data: room } = await supabase.from("game_rooms").select("room_code").eq("id", roomId).single()
 
-    // Delete all related data
+    const adminClient = createServiceRoleClient()
+
     await Promise.all([
-      supabase.from("game_players").delete().eq("room_id", roomId),
-      supabase.from("votes").delete().eq("room_id", roomId),
-      supabase.from("chat_messages").delete().eq("room_id", roomId),
+      adminClient.from("game_players").delete().eq("room_id", roomId),
+      adminClient.from("votes").delete().eq("room_id", roomId),
+      adminClient.from("chat_messages").delete().eq("room_id", roomId),
     ])
 
-    // Delete the room
-    const { error: deleteError } = await supabase.from("game_rooms").delete().eq("id", roomId)
+    const { error: deleteError } = await adminClient.from("game_rooms").delete().eq("id", roomId)
 
     if (deleteError) {
       console.error("[AdminRooms] Error deleting room:", deleteError)

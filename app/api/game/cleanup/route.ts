@@ -1,14 +1,32 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 
-// POST - Cleanup rooms without host
-// This endpoint checks all rooms and deletes those where the host is not in the players list
+// POST - Cleanup rooms without host (admin only)
 export async function POST(request: Request) {
   const supabase = await createClient()
 
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const { data: adminRole, error: adminError } = await supabase
+    .from("admin_roles")
+    .select("role")
+    .eq("user_id", user.id)
+    .single()
+
+  if (adminError || !adminRole) {
+    return NextResponse.json({ error: "Forbidden - Admin access required" }, { status: 403 })
+  }
+
+  const adminClient = createServiceRoleClient()
+
   try {
-      // Get all rooms (including finished ones for cleanup)
-      const { data: rooms, error: roomsError } = await supabase
+      const { data: rooms, error: roomsError } = await adminClient
         .from("game_rooms")
         .select("id, host_id, phase, game_players(user_id, last_seen_at, joined_at)")
 
@@ -94,11 +112,10 @@ export async function POST(request: Request) {
 
     console.log(`[Cleanup] Deleting ${roomsToDelete.length} orphaned rooms`)
 
-    // Delete all related data in parallel (faster)
     const [deletePlayersResult, deleteVotesResult, deleteChatResult] = await Promise.all([
-      supabase.from("game_players").delete().in("room_id", roomsToDelete),
-      supabase.from("votes").delete().in("room_id", roomsToDelete),
-      supabase.from("chat_messages").delete().in("room_id", roomsToDelete),
+      adminClient.from("game_players").delete().in("room_id", roomsToDelete),
+      adminClient.from("votes").delete().in("room_id", roomsToDelete),
+      adminClient.from("chat_messages").delete().in("room_id", roomsToDelete),
     ])
 
     if (deletePlayersResult.error) {
@@ -116,8 +133,7 @@ export async function POST(request: Request) {
       // Continue anyway
     }
 
-    // Finally, delete the rooms themselves
-    const { error: deleteRoomsError } = await supabase
+    const { error: deleteRoomsError } = await adminClient
       .from("game_rooms")
       .delete()
       .in("id", roomsToDelete)

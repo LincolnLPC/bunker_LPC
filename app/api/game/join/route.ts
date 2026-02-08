@@ -12,6 +12,7 @@ import {
   SAMPLE_SKILLS,
   SAMPLE_TRAITS,
 } from "@/types/game"
+import { getSpecialOptionsForGender } from "@/lib/game/characteristics"
 import { validateRoomCode } from "@/lib/security/validation"
 import {
   checkRateLimit,
@@ -398,62 +399,64 @@ export async function POST(request: Request) {
 
     // Get characteristics settings from room settings
     const characteristicsSettings = (room.settings as any)?.characteristics || {}
-    
-    // Get already used unique characteristics (profession, hobby, baggage) from other players in room
-    const { data: existingPlayers, error: playersError } = await supabase
+
+    const categoriesForUniqueness = [
+      "profession",
+      "health",
+      "hobby",
+      "phobia",
+      "baggage",
+      "fact",
+      "special",
+      "bio",
+      "skill",
+      "trait",
+      "additional",
+    ]
+
+    // Fetch used characteristics from existing players (for profession - needed before player create)
+    const { data: initialPlayers } = await supabase
       .from("game_players")
       .select("id")
       .eq("room_id", room.id)
-
-    const playerIds = existingPlayers?.map((p: { id: string }) => p.id) || []
-    
-    const { data: existingCharacteristics, error: charsError } = playerIds.length > 0
+    const initialPlayerIds = initialPlayers?.map((p: { id: string }) => p.id) || []
+    const { data: initialChars } = initialPlayerIds.length > 0
       ? await supabase
           .from("player_characteristics")
           .select("value, category")
-          .in("player_id", playerIds)
-          .in("category", ["profession", "hobby", "baggage"])
-      : { data: null, error: null }
+          .in("player_id", initialPlayerIds)
+          .in("category", categoriesForUniqueness)
+      : { data: null }
 
-    const usedValues = {
-      profession: new Set<string>(),
-      hobby: new Set<string>(),
-      baggage: new Set<string>(),
-    }
-
-    if (!charsError && existingCharacteristics) {
-      existingCharacteristics.forEach((char: { value: string; category: string }) => {
-        if (char.category === "profession") usedValues.profession.add(char.value)
-        if (char.category === "hobby") usedValues.hobby.add(char.value)
-        if (char.category === "baggage") usedValues.baggage.add(char.value)
-      })
-    }
+    const usedValues: Record<string, Set<string>> = {}
+    categoriesForUniqueness.forEach((cat) => { usedValues[cat] = new Set<string>() })
+    initialChars?.forEach((char: { value: string; category: string }) => {
+      if (usedValues[char.category]) usedValues[char.category].add(char.value)
+    })
 
     // Helper function to get unique value from list (excluding used values)
     // For profession: assign by slot order (sequential)
-    // For hobby and baggage: assign randomly but uniquely
-    const getUniqueValue = (category: "profession" | "hobby" | "baggage", options: string[], slot: number): string => {
+    // For others: assign randomly but uniquely
+    const getUniqueValue = (usedValues: Record<string, Set<string>>, category: string, options: string[], slot: number): string => {
       const used = usedValues[category]
+      if (!used) return getRandomItem(options)
+
       const available = options.filter((opt) => !used.has(opt))
-      
+
       if (available.length === 0) {
-        // If all values are used, use any random value (shouldn't happen with enough options)
         console.warn(`[Join] All ${category} values are used, falling back to any value`)
         return getRandomItem(options)
       }
-      
+
       let selected: string
       if (category === "profession") {
-        // Assign professions sequentially by slot number
-        // Use slot - 1 as index, wrapping around if needed
         const index = (slot - 1) % available.length
         selected = available[index]
       } else {
-        // For hobby and baggage, still use random selection but ensure uniqueness
         selected = getRandomItem(available)
       }
-      
-      used.add(selected) // Mark as used for next player
+
+      used.add(selected)
       return selected
     }
 
@@ -490,7 +493,7 @@ export async function POST(request: Request) {
       ? characteristicsSettings["profession"].customList
       : SAMPLE_PROFESSIONS
     const profession = characteristicsSettings["profession"]?.enabled !== false
-      ? getUniqueValue("profession", professionOptions, nextSlot)
+      ? getUniqueValue(usedValues, "profession", professionOptions, nextSlot)
       : getRandomItem(SAMPLE_PROFESSIONS)
 
     console.log("[Join] Generated random attributes:", { gender, genderModifier, age, profession })
@@ -526,28 +529,56 @@ export async function POST(request: Request) {
 
     console.log("[Join] Player created successfully:", { playerId: player.id, name: player.name })
 
-    // Helper function to get characteristic value (with uniqueness for profession, hobby, baggage)
-    const getCharacteristicValue = (category: string, defaultList: readonly string[]): string | null => {
+    // Re-fetch used characteristics right before generating — includes any players who joined concurrently
+    const { data: freshPlayers } = await supabase
+      .from("game_players")
+      .select("id")
+      .eq("room_id", room.id)
+    const otherPlayerIds = (freshPlayers || []).filter((p: { id: string }) => p.id !== player.id).map((p: { id: string }) => p.id)
+    if (otherPlayerIds.length > 0) {
+      const { data: freshChars } = await supabase
+        .from("player_characteristics")
+        .select("value, category")
+        .in("player_id", otherPlayerIds)
+        .in("category", categoriesForUniqueness)
+      categoriesForUniqueness.forEach((cat) => { usedValues[cat] = new Set<string>() })
+      freshChars?.forEach((char: { value: string; category: string }) => {
+        if (usedValues[char.category]) usedValues[char.category].add(char.value)
+      })
+      usedValues["profession"]?.add(profession)
+    }
+
+    // Helper function to get characteristic value (with uniqueness for all categories except gender, age)
+    const getCharacteristicValue = (category: string, defaultList: readonly string[], genderForSpecial?: string): string | null => {
       const setting = characteristicsSettings[category]
       if (!setting || !setting.enabled) {
-        return null // Category disabled
-      }
-      
-      // Use custom list if provided, otherwise use default
-      const options = setting.customList && setting.customList.length > 0
-        ? setting.customList
-        : defaultList
-      
-      if (options.length === 0) {
-        return null // No options available
+        return null
       }
 
-      // For profession, hobby, baggage - ensure uniqueness
-      if (category === "profession" || category === "hobby" || category === "baggage") {
-        return getUniqueValue(category as "profession" | "hobby" | "baggage", options as string[], nextSlot)
+      let options: readonly string[] = setting.customList && setting.customList.length > 0
+        ? setting.customList
+        : defaultList
+
+      if (category === "special" && genderForSpecial) {
+        const genderFiltered = getSpecialOptionsForGender(genderForSpecial)
+        if (setting.customList && setting.customList.length > 0) {
+          options = setting.customList.filter((v: string) => genderFiltered.includes(v))
+        } else {
+          options = genderFiltered
+        }
       }
-      
-      return getRandomItem(options as string[])
+
+      if (options.length === 0) {
+        return null
+      }
+
+      const optionsArr = options as string[]
+
+      if (categoriesForUniqueness.includes(category)) {
+        return getUniqueValue(usedValues, category, optionsArr, nextSlot)
+      }
+
+      return getRandomItem(optionsArr)
     }
 
     // Generate characteristics - all initially hidden including gender, age, profession
@@ -643,8 +674,8 @@ export async function POST(request: Request) {
       })
     }
 
-    // Special
-    const specialValue = getCharacteristicValue("special", SAMPLE_SPECIAL)
+    // Special (с учётом пола — беременность и двойняшки только для Ж)
+    const specialValue = getCharacteristicValue("special", SAMPLE_SPECIAL, gender)
     if (specialValue !== null) {
       characteristics.push({
         category: "special",

@@ -1,38 +1,34 @@
 /**
- * Payment configuration for Stripe/ЮKassa integration
- * 
- * This file contains configuration and utilities for payment processing.
- * Ready for integration with payment providers.
+ * Payment configuration for Yandex Pay integration
  */
 
-export type PaymentProvider = "stripe" | "yookassa" | "none"
+export type PaymentProvider = "yandex-pay" | "none"
 
 export interface PaymentConfig {
   provider: PaymentProvider
   apiKey?: string
-  secretKey?: string
-  webhookSecret?: string
-  shopId?: string // ЮKassa shop ID
+  merchantId?: string
   currency?: string
   successUrl?: string
   cancelUrl?: string
+  sandbox?: boolean
 }
 
 /**
  * Get payment configuration from environment variables
  */
 export function getPaymentConfig(): PaymentConfig {
-  const provider = (process.env.PAYMENT_PROVIDER || "yookassa") as PaymentProvider
+  const provider = (process.env.PAYMENT_PROVIDER || "yandex-pay") as PaymentProvider
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
 
   return {
     provider,
-    apiKey: process.env.PAYMENT_API_KEY,
-    secretKey: process.env.PAYMENT_SECRET_KEY,
-    webhookSecret: process.env.PAYMENT_WEBHOOK_SECRET,
-    shopId: process.env.PAYMENT_SHOP_ID, // Для ЮKassa
+    apiKey: process.env.YANDEX_PAY_API_KEY,
+    merchantId: process.env.NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID,
     currency: process.env.PAYMENT_CURRENCY || "RUB",
-    successUrl: process.env.PAYMENT_SUCCESS_URL || `${process.env.NEXT_PUBLIC_APP_URL}/subscription?success=true`,
-    cancelUrl: process.env.PAYMENT_CANCEL_URL || `${process.env.NEXT_PUBLIC_APP_URL}/subscription?canceled=true`,
+    successUrl: process.env.PAYMENT_SUCCESS_URL || `${appUrl}/subscription?success=true`,
+    cancelUrl: process.env.PAYMENT_CANCEL_URL || `${appUrl}/subscription?canceled=true`,
+    sandbox: process.env.YANDEX_PAY_SANDBOX === "true",
   }
 }
 
@@ -92,32 +88,30 @@ export function getPlanById(planId: string): SubscriptionPlan | null {
   return SUBSCRIPTION_PLANS[planId] || null
 }
 
+const ORDER_PREFIX = "sub"
+const ORDER_SEP = "|"
+
 /**
- * Verify webhook signature (placeholder, ready for implementation)
+ * Encode order metadata for Yandex Pay orderId (to recover userId, planId, expiresAt from webhook)
+ * Format: sub|userId|planId|expiresAt (expiresAt with - instead of : and .)
  */
-export async function verifyWebhookSignature(
-  payload: string,
-  signature: string,
-  secret: string,
-  provider: PaymentProvider
-): Promise<boolean> {
-  // TODO: Implement signature verification based on provider
-  /*
-  if (provider === "stripe") {
-    // Stripe signature verification
-    const stripe = require("stripe")(secret)
-    try {
-      stripe.webhooks.constructEvent(payload, signature, secret)
-      return true
-    } catch (err) {
-      return false
-    }
-  } else if (provider === "yookassa") {
-    // ЮKassa signature verification
-    // Implementation depends on ЮKassa SDK
-  }
-  */
-  
-  // For now, return true (should be implemented before production)
-  return true
+export function encodeOrderMetadata(userId: string, planId: string, expiresAt: string): string {
+  const safeExpires = expiresAt.replace(/[:.]/g, "-")
+  return [ORDER_PREFIX, userId, planId, safeExpires].join(ORDER_SEP)
+}
+
+/**
+ * Decode order metadata from orderId
+ */
+export function decodeOrderMetadata(orderId: string): { userId: string; planId: string; expiresAt: string } | null {
+  if (!orderId.startsWith(ORDER_PREFIX + ORDER_SEP)) return null
+  const parts = orderId.split(ORDER_SEP)
+  if (parts.length < 5) return null
+  const [, userId, planId, ...expParts] = parts
+  const expiresAtEncoded = expParts.join(ORDER_SEP)
+  const expiresAt = expiresAtEncoded.replace(
+    /(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d+)Z/,
+    "$1-$2-$3T$4:$5:$6.$7Z"
+  )
+  return { userId, planId, expiresAt }
 }

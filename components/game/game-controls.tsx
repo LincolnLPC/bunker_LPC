@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile } from "lucide-react"
 
 interface GameControlsProps {
   isHost: boolean
@@ -27,6 +27,8 @@ interface GameControlsProps {
   onToggleAllPlayersMute?: () => void
   roundMode?: "manual" | "automatic"
   onOpenVoteCounts?: () => void
+  onOpenTeasePanel?: () => void
+  showTeasePanel?: boolean
 }
 
 export function GameControls({
@@ -53,6 +55,8 @@ export function GameControls({
   roundMode = "automatic",
   onOpenVoteCounts,
   currentRound = 1,
+  onOpenTeasePanel,
+  showTeasePanel = false,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -89,6 +93,18 @@ export function GameControls({
                 {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </Button>
             </>
+          )}
+          {/* Tease / camera effects button */}
+          {onOpenTeasePanel && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className={showTeasePanel ? "text-primary bg-primary/10" : "text-foreground"}
+              onClick={onOpenTeasePanel}
+              title="Дразнить (Н/Y)"
+            >
+              <Smile className="w-5 h-5" />
+            </Button>
           )}
           {/* Mute all players button */}
           {onToggleAllPlayersMute && (

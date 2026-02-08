@@ -207,6 +207,9 @@ export const SPECIAL = [
   "Гениальность",
 ] as const
 
+/** Характеристики «Особое», доступные только для пола Ж (женский) */
+export const FEMALE_ONLY_SPECIAL = ["Беременность 3-й триместр", "Двойняшки"] as const
+
 // Биология
 export const BIO = [
   "Рост 195 см",
@@ -268,6 +271,18 @@ export function getRandomCharacteristic(category: keyof typeof CHARACTERISTICS_B
     return ""
   }
   return options[Math.floor(Math.random() * options.length)]
+}
+
+/**
+ * Получить варианты «Особое» с учётом пола.
+ * Для пола М (мужской) исключаются женские характеристики (беременность и т.п.).
+ */
+export function getSpecialOptionsForGender(gender: string): readonly string[] {
+  const normalized = String(gender).trim().toUpperCase()
+  if (normalized === "М" || normalized === "M") {
+    return SPECIAL.filter((v) => !FEMALE_ONLY_SPECIAL.includes(v))
+  }
+  return SPECIAL
 }
 
 /**
