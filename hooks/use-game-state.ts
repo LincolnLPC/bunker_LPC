@@ -1268,6 +1268,29 @@ export function useGameState(roomCode: string) {
     }
   }, [gameState, loadGameState])
 
+  // Finish game manually (host only, manual mode)
+  const finishGame = useCallback(async () => {
+    if (!gameState) return
+
+    try {
+      const response = await fetch("/api/game/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: gameState.id }),
+      })
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || "Failed to finish game")
+      }
+
+      loadGameState()
+    } catch (err) {
+      console.error("Error finishing game:", err)
+      setError(err instanceof Error ? err.message : "Failed to finish game")
+    }
+  }, [gameState, loadGameState])
+
   // Eliminate player (end voting and eliminate)
   const eliminatePlayer = useCallback(
     async (playerId?: string) => {
@@ -1855,6 +1878,7 @@ export function useGameState(roomCode: string) {
     revealCharacteristic,
     startVoting,
     nextRound,
+    finishGame,
     eliminatePlayer,
     castVote,
     startGame,

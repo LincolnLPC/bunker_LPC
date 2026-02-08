@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3 } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag } from "lucide-react"
 
 interface GameControlsProps {
   isHost: boolean
@@ -13,7 +13,9 @@ interface GameControlsProps {
   onViewMyCharacteristics?: () => void
   onStartVoting?: () => void
   onNextRound?: () => void
+  onFinishGame?: () => void
   onEndVoting?: () => void
+  currentRound?: number
   onOpenSpecialCards?: () => void
   onOpenBunkerInfo?: () => void
   onOpenCharacteristicsManager?: () => void
@@ -37,6 +39,7 @@ export function GameControls({
   onViewMyCharacteristics,
   onStartVoting,
   onNextRound,
+  onFinishGame,
   onEndVoting,
   onOpenSpecialCards,
   onOpenBunkerInfo,
@@ -49,6 +52,7 @@ export function GameControls({
   onToggleAllPlayersMute,
   roundMode = "automatic",
   onOpenVoteCounts,
+  currentRound = 1,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -191,6 +195,33 @@ export function GameControls({
               </Button>
             )}
             {isHost && roundMode === "manual" && onNextRound && (
+              <>
+                <Button
+                  variant="default"
+                  className="bg-[oklch(0.7_0.2_50)] text-[oklch(0.1_0_0)] hover:bg-[oklch(0.75_0.22_50)]"
+                  onClick={onNextRound}
+                >
+                  <SkipForward className="w-4 h-4 mr-2" />
+                  Следующий раунд
+                </Button>
+                {currentRound >= 2 && onFinishGame && (
+                  <Button
+                    variant="outline"
+                    className="border-destructive/60 text-destructive hover:bg-destructive/10"
+                    onClick={onFinishGame}
+                  >
+                    <Flag className="w-4 h-4 mr-2" />
+                    Закончить игру
+                  </Button>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {currentPhase === "results" && isHost && (
+          <>
+            {onNextRound && (
               <Button
                 variant="default"
                 className="bg-[oklch(0.7_0.2_50)] text-[oklch(0.1_0_0)] hover:bg-[oklch(0.75_0.22_50)]"
@@ -200,18 +231,17 @@ export function GameControls({
                 Следующий раунд
               </Button>
             )}
+            {roundMode === "manual" && currentRound >= 2 && onFinishGame && (
+              <Button
+                variant="outline"
+                className="border-destructive/60 text-destructive hover:bg-destructive/10"
+                onClick={onFinishGame}
+              >
+                <Flag className="w-4 h-4 mr-2" />
+                Закончить игру
+              </Button>
+            )}
           </>
-        )}
-
-        {currentPhase === "results" && isHost && (
-          <Button
-            variant="default"
-            className="bg-[oklch(0.7_0.2_50)] text-[oklch(0.1_0_0)] hover:bg-[oklch(0.75_0.22_50)]"
-            onClick={onNextRound}
-          >
-            <SkipForward className="w-4 h-4 mr-2" />
-            Следующий раунд
-          </Button>
         )}
       </div>
     </div>

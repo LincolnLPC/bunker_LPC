@@ -118,6 +118,7 @@ export default function GamePage() {
     toggleCharacteristic,
     startVoting,
     nextRound,
+    finishGame,
     eliminatePlayer,
     revealCharacteristic,
     startGame,
@@ -1836,7 +1837,9 @@ export default function GamePage() {
         }}
         onStartVoting={startVoting}
         onNextRound={handleNextRound}
+        onFinishGame={finishGame}
         onEndVoting={handleEndVoting}
+        currentRound={gameState.currentRound}
         onOpenSpecialCards={() => setShowSpecialCards(true)}
         onOpenBunkerInfo={() => setShowBunkerInfo(true)}
         onOpenCharacteristicsManager={() => {
