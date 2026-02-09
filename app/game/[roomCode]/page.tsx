@@ -128,6 +128,7 @@ export default function GamePage() {
   const {
     gameState,
     currentPlayerId,
+    currentSpectatorId,
     loading,
     isRefreshing,
     error,
@@ -163,10 +164,11 @@ export default function GamePage() {
     initializeMedia,
     toggleAudio,
     toggleVideo,
+    reconnectVideo,
   } = useWebRTC({
     roomId: gameState?.id || "",
-    userId: currentPlayerId || "",
-    currentPlayerId: currentPlayerId || "",
+    userId: currentPlayerId || currentSpectatorId || "",
+    currentPlayerId: currentPlayerId || currentSpectatorId || "",
     otherPlayers: (gameState?.players || []).filter((p) => p.id !== currentPlayerId).map((p) => ({
       id: p.id,
       playerId: p.id,
@@ -1969,6 +1971,7 @@ export default function GamePage() {
           <GameControls
             onOpenTeasePanel={() => setShowTeasePanel((p) => !p)}
             showTeasePanel={showTeasePanel}
+            onReconnectVideo={reconnectVideo}
         isHost={isHost}
         isSpectator={isSpectator}
         currentPhase={gameState.phase}

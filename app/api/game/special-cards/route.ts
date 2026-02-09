@@ -424,10 +424,17 @@ export async function POST(request: Request) {
     // Add system message to chat about card usage
     const playerName = player.name || "Игрок"
     const cardName = getCardName(cardType) || cardType
+    const targetPlayer = targetPlayerId
+      ? room.game_players.find((p: any) => p.id === targetPlayerId)
+      : null
+    const targetName = targetPlayer?.name || null
+    const cardMessage = targetName
+      ? `${playerName} использовал карту: ${cardName} на ${targetName}`
+      : `${playerName} использовал карту: ${cardName}`
     await supabase.from("chat_messages").insert({
       room_id: roomId,
-      player_id: null, // System message
-      message: `${playerName} использовал карту: ${cardName}`,
+      player_id: null,
+      message: cardMessage,
       message_type: "system",
     })
 

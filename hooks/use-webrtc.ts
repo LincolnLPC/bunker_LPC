@@ -25,6 +25,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const [error, setError] = useState<string | null>(null)
   const [connectionStates, setConnectionStates] = useState<Map<string, RTCPeerConnectionState>>(new Map())
   const [signalingConnected, setSignalingConnected] = useState(false)
+  const [reconnectTrigger, setReconnectTrigger] = useState(0)
 
   const signalingRef = useRef<WebRTCSignaling | null>(null)
   const peerConnectionsRef = useRef<Map<string, PeerConnectionManager>>(new Map())
@@ -34,6 +35,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const lastOtherPlayersIdsRef = useRef<string>("")
   const isInitialMountRef = useRef(true)
   const handleWebRTCSignalRef = useRef<((signal: WebRTCSignal) => Promise<void>) | null>(null)
+  const remoteStreamsRef = useRef<Map<string, MediaStream>>(new Map())
 
   // Create stable reference to player IDs to avoid infinite loops
   const otherPlayerIds = useMemo(() => {
@@ -44,6 +46,21 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     })
     return ids
   }, [otherPlayers])
+
+  // При закрытии/падении соединения сразу убираем пира и запускаем переподключение (чтобы после refresh другого игрока создалось новое соединение)
+  const cleanupPeerAndReconnect = useCallback((playerId: string) => {
+    const peerManager = peerConnectionsRef.current.get(playerId)
+    if (!peerManager) return
+    console.log(`[WebRTC] 🔌 Connection to ${playerId} failed/closed, cleaning up and triggering reconnect`)
+    peerManager.close()
+    peerConnectionsRef.current.delete(playerId)
+    setRemoteStreams((prev) => {
+      const next = new Map(prev)
+      next.delete(playerId)
+      return next
+    })
+    setReconnectTrigger((t) => t + 1)
+  }, [])
 
   // Initialize local media stream
   const initializeMedia = useCallback(async (options?: { video?: boolean; audio?: boolean }) => {
@@ -552,6 +569,23 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
       let peerManager = peerConnectionsRef.current.get(signal.from)
 
+      // Glare: мы уже отправили offer (have-local-offer), а удалённая сторона тоже прислала offer.
+      // Закрываем наше соединение и принимаем их offer (мы станем answerer).
+      if (signal.type === "offer" && peerManager) {
+        const pc = peerManager.getPeerConnection()
+        if (pc.signalingState === "have-local-offer") {
+          console.log(`[WebRTC] 🔄 Glare: we sent offer to ${signal.from}, they sent offer too. Closing our side and accepting their offer.`)
+          peerManager.close()
+          peerConnectionsRef.current.delete(signal.from)
+          setRemoteStreams((prev) => {
+            const next = new Map(prev)
+            next.delete(signal.from)
+            return next
+          })
+          peerManager = null!
+        }
+      }
+
       // Создать peer connection если его нет
       if (!peerManager) {
         console.log(`[WebRTC] 🔌 Creating new peer connection for ${signal.from} (received ${signal.type})`, {
@@ -602,6 +636,9 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               next.set(signal.from, state)
               return next
             })
+            if (state === "failed" || state === "closed") {
+              cleanupPeerAndReconnect(signal.from)
+            }
           },
         })
 
@@ -819,7 +856,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         }
       }
     },
-    [currentPlayerId, localStream],
+    [currentPlayerId, localStream, cleanupPeerAndReconnect],
   )
 
   // Update ref when handleWebRTCSignal changes
@@ -972,25 +1009,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         isInitialMountRef.current = false
       }
 
-      // Инициатор - игрок с локальным потоком (камера включена)
-      // Если у обоих есть потоки или у обоих нет, то игрок с меньшим ID
-      // Это гарантирует, что игрок с камерой всегда инициирует соединение
+      // Всегда создаём соединение и отправляем offer с нашей стороны. Так игрок без камеры
+      // тоже отправит offer и при потере первого offer соединение установится (glare обработан).
       const hasLocalStream = !!localStream
-      // Предполагаем, что если у нас есть локальный поток, мы должны быть инициатором
-      // Если у нас нет потока, мы ждем offer от другого игрока
-      const isInitiator = hasLocalStream || (!hasLocalStream && currentPlayerId < playerId)
+      const isInitiator = true
       isInitiatorRef.current.set(playerId, isInitiator)
       
-      console.log(`[WebRTC] 🔀 Determining initiator for ${playerId}:`, {
+      console.log(`[WebRTC] 🔀 Creating connection to ${playerId} (always initiator):`, {
         currentPlayerId,
         otherPlayerId: playerId,
         hasLocalStream,
-        isInitiator,
-        reason: hasLocalStream ? "we have local stream" : "lexicographic order",
       })
 
-      if (isInitiator) {
-        console.debug(`[WebRTC] Creating offer for player ${playerId} (isInitiator: true)`)
+      {
+        console.debug(`[WebRTC] Creating offer for player ${playerId}`)
         // Создать offer и отправить
         const peerManager = new PeerConnectionManager({
           playerId,
@@ -1031,6 +1063,9 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
               next.set(playerId, state)
               return next
             })
+            if (state === "failed" || state === "closed") {
+              cleanupPeerAndReconnect(playerId)
+            }
           },
         })
 
@@ -1194,7 +1229,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localStream, currentPlayerId, otherPlayerIds, signalingConnected])
+  }, [localStream, currentPlayerId, otherPlayerIds, signalingConnected, reconnectTrigger, cleanupPeerAndReconnect])
   
   // Дополнительный эффект: если локальный поток появился после создания соединений,
   // нужно пересоздать offer для всех существующих соединений, где мы должны быть инициаторами
@@ -1334,6 +1369,9 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
                 next.set(playerId, state)
                 return next
               })
+              if (state === "failed" || state === "closed") {
+                cleanupPeerAndReconnect(playerId)
+              }
             },
           })
           
@@ -1555,6 +1593,74 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     }
   }, [localStream])
 
+  // Периодическое восстановление потока из getReceivers() для connected пиров без stream
+  useEffect(() => {
+    const RECOVERY_INTERVAL_MS = 4000
+    const id = setInterval(() => {
+      for (const [playerId, peerManager] of peerConnectionsRef.current.entries()) {
+        if (peerManager.getConnectionState() !== "connected") continue
+        setRemoteStreams((prev) => {
+          const existing = prev.get(playerId)
+          if (existing && existing.getVideoTracks().some((t) => t.readyState === "live")) return prev
+          const receivers = peerManager.getPeerConnection().getReceivers()
+          const videoTracks = receivers.filter((r) => r.track?.kind === "video").map((r) => r.track!)
+          const audioTracks = receivers.filter((r) => r.track?.kind === "audio").map((r) => r.track!)
+          if (videoTracks.length === 0 && audioTracks.length === 0) return prev
+          const stream = new MediaStream([...videoTracks, ...audioTracks])
+          const next = new Map(prev)
+          next.set(playerId, stream)
+          return next
+        })
+      }
+    }, RECOVERY_INTERVAL_MS)
+    return () => clearInterval(id)
+  }, [])
+
+  // Актуализируем ref для использования в интервалах
+  useEffect(() => {
+    remoteStreamsRef.current = remoteStreams
+  }, [remoteStreams])
+
+  // Периодическая проверка: переподключение при failed/closed, зависании в ожидании answer или отсутствии потока
+  useEffect(() => {
+    const currentPlayerIds = new Set(otherPlayers.map((p) => p.playerId || p.id).filter(Boolean))
+    const RECONNECT_CHECK_MS = 6000
+    const id = setInterval(() => {
+      if (!currentPlayerId || !signalingConnected) return
+      let didRemove = false
+      const streams = remoteStreamsRef.current
+      for (const playerId of currentPlayerIds) {
+        if (playerId === currentPlayerId) continue
+        const peerManager = peerConnectionsRef.current.get(playerId)
+        const hasStream = streams.get(playerId)?.getVideoTracks().some((t) => t.readyState === "live")
+        if (hasStream) continue
+        const state = peerManager?.getConnectionState()
+        const iceState = peerManager?.getIceConnectionState()
+        // Не трогаем have-local-offer: иначе обрываем соединения, которые ждут answer (чередование появилось/пропало).
+        // Переподключение только при реальном падении (closed/failed).
+        const badState =
+          state === "closed" ||
+          state === "failed" ||
+          iceState === "failed" ||
+          iceState === "closed"
+        if (!peerManager || badState) {
+          if (peerManager) {
+            peerManager.close()
+            peerConnectionsRef.current.delete(playerId)
+          }
+          setRemoteStreams((prev) => {
+            const next = new Map(prev)
+            if (next.delete(playerId)) didRemove = true
+            return next
+          })
+          if (peerManager) didRemove = true
+        }
+      }
+      if (didRemove) setReconnectTrigger((t) => t + 1)
+    }, RECONNECT_CHECK_MS)
+    return () => clearInterval(id)
+  }, [currentPlayerId, signalingConnected, otherPlayers])
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
@@ -1571,6 +1677,17 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     setError(null)
   }, [])
 
+  /** Принудительное переподключение видео: закрыть все peer-соединения и заново установить их (для ручного восстановления картинки). */
+  const reconnectVideo = useCallback(() => {
+    console.log("[WebRTC] 🔄 Manual reconnect video triggered")
+    for (const [playerId, peerManager] of peerConnectionsRef.current.entries()) {
+      peerManager.close()
+    }
+    peerConnectionsRef.current.clear()
+    setRemoteStreams(new Map())
+    setReconnectTrigger((t) => t + 1)
+  }, [])
+
   return {
     localStream,
     remoteStreams,
@@ -1582,5 +1699,6 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     initializeMedia,
     toggleAudio,
     toggleVideo,
+    reconnectVideo,
   }
 }

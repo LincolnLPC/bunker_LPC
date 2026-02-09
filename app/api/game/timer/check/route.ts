@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { updateGameStatistics } from "@/lib/game/stats"
 
 // POST - Check timer and auto-advance if needed
 // This endpoint is called periodically by clients to check if timer expired
@@ -162,8 +163,13 @@ export async function POST(request: Request) {
         const remainingPlayers = allPlayers?.length || 0
 
         if (remainingPlayers <= 2) {
-          // Game finished - determine survivors
-          const { data: survivors } = await supabase
+          // Game finished - determine survivors and all players for stats/history
+          const { data: allPlayersForStats } = await supabase
+            .from("game_players")
+            .select("id, user_id, is_eliminated")
+            .eq("room_id", roomId)
+
+          const { data: survivorsWithNames } = await supabase
             .from("game_players")
             .select("id, name")
             .eq("room_id", roomId)
@@ -178,10 +184,16 @@ export async function POST(request: Request) {
 
           if (finishError) throw finishError
 
+          await updateGameStatistics({
+            roomId,
+            survivorPlayerIds: (allPlayersForStats || []).filter((p: any) => !p.is_eliminated).map((p: any) => p.id),
+            allPlayerIds: (allPlayersForStats || []).map((p: any) => p.id),
+          })
+
           await supabase.from("chat_messages").insert({
             room_id: roomId,
             player_id: null,
-            message: `Игра завершена! Выжившие: ${survivors?.map((p: any) => p.name).join(", ") || "Не определены"}`,
+            message: `Игра завершена! Выжившие: ${survivorsWithNames?.map((p: any) => p.name).join(", ") || "Не определены"}`,
             message_type: "system",
           })
 

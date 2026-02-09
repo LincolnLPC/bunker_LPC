@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile, RefreshCw } from "lucide-react"
 
 interface GameControlsProps {
   isHost: boolean
@@ -29,6 +29,7 @@ interface GameControlsProps {
   onOpenVoteCounts?: () => void
   onOpenTeasePanel?: () => void
   showTeasePanel?: boolean
+  onReconnectVideo?: () => void
 }
 
 export function GameControls({
@@ -57,6 +58,7 @@ export function GameControls({
   currentRound = 1,
   onOpenTeasePanel,
   showTeasePanel = false,
+  onReconnectVideo,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -104,6 +106,18 @@ export function GameControls({
               title="Дразнить (Н/Y)"
             >
               <Smile className="w-5 h-5" />
+            </Button>
+          )}
+          {/* Reconnect video (manual recovery) */}
+          {onReconnectVideo && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-foreground"
+              onClick={onReconnectVideo}
+              title="Переподключить видео"
+            >
+              <RefreshCw className="w-5 h-5" />
             </Button>
           )}
           {/* Mute all players button */}

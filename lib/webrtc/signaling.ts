@@ -18,7 +18,7 @@ const CONNECT_RETRY_DELAYS = [1000, 2000, 4000]
 const SEND_RETRY_ATTEMPTS = 3
 const SEND_RETRY_DELAY = 300
 const SUBSCRIBE_TIMEOUT_MS = 15000
-const SIGNAL_BUFFER_WINDOW_MS = 2000 // Буфер сигналов в начале для упорядочивания
+const SIGNAL_BUFFER_WINDOW_MS = 6000 // Буфер сигналов после подключения (чтобы не потерять offer при обновлении страницы)
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms))

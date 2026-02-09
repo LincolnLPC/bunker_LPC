@@ -3,7 +3,7 @@
 import { useRef, useEffect, useState } from "react"
 import type { Player } from "@/types/game"
 import { cn } from "@/lib/utils"
-import { MicOff, VideoOff, User } from "lucide-react"
+import { MicOff, User } from "lucide-react"
 import { CameraEffectOverlay } from "./camera-effect-overlay"
 import type { CameraEffectType } from "@/lib/camera-effects/config"
 import { CAMERA_EFFECT_DRAG_TYPE } from "@/lib/camera-effects/config"
@@ -111,24 +111,23 @@ export function PlayerCard({
         console.log(`[PlayerCard] Set srcObject for ${player.name}, streamId: ${currentStream.id}`)
       }
 
-      // Try to play video if there's a video track
+      // Воспроизведение с повторными попытками (медленная сеть / LAN)
       if (hasVideoTrack) {
-        const playPromise = videoElement.play()
-        if (playPromise !== undefined) {
-          playPromise
-            .then(() => {
-              console.log(`[PlayerCard] Video playing for ${player.name}`)
-            })
-            .catch((err) => {
-              // Silently ignore AbortError - it's expected when srcObject changes rapidly
-              // Also ignore NotAllowedError (user interaction required)
-              if (err.name !== 'AbortError' && err.name !== 'NotAllowedError') {
-                console.warn(`[PlayerCard] Error playing video for ${player.name}:`, err.name, err.message)
-              } else {
-                console.debug(`[PlayerCard] Ignoring ${err.name} for ${player.name}`)
-              }
-            })
+        const retryDelays = [400, 1000, 2000]
+        const tryPlay = (attempt = 0) => {
+          const p = videoElement.play()
+          if (p === undefined) return
+          p.then(() => {
+            if (videoElement.readyState >= 2) return
+            if (attempt < retryDelays.length) setTimeout(() => tryPlay(attempt + 1), retryDelays[attempt])
+          }).catch((err) => {
+            if (err.name !== "AbortError" && err.name !== "NotAllowedError") {
+              console.warn(`[PlayerCard] Error playing video for ${player.name}:`, err.name, err.message)
+            }
+            if (attempt < retryDelays.length) setTimeout(() => tryPlay(attempt + 1), retryDelays[attempt])
+          })
         }
+        tryPlay(0)
       } else {
         console.debug(`[PlayerCard] No enabled video track for ${player.name}`)
       }
@@ -165,11 +164,14 @@ export function PlayerCard({
     }
   }, [
     player.stream,
+    player.stream?.id,
+    player.stream?.getVideoTracks?.()?.length ?? 0,
     player.id,
+    player.name,
     isCurrentPlayer,
-    player.videoEnabled ?? false, // Use nullish coalescing to ensure stable value
-    isMuted, // Добавляем isMuted в зависимости
-  ]) // Ensure all dependencies are always defined to maintain stable array size
+    player.videoEnabled ?? false,
+    isMuted,
+  ])
 
   // Get gender, age, profession from characteristics if revealed
   const genderChar = player.characteristics.find(c => c.category === 'gender' && c.isRevealed)
@@ -251,21 +253,7 @@ export function PlayerCard({
             </div>
           )}
 
-          {/* Video/Audio indicators - не показываем для VDO.ninja iframe */}
-          {!(isCurrentPlayer && vdoNinjaCameraUrl) && (
-            <div className="absolute bottom-1 right-1 flex gap-1 z-20">
-              {!player.audioEnabled && (
-                <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
-                  <MicOff className="w-3 h-3 text-foreground" />
-                </div>
-              )}
-              {!player.videoEnabled && (
-                <div className="p-1 rounded bg-[oklch(0.55_0.22_25/0.8)]">
-                  <VideoOff className="w-3 h-3 text-foreground" />
-                </div>
-              )}
-            </div>
-          )}
+          {/* Индикаторы видео/аудио отключены по запросу — не показываем значки на камерах */}
 
           {/* Characteristics overlay on video (when video is enabled and characteristics are shown) */}
           {showCharacteristics && player.videoEnabled && player.stream && revealedChars.length > 0 && (

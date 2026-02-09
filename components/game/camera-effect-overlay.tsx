@@ -67,13 +67,7 @@ function TomatoLottieEffect(props: { onComplete?: () => void; className?: string
   }
 
   if (!animationData) {
-    return (
-      <div className={cn(effectCenterWrapperClass, className)}>
-        <div className={effectBoxClass}>
-          <div className="w-12 h-12 rounded-full bg-[#e74c3c] animate-pulse" />
-        </div>
-      </div>
-    )
+    return null
   }
 
   return (
@@ -101,7 +95,6 @@ function EggLottieEffect(props: { onComplete?: () => void; className?: string; c
     <LottieEffect
       {...props}
       src="/animations/egg-effect.json"
-      fallback={<div className="w-10 h-14 rounded-[50%] bg-[#fff8dc] animate-pulse" />}
     />
   )
 }
@@ -184,13 +177,7 @@ function RevolverLottieEffect(props: { onComplete?: () => void; className?: stri
   }
 
   if (!animationData) {
-    return (
-      <div className={cn(effectCenterWrapperClass, className)}>
-        <div className={effectBoxClass}>
-          <div className="w-24 h-24 rounded-full bg-white/80 animate-pulse" />
-        </div>
-      </div>
-    )
+    return null
   }
 
   return (
@@ -216,13 +203,11 @@ function RevolverLottieEffect(props: { onComplete?: () => void; className?: stri
 
 function LottieEffect({
   src,
-  fallback,
   onComplete,
   className,
   completedRef,
 }: {
   src: string
-  fallback: React.ReactNode
   onComplete?: () => void
   className?: string
   completedRef: React.RefObject<boolean>
@@ -244,11 +229,7 @@ function LottieEffect({
   }
 
   if (!animationData) {
-    return (
-      <div className={cn(effectCenterWrapperClass, className)}>
-        <div className={effectBoxClass}>{fallback}</div>
-      </div>
-    )
+    return null
   }
 
   return (
@@ -295,9 +276,7 @@ export function CameraEffectOverlay({ effect, onComplete, className }: CameraEff
   }
 
   if (effect === "revolver") {
-    return (
-      <RevolverLottieEffect onComplete={onComplete} className={className} completedRef={completedRef} />
-    )
+    return null
   }
 
   return null

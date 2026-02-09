@@ -28,7 +28,7 @@ export async function POST(request: Request) {
   try {
       const { data: rooms, error: roomsError } = await adminClient
         .from("game_rooms")
-        .select("id, host_id, phase, game_players(user_id, last_seen_at, joined_at)")
+        .select("id, host_id, phase, created_at, updated_at, game_players(user_id, last_seen_at, joined_at)")
 
     if (roomsError) {
       console.error("[Cleanup] Error fetching rooms:", roomsError)
@@ -50,24 +50,15 @@ export async function POST(request: Request) {
       const hostId = room.host_id
       const players = room.game_players || []
 
-      // For finished rooms, delete if no active players (older than 1 hour)
+      // Завершённые комнаты не удаляем раньше чем через 30 дней (для истории игр)
       if (room.phase === "finished") {
-        const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-        const hasRecentActivity = players.some((p: any) => {
-          if (p.last_seen_at) {
-            return new Date(p.last_seen_at) >= new Date(oneHourAgo)
-          }
-          if (p.joined_at) {
-            return new Date(p.joined_at) >= new Date(oneHourAgo)
-          }
-          return false
-        })
-        
-        if (!hasRecentActivity) {
-          console.log(`[Cleanup] Finished room ${room.id} has no recent activity, marking for deletion`)
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).getTime()
+        const roomDate = room.updated_at ? new Date(room.updated_at).getTime() : new Date(room.created_at || 0).getTime()
+        if (roomDate < thirtyDaysAgo) {
+          console.log(`[Cleanup] Finished room ${room.id} is older than 30 days, marking for deletion`)
           roomsToDelete.push(room.id)
-          continue
         }
+        continue
       }
 
       // Filter active players (those with recent heartbeat)

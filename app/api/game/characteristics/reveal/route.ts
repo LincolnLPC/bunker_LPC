@@ -74,9 +74,9 @@ export async function POST(request: Request) {
       const playerName = (char as any).game_players?.name || "Игрок"
       await supabase.from("chat_messages").insert({
         room_id: roomId,
-        player_id: null, // System message
-        message: `${playerName} раскрыл: ${char.name} - ${char.value}`,
-        message_type: "reveal",
+        player_id: null,
+        message: `${playerName} раскрыл характеристику: ${char.name} — ${char.value}`,
+        message_type: "system",
       })
     }
 

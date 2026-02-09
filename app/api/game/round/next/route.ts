@@ -132,6 +132,13 @@ export async function POST(request: Request) {
 
       // Eliminate player if there are votes
       if (eliminatedPlayerId) {
+        const { data: eliminatedPlayer } = await supabase
+          .from("game_players")
+          .select("name")
+          .eq("id", eliminatedPlayerId)
+          .single()
+        const eliminatedName = eliminatedPlayer?.name || "Игрок"
+
         const { error: eliminateError } = await supabase
           .from("game_players")
           .update({ is_eliminated: true })
@@ -146,6 +153,13 @@ export async function POST(request: Request) {
           .eq("player_id", eliminatedPlayerId)
 
         if (revealError) throw revealError
+
+        await supabase.from("chat_messages").insert({
+          room_id: roomId,
+          player_id: null,
+          message: `${eliminatedName} изгнан по результатам голосования.`,
+          message_type: "system",
+        })
       }
 
       // Update room to results phase (to show results before next round)

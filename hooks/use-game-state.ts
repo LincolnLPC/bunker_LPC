@@ -8,8 +8,10 @@ import type { GameState, Player, Characteristic, Vote, ChatMessage, Spectator } 
 import type { CameraEffectPayload } from "@/hooks/use-realtime-game"
 
 // Transform database row to GameState
-function transformRoomToGameState(room: any, currentUserId: string): { state: GameState; currentPlayerId: string } {
+function transformRoomToGameState(room: any, currentUserId: string): { state: GameState; currentPlayerId: string; currentSpectatorId: string } {
   let foundPlayerId = ""
+  const currentSpectator = (room.game_spectators || []).find((s: any) => s.user_id === currentUserId)
+  const foundSpectatorId = currentSpectator?.id || ""
   const isHost = room.host_id === currentUserId
   const hostRole = (room.settings as any)?.hostRole || "host_and_player"
   
@@ -100,7 +102,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
     settings: room.settings || {},
   }
 
-  return { state, currentPlayerId: foundPlayerId }
+  return { state, currentPlayerId: foundPlayerId, currentSpectatorId: foundSpectatorId }
 }
 
 export interface UseGameStateOptions {
@@ -111,6 +113,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
   const supabase = createClient()
   const [gameState, setGameState] = useState<GameState | null>(null)
   const [currentPlayerId, setCurrentPlayerId] = useState<string>("")
+  const [currentSpectatorId, setCurrentSpectatorId] = useState<string>("")
   const [loading, setLoading] = useState(true) // Only true on initial load
   const [isRefreshing, setIsRefreshing] = useState(false) // For background updates
   const [error, setError] = useState<string | null>(null)
@@ -298,6 +301,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           if (joinResponse.ok && (responseData.isSpectator || !responseData.error)) {
             console.log("[GameState] Successfully joined as spectator:", responseData.spectatorId)
             setCurrentPlayerId(null)
+            if (responseData.spectatorId) setCurrentSpectatorId(responseData.spectatorId)
             // Reload room to get updated state with spectator
             const { data: updatedRoom } = await supabase
               .from("game_rooms")
@@ -433,6 +437,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 // User joined as spectator - this is OK, continue with room reload
                 console.log("[GameState] User joined as spectator:", responseData.spectatorId)
                 setCurrentPlayerId(null) // No player ID for spectators
+                if (responseData.spectatorId) setCurrentSpectatorId(responseData.spectatorId)
                 // Continue with room reload below
               } else if (responseData.isExisting || responseData.player) {
                 // User already in room OR successfully joined - update player ID
@@ -655,11 +660,13 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         }
       }
 
-      // Transform to GameState and get current player ID
-      const { state, currentPlayerId: foundPlayerId } = transformRoomToGameState(room, user.id)
+      // Transform to GameState and get current player / spectator ID
+      const { state, currentPlayerId: foundPlayerId, currentSpectatorId: foundSpectatorId } = transformRoomToGameState(room, user.id)
       
       // Find current player
       const currentPlayer = state.players.find(p => p.id === foundPlayerId)
+      
+      setCurrentSpectatorId(foundSpectatorId || "")
       
       // Log characteristics for current player for debugging (only in development)
       if (process.env.NODE_ENV === "development") {
@@ -1876,6 +1883,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       createdAt: new Date().toISOString(),
     } as GameState),
     currentPlayerId,
+    currentSpectatorId,
     loading,
     isRefreshing,
     error,

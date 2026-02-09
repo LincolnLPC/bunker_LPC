@@ -1,0 +1,419 @@
+================================================================================
+  ПОЛНАЯ ИНСТРУКЦИЯ ПО ДЕПЛОЮ ПРИЛОЖЕНИЯ "БУНКЕР ОНЛАЙН"
+================================================================================
+
+Оглавление:
+1. Требования и технологии
+2. Подготовка к деплою
+3. Настройка Supabase (база данных)
+4. Деплой на Vercel (рекомендуется)
+5. Деплой на VPS/собственный сервер (с WebRTC через Socket.io)
+6. Локальная сеть и ngrok
+7. Платежи (ЮKassa/Stripe)
+8. Переменные окружения (полный список)
+9. Проверка после деплоя
+10. Решение проблем
+11. Чек-лист
+
+================================================================================
+1. ТРЕБОВАНИЯ И ТЕХНОЛОГИИ
+================================================================================
+
+Стек приложения:
+- Next.js 16, React 19
+- Supabase (БД, Auth, Realtime, Storage)
+- WebRTC (видео/аудио) — signaling через Supabase Realtime
+- Socket.io — опционально, для альтернативного signaling (только при pnpm dev)
+- Tailwind CSS, Radix UI
+- Опционально: Yandex Pay для платежей
+
+Для деплоя потребуется:
+- Аккаунт Supabase (бесплатный план)
+- Аккаунт Vercel (бесплатный план) или VPS
+- Node.js 18+ (для локальной сборки)
+- pnpm или npm
+- Git
+
+================================================================================
+2. ПОДГОТОВКА К ДЕПЛОЮ
+================================================================================
+
+2.1. Клонирование и установка зависимостей
+------------------------------------------
+git clone <url-репозитория> bunker-online-app
+cd bunker-online-app
+pnpm install
+
+(Если pnpm не установлен: npm install -g pnpm)
+
+2.2. Проверка сборки
+--------------------
+pnpm build
+pnpm lint
+
+Убедитесь, что сборка проходит без ошибок. При ошибках TypeScript проверьте next.config.mjs (может быть включен ignoreBuildErrors).
+
+2.3. Коммит в репозиторий
+-------------------------
+git add .
+git commit -m "Ready for deployment"
+git push origin main
+
+================================================================================
+3. НАСТРОЙКА SUPABASE (БАЗА ДАННЫХ)
+================================================================================
+
+3.1. Создание проекта
+---------------------
+1. Зайдите на https://supabase.com
+2. Создайте новый проект (или используйте существующий)
+3. Запомните Project URL и API keys
+
+3.2. Получение ключей
+---------------------
+Settings → API:
+- Project URL → NEXT_PUBLIC_SUPABASE_URL
+- anon public key → NEXT_PUBLIC_SUPABASE_ANON_KEY
+- service_role key → SUPABASE_SERVICE_ROLE_KEY (хранить в секрете!)
+
+3.3. Выполнение SQL-скриптов
+----------------------------
+В SQL Editor выполните скрипты ПО ПОРЯДКУ (каждый отдельным запуском):
+
+scripts/001-create-tables.sql
+scripts/002-setup-triggers-and-storage.sql
+scripts/003-add-media-settings.sql
+scripts/004-add-ready-status.sql
+scripts/005-fix-profile-policies.sql
+scripts/006-fix-profile-creation-service-role.sql
+scripts/007-setup-storage-bucket.sql
+scripts/008-add-gender-age-profession-as-characteristics.sql
+scripts/009-add-round-timer-tracking.sql
+scripts/010-add-stats-functions.sql
+scripts/011-create-moderation-tables.sql
+scripts/012-fix-characteristics-rls.sql
+scripts/013-create-special-cards-table.sql
+scripts/014-add-vote-weight.sql
+scripts/015-add-metadata-column.sql
+scripts/016-fix-votes-rls-policy-simple.sql   (или 016-fix-votes-rls-policy.sql)
+scripts/018-add-last-seen-at.sql
+scripts/018-fix-votes-select-policy.sql
+scripts/019-fix-characteristics-rls-for-special-cards.sql
+scripts/020-add-bunker-info-column.sql
+scripts/021-fix-special-cards-insert-policy.sql
+scripts/022-update-special-cards-card-types.sql
+scripts/023-add-category-specific-reshuffle-cards.sql
+scripts/024-grant-admin-role.sql
+scripts/025-fix-admin-roles-rls.sql
+scripts/030-create-spectators-table.sql
+scripts/031-add-room-password-and-hidden.sql
+scripts/032-add-was-player-to-spectators.sql
+scripts/033-create-game-templates-table.sql
+scripts/034-grant-premium-subscription.sql
+scripts/035-add-premium-expires-at.sql
+scripts/036-create-achievements-system.sql
+scripts/037-create-support-tickets-table.sql
+
+Примечание: скрипты 026, 027, 028, 029 — диагностические, можно пропустить.
+
+3.4. Включение Realtime
+------------------------
+Database → Replication → включить для таблиц:
+- game_rooms
+- game_players
+- chat_messages
+- player_characteristics
+- votes
+
+3.5. Настройка Authentication
+------------------------------
+Authentication → URL Configuration:
+
+Redirect URLs (добавить для каждого домена):
+  https://ваш-домен.vercel.app/**
+  https://ваш-домен.vercel.app/auth/callback
+
+Site URL:
+  https://ваш-домен.vercel.app
+
+Для разработки добавить также:
+  http://localhost:3000/**
+  http://localhost:3000/auth/callback
+
+================================================================================
+4. ДЕПЛОЙ НА VERCEL (РЕКОМЕНДУЕТСЯ)
+================================================================================
+
+Примечание: Приложение использует Supabase Realtime для WebRTC signaling,
+поэтому Vercel Serverless подходит — отдельный Socket.io сервер НЕ нужен.
+
+4.1. Подключение репозитория
+-----------------------------
+1. Зайдите на https://vercel.com
+2. Войдите через GitHub
+3. Add New... → Project
+4. Импортируйте репозиторий проекта
+
+4.2. Настройка проекта
+----------------------
+- Framework Preset: Next.js (авто)
+- Root Directory: ./
+- Build Command: pnpm build
+- Install Command: pnpm install
+- Output Directory: .next (по умолчанию)
+
+4.3. Переменные окружения (Environment Variables)
+-------------------------------------------------
+Добавьте в Vercel Dashboard → Settings → Environment Variables:
+
+Обязательные:
+  NEXT_PUBLIC_SUPABASE_URL              = ваш Project URL из Supabase
+  NEXT_PUBLIC_SUPABASE_ANON_KEY         = anon public key из Supabase
+  SUPABASE_SERVICE_ROLE_KEY             = service_role key из Supabase
+  NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL = https://ваш-проект.vercel.app/lobby
+  NEXT_PUBLIC_APP_URL                   = https://ваш-проект.vercel.app
+
+Опционально (платежи Yandex Pay):
+  YANDEX_PAY_API_KEY                    = (API-ключ из консоли Yandex Pay)
+  NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID    = (Merchant ID)
+  YANDEX_PAY_SANDBOX                    = true (для тестов) | false (production)
+
+4.4. Деплой
+-----------
+Нажмите Deploy. Дождитесь завершения сборки (2–5 минут).
+
+4.5. Обновление Supabase Redirect URLs
+--------------------------------------
+После первого деплоя получите точный URL (например https://bunker-xxx.vercel.app)
+и обновите Redirect URLs и Site URL в Supabase (см. п. 3.5).
+
+4.6. Домен (опционально)
+------------------------
+Settings → Domains → добавьте свой домен и настройте DNS.
+
+================================================================================
+5. ДЕПЛОЙ НА VPS / СОБСТВЕННЫЙ СЕРВЕР
+================================================================================
+
+Для работы с Socket.io (server.js) и полным контролем над средой:
+
+5.1. Требования
+---------------
+- VPS с Node.js 18+
+- Домен с SSL (Let's Encrypt)
+- PM2 или systemd для процесса
+
+5.2. Установка на сервере
+--------------------------
+# Клонирование
+git clone <url> /var/www/bunker-online-app
+cd /var/www/bunker-online-app
+
+# Установка зависимостей
+pnpm install
+
+# Сборка
+pnpm build
+
+# Создание .env.local с переменными (см. раздел 8)
+
+5.3. Запуск через PM2
+----------------------
+# Установка PM2
+npm install -g pm2
+
+# Запуск (используем server.js для Socket.io + Next.js)
+pm2 start server.js --name bunker-online
+
+# Или для production без Socket.io (только Supabase Realtime):
+pm2 start npm --name bunker-online -- start
+
+# Автозапуск при перезагрузке
+pm2 save
+pm2 startup
+
+5.4. Nginx (reverse proxy с SSL)
+---------------------------------
+server {
+    listen 443 ssl http2;
+    server_name your-domain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/your-domain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /socket.io/ {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+5.5. Для доступа по локальной сети
+-----------------------------------
+В server.js измените:
+  const hostname = '0.0.0.0'
+чтобы слушать на всех интерфейсах.
+
+================================================================================
+6. ЛОКАЛЬНАЯ СЕТЬ И NGROK
+================================================================================
+
+6.1. Запуск в локальной сети
+-----------------------------
+1. Узнайте IP: ipconfig (Windows) или ifconfig (Linux/Mac)
+2. В server.js: hostname = '0.0.0.0'
+3. pnpm dev
+4. Откройте http://ВАШ_IP:3000 на других устройствах в той же сети
+5. Добавьте в Supabase Redirect URLs: http://ВАШ_IP:3000/**
+
+6.2. ngrok (временный доступ из интернета)
+-------------------------------------------
+1. Установите ngrok: https://ngrok.com
+2. pnpm dev
+3. В другом терминале: ngrok http 3000
+4. Скопируйте HTTPS URL из ngrok
+5. Добавьте его в Supabase Redirect URLs
+6. Откройте ngrok URL в браузере
+
+Внимание: бесплатный ngrok даёт новый URL при каждом запуске.
+
+================================================================================
+7. ПЛАТЕЖИ (Yandex Pay)
+================================================================================
+
+7.1. Yandex Pay
+---------------
+1. Зарегистрируйтесь на https://console.pay.yandex.ru
+2. Получите API-ключ и Merchant ID
+3. Добавьте в .env / Vercel:
+   PAYMENT_PROVIDER=yandex-pay
+   YANDEX_PAY_API_KEY=ваш_api_key
+   NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID=ваш_merchant_id
+   YANDEX_PAY_SANDBOX=true   (false для production)
+   NEXT_PUBLIC_APP_URL=https://ваш-домен.com
+4. В консоли Yandex Pay → Настройки → Callback URL укажите:
+   https://ваш-домен.com
+   (путь /v1/webhook добавляется автоматически)
+
+Подробнее: docs/PAYMENT_INTEGRATION.md
+
+7.2. Без платежей
+-----------------
+PAYMENT_PROVIDER=none (или не указывать)
+
+================================================================================
+8. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (ПОЛНЫЙ СПИСОК)
+================================================================================
+
+Скопируйте env.template в .env.local и заполните:
+
+# Обязательные
+NEXT_PUBLIC_SUPABASE_URL=https://xxxxx.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
+SUPABASE_SERVICE_ROLE_KEY=eyJ...
+
+# Для production
+NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL=https://ваш-домен.com/lobby
+NEXT_PUBLIC_APP_URL=https://ваш-домен.com
+
+# WebRTC (опционально, для строгих NAT)
+# NEXT_PUBLIC_TURN_SERVER_URL=turn:...
+# NEXT_PUBLIC_TURN_USERNAME=...
+# NEXT_PUBLIC_TURN_CREDENTIAL=...
+
+# Медиа (опционально)
+# NEXT_PUBLIC_VIDEO_MAX_WIDTH=1920
+# NEXT_PUBLIC_VIDEO_MAX_HEIGHT=1080
+# NEXT_PUBLIC_VIDEO_MAX_FRAMERATE=60
+# NEXT_PUBLIC_AUDIO_SAMPLE_RATE=48000
+
+# Платежи (Yandex Pay)
+# PAYMENT_PROVIDER=yandex-pay
+# YANDEX_PAY_API_KEY=...
+# NEXT_PUBLIC_YANDEX_PAY_MERCHANT_ID=...
+# YANDEX_PAY_SANDBOX=true
+
+================================================================================
+9. ПРОВЕРКА ПОСЛЕ ДЕПЛОЯ
+================================================================================
+
+□ Сайт открывается по URL
+□ Регистрация и вход работают
+□ Создание комнаты
+□ Присоединение к игре
+□ Чат (Realtime)
+□ Голосование
+□ Видео/аудио (WebRTC)
+□ Раскрытие характеристик
+□ Подписка (если настроены платежи)
+
+Проверьте консоль браузера (F12) на ошибки.
+
+================================================================================
+10. РЕШЕНИЕ ПРОБЛЕМ
+================================================================================
+
+"Failed to load game state"
+  → Проверьте NEXT_PUBLIC_SUPABASE_URL и NEXT_PUBLIC_SUPABASE_ANON_KEY
+  → Убедитесь, что Realtime включен для нужных таблиц
+
+"Not authenticated" / редирект на логин
+  → Проверьте Redirect URLs в Supabase
+  → Site URL должен совпадать с доменом приложения
+  → NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL = https://домен/lobby
+
+Видео/аудио не работает
+  → Требуется HTTPS (кроме localhost)
+  → Для строгих NAT настройте TURN-сервер
+  → Проверьте разрешения браузера на камеру/микрофон
+  → См. РЕШЕНИЕ_ПРОБЛЕМ_МЕДИА.md
+
+Realtime не обновляется
+  → Database → Replication — включены ли таблицы?
+  → См. QUICK_REALTIME.md
+
+Ошибки сборки на Vercel
+  → Проверьте Build Command: pnpm build
+  → Проверьте Node.js version в Vercel (18+)
+  → Проверьте, что все зависимости в package.json (не devOnly)
+
+Проект в папке с кириллицей (например c:\общая\...): pnpm build не работает
+  → Node.js на Windows плохо работает с путями, содержащими кириллицу.
+  → РЕШЕНИЕ 1: Переместите проект в папку без кириллицы:
+     Например: C:\projects\bunker-online-app
+     Затем: cd C:\projects\bunker-online-app && pnpm install && pnpm run build
+  → РЕШЕНИЕ 2: Создайте junction (от имени администратора в cmd):
+     mklink /J C:\bunker-build "c:\общая\bunker-online-app"
+     Затем: cd C:\bunker-build && pnpm run build
+
+================================================================================
+11. ЧЕК-ЛИСТ ПЕРЕД ДЕПЛОЕМ
+================================================================================
+
+□ Код закоммичен и запушен
+□ pnpm build проходит успешно
+□ SQL-скрипты выполнены в Supabase
+□ Realtime включен для всех нужных таблиц
+□ Ключи Supabase получены
+□ Redirect URLs настроены в Supabase
+□ Переменные окружения добавлены в Vercel/сервер
+□ (Опционально) Платежи настроены
+□ (Опционально) TURN-сервер для WebRTC
+□ (Опционально) Домен и SSL
+
+================================================================================
+  КОНЕЦ ИНСТРУКЦИИ
+================================================================================
