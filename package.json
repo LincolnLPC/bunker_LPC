@@ -12,7 +12,8 @@
     "monitor": "node scripts/monitor-signaling.js",
     "monitor:server": "node scripts/monitor-server-logs.js",
     "dev:log": "node scripts/log-server.js",
-    "monitor:log": "node scripts/monitor-log-file.js"
+    "monitor:log": "node scripts/monitor-log-file.js",
+    "generate-cert": "node scripts/generate-https-cert.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -76,6 +77,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
+    "selfsigned": "^2.4.1",
     "@types/node": "^22",
     "@types/react": "^19",
     "@types/react-dom": "^19",

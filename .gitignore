@@ -23,6 +23,7 @@ next-env.d.ts
 # Misc
 .DS_Store
 *.pem
+.cert/
 
 # Debug
 npm-debug.log*

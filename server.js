@@ -2,22 +2,33 @@
  * Custom Next.js server с Socket.io (используется по умолчанию для pnpm dev)
  * WebRTC signaling — Supabase Realtime (Socket.io не используется).
  * pnpm dev:realtime — только Next.js без server.js.
+ *
+ * HTTPS: если есть папка .cert с cert.pem и key.pem (см. scripts/generate-https-cert.js),
+ * сервер запускается по HTTPS. Нужно для камеры/микрофона при доступе по LAN.
  */
 
+const fs = require('fs')
+const path = require('path')
 const { createServer } = require('http')
+const { createServer: createHttpsServer } = require('https')
 const { parse } = require('url')
 const next = require('next')
 const { Server } = require('socket.io')
 
 const dev = process.env.NODE_ENV !== 'production'
-const hostname = 'localhost'
-const port = process.env.PORT || 3000
+const hostname = process.env.HOSTNAME || '0.0.0.0'
+const port = parseInt(process.env.PORT || '3000', 10)
 
-const app = next({ dev, hostname, port })
+const certDir = path.join(__dirname, '.cert')
+const certPath = path.join(certDir, 'cert.pem')
+const keyPath = path.join(certDir, 'key.pem')
+const useHttps = fs.existsSync(certPath) && fs.existsSync(keyPath)
+
+const app = next({ dev, hostname: hostname === '0.0.0.0' ? 'localhost' : hostname, port })
 const handle = app.getRequestHandler()
 
 app.prepare().then(() => {
-  const httpServer = createServer(async (req, res) => {
+  const requestHandler = async (req, res) => {
     try {
       const parsedUrl = parse(req.url, true)
       
@@ -33,10 +44,20 @@ app.prepare().then(() => {
       res.statusCode = 500
       res.end('internal server error')
     }
-  })
+  }
+
+  const serverOptions = useHttps
+    ? {
+        key: fs.readFileSync(keyPath, 'utf8'),
+        cert: fs.readFileSync(certPath, 'utf8'),
+      }
+    : {}
+  const server = useHttps
+    ? createHttpsServer(serverOptions, requestHandler)
+    : createServer(requestHandler)
 
   // Создать Socket.io сервер
-  const io = new Server(httpServer, {
+  const io = new Server(server, {
     path: '/api/socket',
     cors: {
       origin: '*',
@@ -203,13 +224,26 @@ app.prepare().then(() => {
     })
   })
 
-  httpServer
+  const listenHost = useHttps ? '0.0.0.0' : hostname
+  const protocol = useHttps ? 'https' : 'http'
+  server
     .once('error', (err) => {
       console.error(err)
       process.exit(1)
     })
-    .listen(port, () => {
-      console.log(`> Ready on http://${hostname}:${port}`)
+    .listen(port, listenHost, () => {
+      console.log(`> Ready on ${protocol}://${listenHost === '0.0.0.0' ? 'localhost' : listenHost}:${port}`)
+      if (useHttps) {
+        const os = require('os')
+        const nets = os.networkInterfaces()
+        for (const name of Object.keys(nets)) {
+          for (const net of nets[name]) {
+            if (net.family === 'IPv4' && !net.internal) {
+              console.log(`> LAN: ${protocol}://${net.address}:${port}`)
+            }
+          }
+        }
+      }
       console.log(`> Socket.io server running on /api/socket`)
     })
 })
