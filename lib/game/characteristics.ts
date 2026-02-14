@@ -2,6 +2,7 @@
  * Все возможные характеристики для игры "Бункер"
  * Разделены по категориям для удобства использования
  */
+import { secureRandomItem, secureRandomInt } from "./random"
 
 // Пол
 export const GENDERS = ["М", "Ж", "А"] as const
@@ -430,7 +431,7 @@ export function getRandomCharacteristic(category: keyof typeof CHARACTERISTICS_B
   if (options.length === 0) {
     return ""
   }
-  return options[Math.floor(Math.random() * options.length)]
+  return secureRandomItem([...options])
 }
 
 /**
@@ -474,21 +475,21 @@ export function isValidCharacteristic(
  * Получить случайный возраст в допустимом диапазоне
  */
 export function getRandomAge(): number {
-  return Math.floor(Math.random() * (AGE_RANGE.max - AGE_RANGE.min + 1)) + AGE_RANGE.min
+  return secureRandomInt(AGE_RANGE.max - AGE_RANGE.min + 1) + AGE_RANGE.min
 }
 
 /**
  * Получить случайный пол
  */
 export function getRandomGender(): Gender {
-  return GENDERS[Math.floor(Math.random() * GENDERS.length)]
+  return secureRandomItem([...GENDERS])
 }
 
 /**
  * Получить случайный модификатор пола
  */
 export function getRandomGenderModifier(): GenderModifier {
-  return GENDER_MODIFIERS[Math.floor(Math.random() * GENDER_MODIFIERS.length)]
+  return secureRandomItem([...GENDER_MODIFIERS])
 }
 
 /**

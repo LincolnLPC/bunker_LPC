@@ -1,5 +1,6 @@
 "use client"
 
+import React, { useMemo } from "react"
 import type { Player } from "@/types/game"
 import { PlayerCard, type ActiveCameraEffect } from "./player-card"
 import type { CameraEffectType } from "@/lib/camera-effects/config"
@@ -18,7 +19,7 @@ interface PlayerGridProps {
   onCameraEffectComplete?: (playerId: string, effectId: string) => void
 }
 
-export function PlayerGrid({
+const PlayerGridInner = ({
   players,
   maxPlayers,
   currentPlayerId,
@@ -30,11 +31,12 @@ export function PlayerGrid({
   cameraEffects,
   onCameraEffectDrop,
   onCameraEffectComplete,
-}: PlayerGridProps) {
-  // Create array with empty slots
-  const slots = Array.from({ length: maxPlayers }, (_, i) => {
-    return players.find((p) => p.slot === i + 1) || null
-  })
+}: PlayerGridProps) => {
+  // Create array with empty slots — useMemo to avoid recalculation on every render
+  const slots = useMemo(
+    () => Array.from({ length: maxPlayers }, (_, i) => players.find((p) => p.slot === i + 1) || null),
+    [players, maxPlayers]
+  )
 
   // Determine grid columns based on max players
   const gridCols = maxPlayers <= 8 ? 4 : maxPlayers <= 12 ? 4 : maxPlayers <= 16 ? 4 : 5
@@ -56,14 +58,14 @@ export function PlayerGrid({
               player={player}
               slotNumber={index + 1}
               isCurrentPlayer={player.id === currentPlayerId}
-              onToggleCharacteristic={(charId) => onToggleCharacteristic?.(player.id, charId)}
-              onSelect={() => onSelectPlayer?.(player)}
+              onToggleCharacteristic={onToggleCharacteristic}
+              onSelectPlayer={onSelectPlayer}
               isMuted={mutedPlayers?.has(player.id) ?? false}
-              onToggleMute={() => onTogglePlayerMute?.(player.id)}
+              onToggleMute={onTogglePlayerMute}
               vdoNinjaCameraUrl={player.id === currentPlayerId ? vdoNinjaCameraUrl : undefined}
               activeEffects={cameraEffects?.get(player.id) ?? []}
-              onEffectDrop={(effect) => onCameraEffectDrop?.(player.id, effect)}
-              onEffectComplete={(effectId) => onCameraEffectComplete?.(player.id, effectId)}
+              onEffectDrop={onCameraEffectDrop}
+              onEffectComplete={onCameraEffectComplete}
             />
           ) : (
             <EmptySlot slotNumber={index + 1} />
@@ -75,11 +77,13 @@ export function PlayerGrid({
   )
 }
 
-function EmptySlot({ slotNumber }: { slotNumber: number }) {
+export const PlayerGrid = React.memo(PlayerGridInner)
+
+const EmptySlot = React.memo(function EmptySlot({ slotNumber }: { slotNumber: number }) {
   return (
     <div className="relative h-full w-full min-h-0 rounded-sm border-2 border-dashed border-[oklch(0.3_0.02_50)] bg-[oklch(0.08_0.01_60/0.5)] flex items-center justify-center">
       <div className="absolute top-1 left-1 text-[oklch(0.3_0_0)] text-xs font-mono">{slotNumber}</div>
       <div className="w-8 h-8 rounded-full border-2 border-dashed border-[oklch(0.25_0.02_50)]" />
     </div>
   )
-}
+})

@@ -12,6 +12,7 @@ import { useGameState } from "@/hooks/use-game-state"
 import { useWebRTC } from "@/hooks/use-webrtc"
 import { useMediaSettings } from "@/hooks/use-media-settings"
 import { createClient } from "@/lib/supabase/client"
+import { logger } from "@/lib/logger"
 import type { ChatMessage, Player } from "@/types/game"
 import { Loader2, X } from "lucide-react"
 
@@ -235,13 +236,13 @@ export default function GamePage() {
   // Debug: Log when selectedPlayer changes
   useEffect(() => {
     if (selectedPlayer) {
-      console.log("[GamePage] Selected player changed:", {
+      logger.log("[GamePage] Selected player changed:", {
         playerId: selectedPlayer.id,
         playerName: selectedPlayer.name,
         isCurrentPlayer: selectedPlayer.id === currentPlayerId,
       })
     } else {
-      console.log("[GamePage] Selected player cleared")
+      logger.log("[GamePage] Selected player cleared")
     }
   }, [selectedPlayer, currentPlayerId])
 
@@ -311,10 +312,10 @@ export default function GamePage() {
         })
         if (!res.ok) {
           const data = await res.json().catch(() => ({}))
-          console.warn("[CameraEffect] API error:", data.error || res.statusText)
+          logger.warn("[CameraEffect] API error:", data.error || res.statusText)
         }
       } catch (e) {
-        console.warn("[CameraEffect] Failed to send chat message:", e)
+        logger.warn("[CameraEffect] Failed to send chat message:", e)
       }
       broadcastCameraEffect({
         sourcePlayerId: currentPlayerId,
@@ -380,11 +381,11 @@ export default function GamePage() {
           if (!error && votes && votes.length > 0) {
             setVotedPlayerId(votes[0].target_id)
             setShowVotingPanel(false) // Don't show panel if already voted
-            console.log("[Vote] Found existing vote:", votes[0].target_id)
+            logger.log("[Vote] Found existing vote:", votes[0].target_id)
           } else {
             setVotedPlayerId(undefined)
             setShowVotingPanel(true) // Show panel if not voted yet
-            console.log("[Vote] No existing vote found for current player")
+            logger.log("[Vote] No existing vote found for current player")
           }
         } catch (err) {
           console.error("Error checking vote:", err)
@@ -418,10 +419,10 @@ export default function GamePage() {
           }),
         }).catch((err) => {
           // Silently ignore errors - heartbeat failures shouldn't break the game
-          console.debug("[Heartbeat] Failed to send heartbeat:", err)
+          logger.debug("[Heartbeat] Failed to send heartbeat:", err)
         })
       } catch (err) {
-        console.debug("[Heartbeat] Error sending heartbeat:", err)
+        logger.debug("[Heartbeat] Error sending heartbeat:", err)
       }
     }
 
@@ -467,13 +468,13 @@ export default function GamePage() {
           const data = await response.json()
           // If timer expired and phase changed, refresh game state
           if (data.phaseChanged) {
-            console.log("[Timer] Phase changed, refreshing game state")
+            logger.log("[Timer] Phase changed, refreshing game state")
             timerExpiredRef.current = false // Reset expired flag on phase change
             refresh()
           } else if (data.expired && phase === "voting") {
             // Timer expired in voting phase - refresh state only once
             if (!timerExpiredRef.current) {
-              console.log("[Timer] Voting timer expired, refreshing state once")
+              logger.log("[Timer] Voting timer expired, refreshing state once")
               timerExpiredRef.current = true
               refresh()
             }
@@ -546,7 +547,7 @@ export default function GamePage() {
   
   useEffect(() => {
     // Логируем состояние для диагностики
-    console.log("[Media] Checking conditions for media initialization:", {
+    logger.log("[Media] Checking conditions for media initialization:", {
       loading,
       mediaSettingsLoading,
       roomId: gameState.id,
@@ -574,7 +575,7 @@ export default function GamePage() {
       !mediaInitialized &&
       (mediaSettings.autoRequestCamera || mediaSettings.autoRequestMicrophone)
     ) {
-      console.log("[Media] Conditions met - requesting camera/microphone access...", {
+      logger.log("[Media] Conditions met - requesting camera/microphone access...", {
         loading,
         mediaSettingsLoading,
         roomId: gameState.id,
@@ -589,7 +590,7 @@ export default function GamePage() {
       })
         .then((stream) => {
           if (stream) {
-            console.log("[Media] Successfully initialized media stream:", {
+            logger.log("[Media] Successfully initialized media stream:", {
               streamId: stream.id,
               videoTracks: stream.getVideoTracks().length,
               audioTracks: stream.getAudioTracks().length,
@@ -600,18 +601,18 @@ export default function GamePage() {
             const videoTracks = stream.getVideoTracks()
             videoTracks.forEach((track) => {
               track.enabled = mediaSettings.defaultCameraEnabled
-              console.log(`[Media] Video track ${track.id} enabled: ${track.enabled}`)
+              logger.log(`[Media] Video track ${track.id} enabled: ${track.enabled}`)
             })
             
             const audioTracks = stream.getAudioTracks()
             audioTracks.forEach((track) => {
               track.enabled = mediaSettings.defaultMicrophoneEnabled
-              console.log(`[Media] Audio track ${track.id} enabled: ${track.enabled}`)
+              logger.log(`[Media] Audio track ${track.id} enabled: ${track.enabled}`)
             })
             
             // Проверить, что localStream обновился в useWebRTC
             setTimeout(() => {
-              console.log("[Media] Checking localStream after initialization:", {
+              logger.log("[Media] Checking localStream after initialization:", {
                 hasLocalStream: !!localStream,
                 localStreamId: localStream?.id,
                 videoEnabled,
@@ -622,7 +623,7 @@ export default function GamePage() {
             setMediaInitialized(true)
           } else {
             // Stream is null (browser doesn't support or permission denied) - this is OK
-            console.log("[Media] Media unavailable (browser doesn't support or permission denied) - game will continue without video/audio")
+            logger.log("[Media] Media unavailable (browser doesn't support or permission denied) - game will continue without video/audio")
             // Set initialized to true so we don't keep retrying automatically
             setMediaInitialized(true)
           }
@@ -673,7 +674,7 @@ export default function GamePage() {
             errorMessage.includes("permission")
           
           if (isPermissionError) {
-            console.log("[Media] ⚠️ Permission denied - user can enable media manually via button", errorDetails)
+            logger.log("[Media] ⚠️ Permission denied - user can enable media manually via button", errorDetails)
             // Set initialized to true so we don't keep retrying
             setMediaInitialized(true)
           } else {
@@ -690,7 +691,7 @@ export default function GamePage() {
       !mediaSettings.autoRequestMicrophone
     ) {
       // Если пользователь отключил автозапрос, все равно устанавливаем флаг
-      console.log("[Media] Auto-request disabled by user settings")
+      logger.log("[Media] Auto-request disabled by user settings")
       setMediaInitialized(true)
     } else {
       // Логируем, почему условие не выполнилось
@@ -703,68 +704,29 @@ export default function GamePage() {
       if (!mediaSettings.autoRequestCamera && !mediaSettings.autoRequestMicrophone) reasons.push("auto-request disabled")
       
       if (reasons.length > 0) {
-        console.log("[Media] Conditions NOT met - waiting:", reasons.join(", "))
+        logger.log("[Media] Conditions NOT met - waiting:", reasons.join(", "))
       }
     }
   }, [loading, mediaSettingsLoading, gameState.id, currentPlayerId, initializeMedia, mediaInitialized, mediaSettings])
 
-  // Update players with their streams (local and remote)
-  // Log current state for debugging
-  console.log("[GamePage] Creating playersWithStream:", {
-    playersCount: gameState.players.length,
-    currentPlayerId,
-    hasLocalStream: !!localStream,
-    localStreamId: localStream?.id,
-    videoEnabled,
-    audioEnabled,
-    remoteStreamsCount: remoteStreams?.size || 0,
-  })
-
-  const playersWithStream = gameState.players.map((player) => {
-    if (player.id === currentPlayerId) {
-      // Текущий игрок - всегда используем локальный поток если он есть
-      if (localStream) {
-        console.log(`[GamePage] Mapping local stream for current player ${player.name} (${player.id}):`, {
-          hasStream: true,
-          videoEnabled,
-          audioEnabled,
-          videoTracks: localStream.getVideoTracks().length,
-          audioTracks: localStream.getAudioTracks().length,
-          streamId: localStream.id,
-        })
-        return { ...player, stream: localStream, audioEnabled, videoEnabled }
-      } else {
-        // Текущий игрок без локального потока
-        console.log(`[GamePage] Current player ${player.name} (${player.id}) has no local stream - user needs to enable camera/microphone`)
+  // Update players with their streams (local and remote) — useMemo для избежания пересчёта при каждом рендере
+  const playersWithStream = useMemo(() => {
+    return gameState.players.map((player) => {
+      if (player.id === currentPlayerId) {
+        if (localStream) {
+          return { ...player, stream: localStream, audioEnabled, videoEnabled }
+        }
         return { ...player, stream: undefined, audioEnabled: false, videoEnabled: false }
       }
-    } else if (remoteStreams && remoteStreams.has(player.id)) {
-      // Удаленный поток другого игрока
-      const remoteStream = remoteStreams.get(player.id)!
-      const videoEnabled = remoteStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live")
-      const audioEnabled = remoteStream.getAudioTracks().some((t) => t.enabled && t.readyState === "live")
-      console.log(`[GamePage] ✅ Mapping REMOTE stream for player ${player.name} (${player.id}):`, {
-        hasStream: true,
-        videoEnabled,
-        audioEnabled,
-        videoTracks: remoteStream.getVideoTracks().length,
-        audioTracks: remoteStream.getAudioTracks().length,
-        streamId: remoteStream.id,
-      })
-      return {
-        ...player,
-        stream: remoteStream,
-        videoEnabled,
-        audioEnabled,
+      if (remoteStreams?.has(player.id)) {
+        const remoteStream = remoteStreams.get(player.id)!
+        const vidEnabled = remoteStream.getVideoTracks().some((t) => t.enabled && t.readyState === "live")
+        const audEnabled = remoteStream.getAudioTracks().some((t) => t.enabled && t.readyState === "live")
+        return { ...player, stream: remoteStream, videoEnabled: vidEnabled, audioEnabled: audEnabled }
       }
-    } else {
-      // Log when player doesn't have a stream
-      if (player.id !== currentPlayerId) {
-        console.warn(`[GamePage] ⚠️ No stream for player ${player.name} (${player.id}), remoteStreams has keys:`, Array.from(remoteStreams?.keys() || []))
-      }
-    }
-    return player
-  })
+      return player
+    })
+  }, [gameState.players, currentPlayerId, localStream, remoteStreams, videoEnabled, audioEnabled])
 
   const currentPlayer = gameState.players.find((p) => p.id === currentPlayerId)
   // Check if current user is host by comparing with gameState.hostId
@@ -829,7 +791,7 @@ export default function GamePage() {
 
   // Debug: Log when showCharacteristicsManager changes (after isHost is defined)
   useEffect(() => {
-    console.log("[GamePage] showCharacteristicsManager changed:", {
+    logger.log("[GamePage] showCharacteristicsManager changed:", {
       isOpen: showCharacteristicsManager,
       isHost,
     })
@@ -847,7 +809,7 @@ export default function GamePage() {
       await castVote(voteTargetId)
       // Vote was successful, update votedPlayerId and close panel
       setVotedPlayerId(voteTargetId)
-      console.log("[Vote] Vote cast successfully for player:", voteTargetId)
+      logger.log("[Vote] Vote cast successfully for player:", voteTargetId)
       // Close voting panel after successful vote
       setShowVotingPanel(false)
     } catch (err) {
@@ -1194,7 +1156,7 @@ export default function GamePage() {
       } else {
         const data = await response.json()
         if (data.roomClosed) {
-          console.log("[Leave] Room closed because host left")
+          logger.log("[Leave] Room closed because host left")
         }
       }
     } catch (error) {
@@ -1271,7 +1233,7 @@ export default function GamePage() {
   useEffect(() => {
     if (prevShowCatastropheIntro.current !== showCatastropheIntro) {
       prevShowCatastropheIntro.current = showCatastropheIntro
-      console.log("[CatastropheIntro] Display state changed:", {
+      logger.log("[CatastropheIntro] Display state changed:", {
         loading,
         phase: gameState.phase,
         currentRound: gameState.currentRound,
@@ -1284,7 +1246,7 @@ export default function GamePage() {
 
   // Load special cards when game state changes
   useEffect(() => {
-    console.log("[SpecialCards] 🔄 useEffect triggered:", {
+    logger.log("[SpecialCards] 🔄 useEffect triggered:", {
       phase: gameState?.phase,
       playerId: currentPlayerId,
       roomId: gameState?.id,
@@ -1295,37 +1257,37 @@ export default function GamePage() {
       // Fetch special cards from API
       const loadCards = async () => {
         try {
-          console.log("[SpecialCards] 🔍 Loading cards for player:", currentPlayerId, "room:", gameState.id)
-          console.log("[SpecialCards] Request URL:", `/api/game/special-cards?playerId=${currentPlayerId}&roomId=${gameState.id}`)
+          logger.log("[SpecialCards] 🔍 Loading cards for player:", currentPlayerId, "room:", gameState.id)
+          logger.log("[SpecialCards] Request URL:", `/api/game/special-cards?playerId=${currentPlayerId}&roomId=${gameState.id}`)
           
           const response = await fetch(
             `/api/game/special-cards?playerId=${currentPlayerId}&roomId=${gameState.id}`
           )
           
-          console.log("[SpecialCards] 📥 Response status:", response.status, response.statusText)
+          logger.log("[SpecialCards] 📥 Response status:", response.status, response.statusText)
           
           if (response.ok) {
             const data = await response.json()
-            console.log("[SpecialCards] ✅ Received cards data:", data)
+            logger.log("[SpecialCards] ✅ Received cards data:", data)
             // Transform database cards to component format
             const rawCards = data.cards || []
-            console.log(`[SpecialCards] 📊 Raw cards count: ${rawCards.length}`)
+            logger.log(`[SpecialCards] 📊 Raw cards count: ${rawCards.length}`)
             
             if (rawCards.length === 0) {
-              console.warn(`[SpecialCards] ⚠️ No cards returned from API for player ${currentPlayerId} in room ${gameState.id}`)
-              console.warn("[SpecialCards] This means cards were not granted when game started, or player ID doesn't match")
-              console.warn("[SpecialCards] Check server logs for [GameStart] messages to see if cards were granted")
+              logger.warn(`[SpecialCards] ⚠️ No cards returned from API for player ${currentPlayerId} in room ${gameState.id}`)
+              logger.warn("[SpecialCards] This means cards were not granted when game started, or player ID doesn't match")
+              logger.warn("[SpecialCards] Check server logs for [GameStart] messages to see if cards were granted")
             }
             
             const transformedCards = rawCards.map((card: any) => {
               const cardName = getCardName(card.card_type)
               const cardDescription = getCardDescription(card.card_type)
-              console.log(`[SpecialCards] 🔄 Transforming card ${card.id}: type="${card.card_type || 'null'}", name="${cardName || 'empty'}", description="${cardDescription || 'empty'}", is_used=${card.is_used}`)
+              logger.log(`[SpecialCards] 🔄 Transforming card ${card.id}: type="${card.card_type || 'null'}", name="${cardName || 'empty'}", description="${cardDescription || 'empty'}", is_used=${card.is_used}`)
               
               // Filter out cards without name (invalid card types)
               // Description can be empty for some cards, but name must exist
               if (!cardName || cardName.trim() === "") {
-                console.warn(`[SpecialCards] ⚠️ Card ${card.id} has invalid type "${card.card_type || 'null'}" - missing name. Card data:`, card)
+                logger.warn(`[SpecialCards] ⚠️ Card ${card.id} has invalid type "${card.card_type || 'null'}" - missing name. Card data:`, card)
                 return null
               }
               
@@ -1340,31 +1302,31 @@ export default function GamePage() {
             
             const invalidCount = rawCards.length - transformedCards.length
             if (invalidCount > 0) {
-              console.warn(`[SpecialCards] ⚠️ Filtered out ${invalidCount} invalid card(s)`)
+              logger.warn(`[SpecialCards] ⚠️ Filtered out ${invalidCount} invalid card(s)`)
             }
             
-            console.log("[SpecialCards] ✅ Transformed cards (after filtering):", transformedCards)
-            console.log("[SpecialCards] 📊 Available cards (not used):", transformedCards.filter((c) => !c.isUsed))
+            logger.log("[SpecialCards] ✅ Transformed cards (after filtering):", transformedCards)
+            logger.log("[SpecialCards] 📊 Available cards (not used):", transformedCards.filter((c) => !c.isUsed))
             
             if (transformedCards.length === 0) {
               // This is expected if cards haven't been granted yet or all cards are used
               if (rawCards.length === 0) {
-                console.warn(`[SpecialCards] ⚠️ No cards found for player ${currentPlayerId} in room ${gameState.id}`)
-                console.warn("[SpecialCards] Possible reasons:")
-                console.warn("[SpecialCards]   1. Cards were not granted when game started")
-                console.warn("[SpecialCards]   2. Player ID doesn't match any granted cards")
-                console.warn("[SpecialCards]   3. Room ID doesn't match any granted cards")
-                console.warn("[SpecialCards] Check server logs for [GameStart] messages")
+                logger.warn(`[SpecialCards] ⚠️ No cards found for player ${currentPlayerId} in room ${gameState.id}`)
+                logger.warn("[SpecialCards] Possible reasons:")
+                logger.warn("[SpecialCards]   1. Cards were not granted when game started")
+                logger.warn("[SpecialCards]   2. Player ID doesn't match any granted cards")
+                logger.warn("[SpecialCards]   3. Room ID doesn't match any granted cards")
+                logger.warn("[SpecialCards] Check server logs for [GameStart] messages")
               } else {
-                console.warn(`[SpecialCards] ⚠️ No valid cards after transformation! Raw cards: ${rawCards.length}, Invalid: ${invalidCount}`)
+                logger.warn(`[SpecialCards] ⚠️ No valid cards after transformation! Raw cards: ${rawCards.length}, Invalid: ${invalidCount}`)
                 if (rawCards.length > 0) {
-                  console.warn("[SpecialCards] Raw card types:", rawCards.map((c: any) => c.card_type))
+                  logger.warn("[SpecialCards] Raw card types:", rawCards.map((c: any) => c.card_type))
                 }
               }
             } else if (transformedCards.filter((c) => !c.isUsed).length === 0) {
-              console.log("[SpecialCards] ℹ️ All cards are marked as used (this is normal after using all cards)")
+              logger.log("[SpecialCards] ℹ️ All cards are marked as used (this is normal after using all cards)")
             } else {
-              console.log(`[SpecialCards] ✅ Successfully loaded ${transformedCards.length} cards (${transformedCards.filter((c) => !c.isUsed).length} available)`)
+              logger.log(`[SpecialCards] ✅ Successfully loaded ${transformedCards.length} cards (${transformedCards.filter((c) => !c.isUsed).length} available)`)
             }
             
             setSpecialCards(transformedCards)
@@ -1386,7 +1348,7 @@ export default function GamePage() {
       }
       loadCards()
     } else {
-      console.log("[SpecialCards] ⏭️ Skipping load - conditions not met:", {
+      logger.log("[SpecialCards] ⏭️ Skipping load - conditions not met:", {
         phase: gameState?.phase,
         playerId: currentPlayerId,
         roomId: gameState?.id,
@@ -1499,12 +1461,12 @@ export default function GamePage() {
         event.stopPropagation()
         setShowDebugInfo((prev) => {
           const newValue = !prev
-          console.debug("[Debug] Toggling debug info:", newValue)
+          logger.debug("[Debug] Toggling debug info:", newValue)
           return newValue
         })
         setShowRefreshIndicator((prev) => {
           const newValue = !prev
-          console.debug("[Debug] Toggling refresh indicator:", newValue)
+          logger.debug("[Debug] Toggling refresh indicator:", newValue)
           return newValue
         })
       }
@@ -1865,7 +1827,7 @@ export default function GamePage() {
   // Redirect to lobby if room was deleted
   useEffect(() => {
     if (error === "ROOM_DELETED") {
-      console.log("[GamePage] Room was deleted, redirecting to lobby")
+      logger.log("[GamePage] Room was deleted, redirecting to lobby")
       // Small delay to show message if needed
       setTimeout(() => {
         router.push("/lobby")
@@ -2041,7 +2003,7 @@ export default function GamePage() {
               if (gameState.phase === "playing" && isHost) {
                 startVoting().catch((err) => {
                   // Если произошла ошибка (например, игра уже в voting), просто обновим состояние
-                  console.log("[Timer] Error starting voting from timer:", err)
+                  logger.log("[Timer] Error starting voting from timer:", err)
                   refresh()
                 })
               }
@@ -2094,8 +2056,8 @@ export default function GamePage() {
         onToggleMic={toggleAudio}
         onToggleVideo={toggleVideo}
         onRequestMedia={async () => {
-          console.log("[Media] 🔘 Manual media request triggered (user clicked button)")
-          console.log("[Media] Current state:", {
+          logger.log("[Media] 🔘 Manual media request triggered (user clicked button)")
+          logger.log("[Media] Current state:", {
             hasLocalStream: !!localStream,
             mediaInitialized,
             mediaError,
@@ -2106,7 +2068,7 @@ export default function GamePage() {
           
           // Проверка перед запросом
           if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-            console.warn("[Media] ⚠️ Browser doesn't support getUserMedia - media features will be unavailable")
+            logger.warn("[Media] ⚠️ Browser doesn't support getUserMedia - media features will be unavailable")
             // Don't show alert, just silently fail - user can still use the app without media
             return
           }
@@ -2117,7 +2079,7 @@ export default function GamePage() {
               const cameraPermission = await navigator.permissions.query({ name: 'camera' as PermissionName })
               const microphonePermission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
               
-              console.log("[Media] Permission status before request:", {
+              logger.log("[Media] Permission status before request:", {
                 camera: cameraPermission.state,
                 microphone: microphonePermission.state,
               })
@@ -2132,20 +2094,20 @@ export default function GamePage() {
               }
             }
           } catch (permError) {
-            console.log("[Media] Permissions API check failed (this is OK):", permError)
+            logger.log("[Media] Permissions API check failed (this is OK):", permError)
           }
           
           setMediaInitialized(false) // Сбрасываем флаг, чтобы можно было повторить
           
-          console.log("[Media] 🚀 Calling initializeMedia with video:true, audio:true")
-          console.log("[Media] This should trigger browser permission dialog...")
+          logger.log("[Media] 🚀 Calling initializeMedia with video:true, audio:true")
+          logger.log("[Media] This should trigger browser permission dialog...")
           
           initializeMedia({
             video: true,
             audio: true,
           })
             .then((stream) => {
-              console.log("[Media] ✅ Manual media request - initializeMedia returned:", {
+              logger.log("[Media] ✅ Manual media request - initializeMedia returned:", {
                 hasStream: !!stream,
                 streamId: stream?.id,
                 videoTracks: stream?.getVideoTracks().length || 0,
@@ -2153,7 +2115,7 @@ export default function GamePage() {
               })
               
               if (stream) {
-                console.log("[Media] ✅ Manual media request successful!", {
+                logger.log("[Media] ✅ Manual media request successful!", {
                   streamId: stream.id,
                   videoTracks: stream.getVideoTracks().map(t => ({
                     id: t.id,
@@ -2170,7 +2132,7 @@ export default function GamePage() {
                 })
                 setMediaInitialized(true)
               } else {
-                console.warn("[Media] ⚠️ Manual media request - stream is null (permission denied or error)")
+                logger.warn("[Media] ⚠️ Manual media request - stream is null (permission denied or error)")
               }
             })
             .catch((err) => {
@@ -2184,7 +2146,7 @@ export default function GamePage() {
         }}
         onRevealCharacteristic={() => setShowRevealModal(true)}
         onViewMyCharacteristics={() => {
-          console.log("[GameControls] onViewMyCharacteristics clicked", {
+          logger.log("[GameControls] onViewMyCharacteristics clicked", {
             currentPlayerId,
             currentPlayer: currentPlayer ? { id: currentPlayer.id, name: currentPlayer.name } : null,
             playersCount: gameState.players.length,
@@ -2192,9 +2154,9 @@ export default function GamePage() {
           })
           if (currentPlayer) {
             setSelectedPlayer(currentPlayer)
-            console.log("[GameControls] Selected player set:", currentPlayer.id)
+            logger.log("[GameControls] Selected player set:", currentPlayer.id)
           } else {
-            console.warn("[GameControls] ⚠️ Cannot open characteristics - currentPlayer is null/undefined", {
+            logger.warn("[GameControls] ⚠️ Cannot open characteristics - currentPlayer is null/undefined", {
               currentPlayerId,
               players: gameState.players.map(p => ({ id: p.id, name: p.name })),
             })
@@ -2208,15 +2170,15 @@ export default function GamePage() {
         onOpenSpecialCards={() => setShowSpecialCards(true)}
         onOpenBunkerInfo={() => setShowBunkerInfo(true)}
         onOpenCharacteristicsManager={() => {
-          console.log("[GameControls] onOpenCharacteristicsManager clicked", {
+          logger.log("[GameControls] onOpenCharacteristicsManager clicked", {
             isHost,
             showCharacteristicsManager,
           })
           if (isHost) {
             setShowCharacteristicsManager(true)
-            console.log("[GameControls] Characteristics manager opened")
+            logger.log("[GameControls] Characteristics manager opened")
           } else {
-            console.warn("[GameControls] ⚠️ Cannot open characteristics manager - user is not host")
+            logger.warn("[GameControls] ⚠️ Cannot open characteristics manager - user is not host")
           }
         }}
         roundMode={gameState.settings?.roundMode || "automatic"}
@@ -2305,7 +2267,7 @@ export default function GamePage() {
         <SpecialActionCards
           isOpen={showSpecialCards}
           onClose={() => {
-            console.log("[GamePage] Closing special cards modal")
+            logger.log("[GamePage] Closing special cards modal")
             setShowSpecialCards(false)
           }}
           cards={specialCards}

@@ -13,10 +13,7 @@ import {
   SAMPLE_PROFESSIONS,
 } from "@/types/game"
 import { getSpecialOptionsForGender } from "@/lib/game/characteristics"
-
-function getRandomItem<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
-}
+import { pickPreferringUnused } from "@/lib/game/random"
 
 const GENDER_OPTIONS = ["М", "Ж", "А", "М(с)", "Ж(с)", "М(а)", "Ж(а)"]
 const AGE_OPTIONS: string[] = Array.from({ length: 103 }, (_, i) => `${i + 18} лет`) // Возраст от 18 до 120
@@ -185,7 +182,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No options available for this category" }, { status: 400 })
     }
 
-    const randomValue = getRandomItem(optionsToChooseFrom)
+    // Предпочитать значения, которые этот игрок давно не получал в прошлых играх
+    const { data: targetPlayer } = await supabase
+      .from("game_players")
+      .select("user_id")
+      .eq("id", playerId)
+      .single()
+    const userRecentlyUsed = new Set<string>()
+    if (targetPlayer?.user_id) {
+      const { data: pastPlayers } = await supabase
+        .from("game_players")
+        .select("id")
+        .eq("user_id", targetPlayer.user_id)
+        .neq("room_id", roomId)
+      const pastPlayerIds = pastPlayers?.map((p: { id: string }) => p.id) || []
+      if (pastPlayerIds.length > 0) {
+        const { data: pastChars } = await supabase
+          .from("player_characteristics")
+          .select("value")
+          .in("player_id", pastPlayerIds)
+          .eq("category", char.category)
+        pastChars?.forEach((c: { value: string }) => userRecentlyUsed.add(c.value))
+      }
+    }
+    const randomValue = pickPreferringUnused(optionsToChooseFrom, userRecentlyUsed)
 
     // Update characteristic
     const { error: updateError } = await supabase

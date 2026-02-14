@@ -1,7 +1,8 @@
 "use client"
 
-import { useRef, useEffect, useState } from "react"
+import React, { useRef, useEffect, useState } from "react"
 import type { Player } from "@/types/game"
+import { logger } from "@/lib/logger"
 import { cn } from "@/lib/utils"
 import { MicOff, User } from "lucide-react"
 import { CameraEffectOverlay } from "./camera-effect-overlay"
@@ -17,29 +18,34 @@ interface PlayerCardProps {
   player: Player
   slotNumber: number
   isCurrentPlayer?: boolean
-  onToggleCharacteristic?: (characteristicId: string) => void
-  onSelect?: () => void
+  /** Stable callback: (playerId, characteristicId) — не создаёт новую функцию при каждом рендере */
+  onToggleCharacteristic?: (playerId: string, characteristicId: string) => void
+  /** Stable callback: (player) — не создаёт новую функцию при каждом рендере */
+  onSelectPlayer?: (player: Player) => void
   isMuted?: boolean
-  onToggleMute?: () => void
+  /** Stable callback: (playerId) */
+  onToggleMute?: (playerId: string) => void
   vdoNinjaCameraUrl?: string | null
   activeEffects?: ActiveCameraEffect[]
-  onEffectDrop?: (effect: CameraEffectType) => void
-  onEffectComplete?: (effectId: string) => void
+  /** Stable callback: (playerId, effect) */
+  onEffectDrop?: (playerId: string, effect: CameraEffectType) => void
+  /** Stable callback: (playerId, effectId) */
+  onEffectComplete?: (playerId: string, effectId: string) => void
 }
 
-export function PlayerCard({
+const PlayerCardComponent = ({
   player,
   slotNumber,
   isCurrentPlayer = false,
   onToggleCharacteristic,
-  onSelect,
+  onSelectPlayer,
   isMuted = false,
   onToggleMute,
   vdoNinjaCameraUrl,
   activeEffects = [],
   onEffectDrop,
   onEffectComplete,
-}: PlayerCardProps) {
+}: PlayerCardProps) => {
   const [dragOver, setDragOver] = useState(false)
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -59,7 +65,7 @@ export function PlayerCard({
     const effect = (e.dataTransfer.getData(CAMERA_EFFECT_DRAG_TYPE) || e.dataTransfer.getData("text/plain")) as CameraEffectType
     const validEffects = ["tomato", "egg", "revolver"] as const
     if (effect && validEffects.includes(effect) && onEffectDrop) {
-      onEffectDrop(effect)
+      onEffectDrop(player.id, effect)
     }
   }
 
@@ -94,21 +100,15 @@ export function PlayerCard({
       const videoTracks = currentStream.getVideoTracks()
       const hasVideoTrack = videoTracks.length > 0 && videoTracks.some(t => t.enabled && t.readyState === "live")
       
-      console.log(`[PlayerCard] Processing stream for player ${player.name} (${player.id}):`, {
+      logger.debug(`[PlayerCard] Processing stream for player ${player.name}:`, {
         streamId: currentStream.id,
-        videoTracks: videoTracks.length,
         hasVideoTrack,
-        videoEnabled: player.videoEnabled,
-        isCurrentPlayer,
-        srcObjectSet: !!videoElement.srcObject,
-        srcObjectMatches: videoElement.srcObject === currentStream,
       })
 
       // Update srcObject if stream changed or if it's not set
       if (videoElement.srcObject !== currentStream) {
         videoElement.srcObject = currentStream
         streamRef.current = currentStream
-        console.log(`[PlayerCard] Set srcObject for ${player.name}, streamId: ${currentStream.id}`)
       }
 
       // Воспроизведение с повторными попытками (медленная сеть / LAN)
@@ -122,17 +122,16 @@ export function PlayerCard({
             if (attempt < retryDelays.length) setTimeout(() => tryPlay(attempt + 1), retryDelays[attempt])
           }).catch((err) => {
             if (err.name !== "AbortError" && err.name !== "NotAllowedError") {
-              console.warn(`[PlayerCard] Error playing video for ${player.name}:`, err.name, err.message)
+              logger.warn(`[PlayerCard] Error playing video for ${player.name}:`, err.name, err.message)
             }
             if (attempt < retryDelays.length) setTimeout(() => tryPlay(attempt + 1), retryDelays[attempt])
           })
         }
         tryPlay(0)
       } else {
-        console.debug(`[PlayerCard] No enabled video track for ${player.name}`)
+        logger.debug(`[PlayerCard] No enabled video track for ${player.name}`)
       }
     } else {
-      console.log(`[PlayerCard] No stream for player ${player.name} (${player.id}), isCurrentPlayer: ${isCurrentPlayer}`)
       if (videoElement.srcObject) {
         videoElement.srcObject = null
         streamRef.current = null
@@ -184,7 +183,7 @@ export function PlayerCard({
   )
 
   const handleCardClick = () => {
-    onSelect?.()
+    onSelectPlayer?.(player)
   }
 
   return (
@@ -326,7 +325,7 @@ export function PlayerCard({
         <button
           onClick={(e) => {
             e.stopPropagation()
-            onToggleMute()
+            onToggleMute?.(player.id)
           }}
           className="absolute top-1 right-1 z-50 p-1.5 rounded bg-[oklch(0.15_0.02_50/0.9)] hover:bg-[oklch(0.2_0.02_50/0.95)] transition-colors"
           title={isMuted ? "Включить звук" : "Отключить звук"}
@@ -380,7 +379,7 @@ export function PlayerCard({
         <CameraEffectOverlay
           key={id}
           effect={effect}
-          onComplete={() => onEffectComplete?.(id)}
+          onComplete={() => onEffectComplete?.(player.id, id)}
         />
       ))}
 
@@ -393,3 +392,5 @@ export function PlayerCard({
     </div>
   )
 }
+
+export const PlayerCard = React.memo(PlayerCardComponent)

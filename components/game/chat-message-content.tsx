@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { STICKERS } from "@/lib/stickers"
 
 const STICKER_REGEX = /\[sticker:([a-z0-9-]+)\]/g
@@ -43,9 +44,11 @@ function StickerImage({ id }: { id: string }) {
   if (!sticker) return <span>[sticker:{id}]</span>
 
   return (
-    <img
+    <Image
       src={sticker.src}
       alt={sticker.alt}
+      width={32}
+      height={32}
       className="inline-block align-middle w-8 h-8 object-contain mx-0.5"
     />
   )

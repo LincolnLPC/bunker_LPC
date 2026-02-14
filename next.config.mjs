@@ -26,7 +26,7 @@ const nextConfig = {
   
   // Оптимизация компиляции
   experimental: {
-    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
+    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons', 'date-fns', 'recharts'],
   },
   
   // Production оптимизации

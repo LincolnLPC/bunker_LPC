@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -98,9 +99,11 @@ export function EmojiPicker({ onSelect, disabled }: EmojiPickerProps) {
                   onClick={() => onSelect(stickerCode(sticker.id))}
                   title={sticker.alt}
                 >
-                  <img
+                  <Image
                     src={sticker.src}
                     alt={sticker.alt}
+                    width={64}
+                    height={64}
                     className="w-full h-full object-contain max-h-16"
                   />
                 </button>

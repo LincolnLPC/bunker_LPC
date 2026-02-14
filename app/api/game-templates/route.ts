@@ -43,7 +43,9 @@ export async function GET(request: Request) {
 
     if (error) throw error
 
-    return NextResponse.json({ templates: templates || [] })
+    const response = NextResponse.json({ templates: templates || [] })
+    response.headers.set("Cache-Control", "private, max-age=60")
+    return response
   } catch (error) {
     console.error("Error fetching templates:", error)
     return NextResponse.json({ error: "Failed to fetch templates" }, { status: 500 })

@@ -5,6 +5,8 @@ import { createClient } from "@/lib/supabase/client"
 import { useRealtimeGame } from "@/hooks/use-realtime-game"
 import { retry, isRetryableError } from "@/lib/error-handling/connection-recovery"
 import type { GameState, Player, Characteristic, Vote, ChatMessage, Spectator } from "@/types/game"
+import { logger } from "@/lib/logger"
+import { useDebouncedCallback } from "@/hooks/use-debounced-callback"
 import type { CameraEffectPayload } from "@/hooks/use-realtime-game"
 
 // Transform database row to GameState
@@ -43,7 +45,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
       
       // Log characteristics for debugging
       if (p.user_id === currentUserId && characteristics.length === 0 && p.player_characteristics) {
-        console.warn("[GameState] transformRoomToGameState: Current player has empty characteristics array:", {
+        logger.warn("[GameState] transformRoomToGameState: Current player has empty characteristics array:", {
           playerId: p.id,
           playerName: p.name,
           rawCharacteristics: p.player_characteristics,
@@ -202,7 +204,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       if (roomError) {
         // Check if room was deleted (PGRST116 error code)
         if (roomError.code === "PGRST116" || roomError.message?.includes("0 rows") || roomError.message?.includes("Cannot coerce")) {
-          console.log("[GameState] Room not found (likely deleted):", roomCode)
+          logger.log("[GameState] Room not found (likely deleted):", roomCode)
           setError("ROOM_DELETED") // Special error code for room deletion
           setLoading(false)
           setIsRefreshing(false)
@@ -219,7 +221,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         throw roomError
       }
       if (!room) {
-        console.log("[GameState] Room not found:", roomCode)
+        logger.log("[GameState] Room not found:", roomCode)
         setError("ROOM_DELETED") // Special error code for room deletion
         setLoading(false)
         setIsRefreshing(false)
@@ -230,7 +232,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
       // Log room data structure for debugging (only in development and less verbose)
       if (process.env.NODE_ENV === "development") {
-        console.debug("[GameState] Room loaded:", {
+        logger.debug("[GameState] Room loaded:", {
           roomId: room.id,
           roomCode: room.room_code,
           playersCount: room.game_players?.length || 0,
@@ -250,7 +252,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       const shouldAutoJoin = !isPlayer && room.phase === "waiting" && !(isHost && hostRole === "host_only")
       
       if (process.env.NODE_ENV === "development") {
-        console.debug("[GameState] Auto-join check:", {
+        logger.debug("[GameState] Auto-join check:", {
           isPlayer,
           isHost,
           hostRole,
@@ -266,13 +268,13 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       // If user is already a player, they should be able to rejoin regardless of phase
       // This handles page refreshes during active games
       if (isPlayer) {
-        console.log("[GameState] User is already a player, restoring game state (page refresh recovery)")
+        logger.log("[GameState] User is already a player, restoring game state (page refresh recovery)")
         // Player ID will be set in transformRoomToGameState below
         // No need to call join API - just continue with room data
         // Skip auto-join logic and proceed directly to transformRoomToGameState
       } else if (isSpectator) {
         // User is already a spectator - restore spectator state
-        console.log("[GameState] User is already a spectator, restoring game state")
+        logger.log("[GameState] User is already a spectator, restoring game state")
         setCurrentPlayerId(null) // No player ID for spectators
         // Continue with room data - no need to call join API
       } else if (room.phase !== "waiting") {
@@ -282,12 +284,12 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         const spectatorsEnabled = roomSettings.spectators !== false // Default to true if not set
         
         if (!spectatorsEnabled) {
-          console.log("[GameState] Spectators are disabled for this room")
+          logger.log("[GameState] Spectators are disabled for this room")
           setError("Зрители отключены для этой комнаты")
           return
         }
         
-        console.log("[GameState] Game already started, attempting to join as spectator")
+        logger.log("[GameState] Game already started, attempting to join as spectator")
         try {
           const joinResponse = await fetch("/api/game/join", {
             method: "POST",
@@ -306,7 +308,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           }
           
           if (joinResponse.ok && (responseData.isSpectator || !responseData.error)) {
-            console.log("[GameState] Successfully joined as spectator:", responseData.spectatorId)
+            logger.log("[GameState] Successfully joined as spectator:", responseData.spectatorId)
             setCurrentPlayerId(null)
             if (responseData.spectatorId) setCurrentSpectatorId(responseData.spectatorId)
             // Reload room to get updated state with spectator
@@ -335,12 +337,12 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             }
           } else if (joinResponse.status === 403 && (responseData?.requiresPassword || responseData?.error?.includes("паролем"))) {
             // Room requires password - don't try to join automatically
-            console.log("[GameState] Room requires password, cannot auto-join as spectator")
+            logger.log("[GameState] Room requires password, cannot auto-join as spectator")
             setError("Эта комната защищена паролем. Пожалуйста, введите пароль на странице присоединения.")
           } else {
             console.error("[GameState] Failed to join as spectator:", responseData)
             // Don't throw error - allow user to view anyway
-            console.log("[GameState] Continuing despite spectator join failure")
+            logger.log("[GameState] Continuing despite spectator join failure")
           }
         } catch (spectatorError) {
           console.error("[GameState] Error joining as spectator:", spectatorError)
@@ -350,7 +352,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         // Auto-join if user is not yet a player and room is in waiting phase
         // This is especially important for the room creator who should automatically join
         // But skip if host chose "host_only" mode
-        console.log("[GameState] Attempting auto-join for room:", roomCode)
+        logger.log("[GameState] Attempting auto-join for room:", roomCode)
         try {
           await retry(
             async () => {
@@ -362,7 +364,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 }).catch((fetchError) => {
                   // Handle fetch errors (network, abort, etc.)
                   if (fetchError instanceof Error && fetchError.name === "AbortError") {
-                    console.log("[GameState] Fetch request was aborted - this may be expected")
+                    logger.log("[GameState] Fetch request was aborted - this may be expected")
                     throw new Error("Request was cancelled")
                   }
                   console.error("[GameState] Fetch error:", {
@@ -390,8 +392,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 throw new Error(`Invalid JSON response from server: ${joinResponse.status} ${joinResponse.statusText}`)
               }
 
-              console.log("[GameState] Join response status:", joinResponse.status, joinResponse.statusText)
-              console.log("[GameState] Join response data:", responseData)
+              logger.log("[GameState] Join response status:", joinResponse.status, joinResponse.statusText)
+              logger.log("[GameState] Join response data:", responseData)
               
               if (!joinResponse.ok) {
                 const errorMessage = responseData?.error || responseData?.message || "Failed to join room"
@@ -413,14 +415,14 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 
                 // Check if room requires password - don't throw, just set error message
                 if (joinResponse.status === 403 && (responseData?.requiresPassword || errorMessage.includes("паролем") || errorMessage.includes("password"))) {
-                  console.log("[GameState] Room requires password, skipping auto-join")
+                  logger.log("[GameState] Room requires password, skipping auto-join")
                   setError("Эта комната защищена паролем. Пожалуйста, введите пароль на странице присоединения.")
                   throw new Error("Room requires password")
                 }
                 
                 // Check if error is because user is already in room - this is OK, just continue
                 if (errorMessage.includes("already") || errorMessage.includes("уже") || joinResponse.status === 409) {
-                  console.log("[GameState] User already in room (expected), continuing...")
+                  logger.log("[GameState] User already in room (expected), continuing...")
                   // Don't throw error - just continue with room reload
                 } else {
                   console.error("[GameState] Join failed:", {
@@ -437,12 +439,12 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
               // Handle host-only mode FIRST (successful response but no player)
               if (responseData.hostOnly) {
-                console.log("[GameState] Host is in host-only mode, skipping player creation")
+                logger.log("[GameState] Host is in host-only mode, skipping player creation")
                 setCurrentPlayerId(null)
                 // Continue with room reload below
               } else if (responseData.isSpectator) {
                 // User joined as spectator - this is OK, continue with room reload
-                console.log("[GameState] User joined as spectator:", responseData.spectatorId)
+                logger.log("[GameState] User joined as spectator:", responseData.spectatorId)
                 setCurrentPlayerId(null) // No player ID for spectators
                 if (responseData.spectatorId) setCurrentSpectatorId(responseData.spectatorId)
                 // Continue with room reload below
@@ -451,13 +453,13 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 const updatedPlayerId = responseData.player?.id
                 if (updatedPlayerId) {
                   setCurrentPlayerId(updatedPlayerId)
-                  console.log("[GameState] Auto-joined successfully:", { 
+                  logger.log("[GameState] Auto-joined successfully:", { 
                     playerId: updatedPlayerId,
                     isExisting: responseData.isExisting,
                     characteristicsCount: responseData.characteristicsCount
                   })
                 } else if (responseData.isExisting) {
-                  console.log("[GameState] User already in room (expected during auto-join)")
+                  logger.log("[GameState] User already in room (expected during auto-join)")
                   // Player ID will be set after room reload
                 }
                 
@@ -492,12 +494,12 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                     const foundPlayer = updatedRoom.game_players?.find((p: any) => p.user_id === user.id)
                     if (foundPlayer?.id) {
                       setCurrentPlayerId(foundPlayer.id)
-                      console.log("[GameState] Found player ID after reload:", foundPlayer.id)
+                      logger.log("[GameState] Found player ID after reload:", foundPlayer.id)
                     }
                   }
                   
                   const currentPlayerData = updatedRoom.game_players?.find((p: any) => p.user_id === user.id)
-                  console.log("[GameState] Room reloaded after join:", {
+                  logger.log("[GameState] Room reloaded after join:", {
                     playerCount: updatedRoom.game_players?.length || 0,
                     currentPlayerInList: currentPlayerData?.id,
                     currentPlayerName: currentPlayerData?.name,
@@ -513,7 +515,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                   
                   // If characteristics are missing, try to fetch them directly
                   if (currentPlayerData && (!currentPlayerData.player_characteristics || currentPlayerData.player_characteristics.length === 0)) {
-                    console.warn("[GameState] No characteristics found in nested query, fetching directly...")
+                    logger.warn("[GameState] No characteristics found in nested query, fetching directly...")
                     const { data: directChars, error: charsError } = await supabase
                       .from("player_characteristics")
                       .select("*")
@@ -523,7 +525,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                     if (charsError) {
                       console.error("[GameState] Error fetching characteristics directly:", charsError)
                     } else {
-                      console.log("[GameState] Direct characteristics fetch result:", {
+                      logger.log("[GameState] Direct characteristics fetch result:", {
                         count: directChars?.length || 0,
                         characteristics: directChars?.map((c: any) => ({
                           id: c.id,
@@ -539,7 +541,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                         if (playerIndex !== undefined && playerIndex >= 0 && updatedRoom.game_players) {
                           updatedRoom.game_players[playerIndex].player_characteristics = directChars
                           room = updatedRoom
-                          console.log("[GameState] Added characteristics to room data directly")
+                          logger.log("[GameState] Added characteristics to room data directly")
                         }
                       }
                     }
@@ -547,16 +549,16 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 }
               } else if (!responseData.error) {
                 // No player in response and not host-only mode and no error - this might be unexpected
-                console.warn("[GameState] Join succeeded but no player returned and not host-only mode:", responseData)
+                logger.warn("[GameState] Join succeeded but no player returned and not host-only mode:", responseData)
               }
               
               // Force reload of game state to ensure characteristics are loaded
-              console.log("[GameState] Triggering full state reload after join")
+              logger.log("[GameState] Triggering full state reload after join")
               // We'll reload at the end of the function
               } catch (innerError) {
                 // Handle errors within the retry function
                 if (innerError instanceof Error && innerError.name === "AbortError") {
-                  console.log("[GameState] Request aborted during join - may be expected")
+                  logger.log("[GameState] Request aborted during join - may be expected")
                   throw new Error("Request was cancelled")
                 }
                 console.error("[GameState] Error during join attempt:", {
@@ -572,7 +574,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
               delay: 1000,
               shouldRetry: isRetryableError,
               onRetry: (attempt) => {
-                console.log(`[GameState] Retrying auto-join, attempt ${attempt}`)
+                logger.log(`[GameState] Retrying auto-join, attempt ${attempt}`)
               },
             }
           )
@@ -591,9 +593,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           // Check if error is because user is already in room - this is OK, not an error
           const errorMessage = joinError instanceof Error ? joinError.message.toLowerCase() : String(joinError).toLowerCase()
           if (errorMessage.includes("already") || errorMessage.includes("уже") || errorMessage.includes("existing") || errorMessage.includes("request was cancelled")) {
-            console.log("[GameState] User already in room or request cancelled (expected), continuing...", errorInfo)
+            logger.log("[GameState] User already in room or request cancelled (expected), continuing...", errorInfo)
           } else if (errorInfo.isAbortError) {
-            console.log("[GameState] Join request was aborted - this may be expected during navigation or retries")
+            logger.log("[GameState] Join request was aborted - this may be expected during navigation or retries")
             // Don't treat abort as critical error
           } else {
             console.error("[GameState] Error auto-joining room after retries:", errorInfo)
@@ -603,7 +605,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         }
         
         // After auto-join attempt (successful or not), reload room data to get fresh state with characteristics
-        console.log("[GameState] Reloading room data after auto-join attempt")
+        logger.log("[GameState] Reloading room data after auto-join attempt")
         const { data: reloadedRoom, error: reloadError } = await supabase
           .from("game_rooms")
           .select(
@@ -628,7 +630,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           // Check if characteristics are missing for current player
           const currentPlayerInReloaded = reloadedRoom.game_players?.find((p: any) => p.user_id === user.id)
           if (currentPlayerInReloaded && (!currentPlayerInReloaded.player_characteristics || currentPlayerInReloaded.player_characteristics.length === 0)) {
-            console.warn("[GameState] No characteristics found after reload, fetching directly...")
+            logger.warn("[GameState] No characteristics found after reload, fetching directly...")
             const { data: directChars, error: charsError } = await supabase
               .from("player_characteristics")
               .select("*")
@@ -636,22 +638,22 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
               .order("sort_order", { ascending: true })
             
             if (!charsError && directChars && directChars.length > 0) {
-              console.log("[GameState] Found characteristics via direct query:", directChars.length)
+              logger.log("[GameState] Found characteristics via direct query:", directChars.length)
               const playerIndex = reloadedRoom.game_players?.findIndex((p: any) => p.user_id === user.id)
               if (playerIndex !== undefined && playerIndex >= 0 && reloadedRoom.game_players) {
                 reloadedRoom.game_players[playerIndex].player_characteristics = directChars
-                console.log("[GameState] Added characteristics to room data after reload")
+                logger.log("[GameState] Added characteristics to room data after reload")
               }
             } else if (charsError) {
               console.error("[GameState] Error fetching characteristics directly after reload:", charsError)
             } else {
-              console.warn("[GameState] No characteristics found in database for player:", currentPlayerInReloaded.id)
+              logger.warn("[GameState] No characteristics found in database for player:", currentPlayerInReloaded.id)
             }
           }
           
           room = reloadedRoom
           const currentPlayerInReload = reloadedRoom.game_players?.find((p: any) => p.user_id === user.id)
-          console.log("[GameState] Room reloaded after auto-join:", {
+          logger.log("[GameState] Room reloaded after auto-join:", {
             playerCount: reloadedRoom.game_players?.length || 0,
             currentPlayerFound: !!currentPlayerInReload,
             currentPlayerId: currentPlayerInReload?.id,
@@ -677,7 +679,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       
       // Log characteristics for current player for debugging (only in development)
       if (process.env.NODE_ENV === "development") {
-        console.debug("[GameState] Transformed state:", {
+        logger.debug("[GameState] Transformed state:", {
           currentPlayerId: foundPlayerId,
           currentPlayerName: currentPlayer?.name,
           playersCount: state.players.length,
@@ -694,25 +696,25 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           // This can happen if host is in "host_only" mode and was filtered out
           const isHostOnly = (room.settings as any)?.hostRole === "host_only" && room.host_id === user.id
           if (isHostOnly) {
-            console.log("[GameState] Host is in host_only mode, not setting player ID")
+            logger.log("[GameState] Host is in host_only mode, not setting player ID")
             setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
             setCurrentPlayerId("") // Empty for host_only mode
           } else {
             // Player should be in state but isn't - use their ID anyway
-            console.log("[GameState] Player found in room but not in transformed state, using room player ID:", playerByUserId.id)
+            logger.log("[GameState] Player found in room but not in transformed state, using room player ID:", playerByUserId.id)
             setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
             setCurrentPlayerId(playerByUserId.id)
           }
         } else {
           // Player truly not in room - this is OK if they're trying to join
-          console.log("[GameState] Player not found in room - may need to join")
+          logger.log("[GameState] Player not found in room - may need to join")
           setGameState((prev) => ({ ...state, chatMessages: prev?.chatMessages ?? [] }))
           setCurrentPlayerId(foundPlayerId || "")
         }
       } else {
         // Player found normally
         if (!currentPlayer.characteristics || currentPlayer.characteristics.length === 0) {
-          console.warn("[GameState] WARNING: Current player has no characteristics!", {
+          logger.warn("[GameState] WARNING: Current player has no characteristics!", {
             currentPlayerId: foundPlayerId,
             currentPlayer: currentPlayer,
             allPlayers: state.players.map(p => ({ id: p.id, name: p.name, characteristicsCount: p.characteristics?.length || 0 }))
@@ -761,7 +763,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       // Handle AbortError separately (request was cancelled - e.g. Strict Mode, navigation)
       if (isAbortError) {
         if (process.env.NODE_ENV === "development") {
-          console.debug("[GameState] Request aborted (navigation or retry) - ignoring")
+          logger.debug("[GameState] Request aborted (navigation or retry) - ignoring")
         }
         isInitialLoadRef.current = false
         setLoading(false)
@@ -794,6 +796,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     }
   }, [])
 
+  // Debounced load for postgres_changes (300ms) — батчит несколько событий подряд в один запрос
+  const loadGameStateDebounced = useDebouncedCallback(loadGameState, 300)
+
   // Initial load
   useEffect(() => {
     loadGameState()
@@ -808,22 +813,22 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         setGameState((prev) => (prev ? { ...prev, ...updates } : null))
         // Reload full state if major changes
         if (updates.phase || updates.currentRound) {
-          loadGameState()
+          loadGameStateDebounced()
         }
       },
-      [loadGameState],
+      [loadGameStateDebounced],
     ),
     onPlayerJoin: useCallback(() => {
-      loadGameState()
-    }, [loadGameState]),
+      loadGameStateDebounced()
+    }, [loadGameStateDebounced]),
     onPlayerLeave: useCallback(() => {
-      loadGameState()
-    }, [loadGameState]),
+      loadGameStateDebounced()
+    }, [loadGameStateDebounced]),
     onChatMessage: useCallback(
       (message: ChatMessage) => {
         // Messages are now handled via postgres_changes subscription
         // This callback is kept for compatibility but shouldn't be used
-        console.log("[Realtime] Chat message via broadcast (legacy):", message)
+        logger.log("[Realtime] Chat message via broadcast (legacy):", message)
         // Don't add message here to avoid duplicates
       },
       [],
@@ -832,8 +837,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       // Votes are handled separately
     }, []),
     onCharacteristicReveal: useCallback(() => {
-      loadGameState()
-    }, [loadGameState]),
+      loadGameStateDebounced()
+    }, [loadGameStateDebounced]),
   })
 
   // Subscribe to game_rooms table changes for phase updates
@@ -851,16 +856,16 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `id=eq.${gameState.id}`,
         },
         (payload) => {
-          console.log("[Realtime] Game room updated:", payload)
+          logger.log("[Realtime] Game room updated:", payload)
           // Reload game state when phase or other important fields change
           if (payload.new?.phase !== payload.old?.phase) {
-            console.log("[Realtime] Phase changed:", payload.old?.phase, "->", payload.new?.phase)
+            logger.log("[Realtime] Phase changed:", payload.old?.phase, "->", payload.new?.phase)
           }
           // Also reload when roundStartedAt changes (catastrophe intro skip)
           if (payload.new?.round_started_at !== payload.old?.round_started_at) {
-            console.log("[Realtime] Round started at changed:", payload.old?.round_started_at, "->", payload.new?.round_started_at)
+            logger.log("[Realtime] Round started at changed:", payload.old?.round_started_at, "->", payload.new?.round_started_at)
           }
-          loadGameState()
+          loadGameStateDebounced()
         },
       )
       .subscribe()
@@ -868,7 +873,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [gameState?.id, supabase, loadGameState])
+  }, [gameState?.id, supabase, loadGameStateDebounced])
 
   // Subscribe to game_players table changes for ready status updates and new players
   useEffect(() => {
@@ -885,9 +890,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `room_id=eq.${gameState.id}`,
         },
         (payload) => {
-          console.log("[Realtime] Player updated:", payload)
+          logger.log("[Realtime] Player updated:", payload)
           // Reload game state when player ready status changes
-          loadGameState()
+          loadGameStateDebounced()
         },
       )
       .on(
@@ -899,9 +904,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `room_id=eq.${gameState.id}`,
         },
         (payload) => {
-          console.log("[Realtime] New player joined:", payload)
+          logger.log("[Realtime] New player joined:", payload)
           // Reload game state when new player joins
-          loadGameState()
+          loadGameStateDebounced()
         },
       )
       .on(
@@ -913,9 +918,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `room_id=eq.${gameState.id}`,
         },
         (payload) => {
-          console.log("[Realtime] Player left:", payload)
+          logger.log("[Realtime] Player left:", payload)
           // Reload game state when player leaves
-          loadGameState()
+          loadGameStateDebounced()
         },
       )
       .subscribe()
@@ -923,7 +928,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [gameState?.id, supabase, loadGameState])
+  }, [gameState?.id, supabase, loadGameStateDebounced])
 
   // Subscribe to player_characteristics table changes for reveal updates
   useEffect(() => {
@@ -943,9 +948,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `player_id=in.(${playerIds.join(',')})`,
         },
         (payload) => {
-          console.log("[Realtime] Characteristic updated:", payload)
+          logger.log("[Realtime] Characteristic updated:", payload)
           // Reload game state when characteristics are revealed
-          loadGameState()
+          loadGameStateDebounced()
         },
       )
       .subscribe()
@@ -953,7 +958,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [gameState?.id, gameState?.players, supabase, loadGameState])
+  }, [gameState?.id, gameState?.players, supabase, loadGameStateDebounced])
 
   // Subscribe to chat_messages table changes for realtime chat
   useEffect(() => {
@@ -970,7 +975,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           filter: `room_id=eq.${gameState.id}`,
         },
         async (payload) => {
-          console.log("[Realtime] New chat message:", payload)
+          logger.log("[Realtime] New chat message:", payload)
           
           // Fetch the new message with player name
           const { data: messageData, error } = await supabase
@@ -996,10 +1001,10 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
               if (!prev) return null
               // Check for duplicates before adding
               if (prev.chatMessages.find(m => m.id === chatMessage.id)) {
-                console.log("[Realtime] Message already exists, skipping:", chatMessage.id)
+                logger.log("[Realtime] Message already exists, skipping:", chatMessage.id)
                 return prev
               }
-              console.log("[Realtime] Adding new chat message:", chatMessage.id)
+              logger.log("[Realtime] Adding new chat message:", chatMessage.id)
               return {
                 ...prev,
                 chatMessages: [...prev.chatMessages, chatMessage],
@@ -1037,7 +1042,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           if (data.expired && data.phaseChanged) {
             // Only refresh once when phase changes
             if (!phaseChangedRef.current) {
-              console.log("[Timer] Phase auto-changed:", data.newPhase)
+              logger.log("[Timer] Phase auto-changed:", data.newPhase)
               phaseChangedRef.current = true
               // Reload game state to get updated phase
               loadGameState()
@@ -1050,15 +1055,15 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       } catch (error) {
         console.error("[Timer] Error checking timer:", error)
       }
-    }, 5000) // Check every 5 seconds
+    }, 8000) // Check every 8 seconds (reduced CPU/network load)
 
     return () => clearInterval(interval)
   }, [gameState?.id, gameState?.phase, loadGameState])
 
   // Start game
   const startGame = useCallback(async () => {
-    console.log("[GameState] 🎮 startGame() called")
-    console.log("[GameState] Current game state:", {
+    logger.log("[GameState] 🎮 startGame() called")
+    logger.log("[GameState] Current game state:", {
       roomId: gameState?.id,
       phase: gameState?.phase,
       currentRound: gameState?.currentRound,
@@ -1067,7 +1072,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     
     // Check if game is already started before making API call
     if (gameState.phase !== "waiting") {
-      console.log("[GameState] ⚠️ Game already started, skipping start request. Current phase:", gameState.phase)
+      logger.log("[GameState] ⚠️ Game already started, skipping start request. Current phase:", gameState.phase)
       // Just refresh the state to ensure we're in sync
       await loadGameState()
       return
@@ -1078,7 +1083,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     }
 
     try {
-      console.log(`[GameState] 🚀 Sending start game request for room ${gameState.id}`)
+      logger.log(`[GameState] 🚀 Sending start game request for room ${gameState.id}`)
       
       await retry(
         async () => {
@@ -1088,7 +1093,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             body: JSON.stringify({ roomId: gameState.id }),
           })
 
-          console.log(`[GameState] 📥 Start game response: ${response.status} ${response.statusText}`)
+          logger.log(`[GameState] 📥 Start game response: ${response.status} ${response.statusText}`)
 
           if (!response.ok) {
             const data = await response.json()
@@ -1103,16 +1108,16 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             
             // If game is already started, just refresh state instead of throwing error
             if (errorMessage.includes("already started") || errorMessage.includes("уже запущена") || response.status === 400) {
-              console.log("[GameState] ℹ️ Game already started, refreshing state instead of throwing error")
+              logger.log("[GameState] ℹ️ Game already started, refreshing state instead of throwing error")
               await loadGameState()
               return
             }
             
             throw new Error(errorMessage)
           } else {
-            console.log("[GameState] ✅ Game started successfully, refreshing state...")
+            logger.log("[GameState] ✅ Game started successfully, refreshing state...")
             const responseData = await response.json().catch(() => ({}))
-            console.log("[GameState] Start game response data:", responseData)
+            logger.log("[GameState] Start game response data:", responseData)
           }
         },
         {
@@ -1122,9 +1127,9 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         }
       )
 
-      console.log("[GameState] 🔄 Refreshing game state after start...")
+      logger.log("[GameState] 🔄 Refreshing game state after start...")
       await loadGameState()
-      console.log("[GameState] ✅ Game state refreshed after start")
+      logger.log("[GameState] ✅ Game state refreshed after start")
     } catch (err) {
       console.error("[GameState] ❌ Error starting game:", {
         error: err,
@@ -1194,7 +1199,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
     // Check if game is already in voting phase before making API call
     if (gameState.phase === "voting") {
-      console.log("[GameState] Game already in voting phase, skipping start voting request")
+      logger.log("[GameState] Game already in voting phase, skipping start voting request")
       // Just refresh the state to ensure we're in sync
       await loadGameState()
       return
@@ -1202,7 +1207,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
     // Check if game is not in playing phase
     if (gameState.phase !== "playing") {
-      console.log("[GameState] Game is not in playing phase, cannot start voting. Current phase:", gameState.phase)
+      logger.log("[GameState] Game is not in playing phase, cannot start voting. Current phase:", gameState.phase)
       // Refresh state to get current phase
       await loadGameState()
       return
@@ -1221,7 +1226,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         
         // If game is already in voting phase (race condition), just refresh state
         if (errorMessage.includes("must be in playing phase") || errorMessage.includes("Game must be in playing")) {
-          console.log("[GameState] Game already transitioned to voting phase (race condition), refreshing state")
+          logger.log("[GameState] Game already transitioned to voting phase (race condition), refreshing state")
           await loadGameState()
           return
         }
@@ -1261,7 +1266,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         // Если ошибка связана с неправильной фазой, это может быть проблема синхронизации состояния
         // В этом случае просто обновим состояние игры, чтобы получить актуальную фазу
         if (errorMessage.includes("Must be in") && errorMessage.includes("phase")) {
-          console.warn("[GameState] Cannot advance round - wrong phase, refreshing state:", errorMessage)
+          logger.warn("[GameState] Cannot advance round - wrong phase, refreshing state:", errorMessage)
           loadGameState() // Обновить состояние, чтобы получить актуальную фазу
           return
         }
@@ -1340,11 +1345,11 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     const channel = supabase.channel(`connection_monitor:${gameState.id}`)
     
     channel.on("system", {}, (payload) => {
-      console.log("[Connection] System event:", payload)
+      logger.log("[Connection] System event:", payload)
     })
 
     channel.subscribe((status) => {
-      console.log("[Connection] Channel status:", status)
+      logger.log("[Connection] Channel status:", status)
       if (status === "SUBSCRIBED") {
         setConnectionState("connected")
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
@@ -1526,7 +1531,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         }
 
         // Vote cast successfully
-        console.log("[Vote] Vote cast successfully:", responseData)
+        logger.log("[Vote] Vote cast successfully:", responseData)
         
         // Don't reload full state, just update votes locally
         // Votes will be synced via realtime

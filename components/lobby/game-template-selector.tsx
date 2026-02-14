@@ -78,12 +78,9 @@ export function GameTemplateSelector({
     setLoading(true)
     setError(null)
     try {
-      const response = await fetch("/api/game-templates")
-      if (!response.ok) {
-        throw new Error("Failed to load templates")
-      }
-      const data = await response.json()
-      setTemplates(data.templates || [])
+      const { cachedFetch } = await import("@/lib/cache/fetch-cache")
+      const data = await cachedFetch<{ templates?: unknown[] }>("/api/game-templates", undefined, 60_000)
+      setTemplates(data?.templates ?? [])
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load templates")
     } finally {
@@ -114,6 +111,8 @@ export function GameTemplateSelector({
       setSaveDialogOpen(false)
       setTemplateName("")
       setTemplateDescription("")
+      const { invalidateCache } = await import("@/lib/cache/fetch-cache")
+      invalidateCache("/api/game-templates")
       await loadTemplates()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save template")
@@ -136,6 +135,8 @@ export function GameTemplateSelector({
         throw new Error("Failed to delete template")
       }
 
+      const { invalidateCache } = await import("@/lib/cache/fetch-cache")
+      invalidateCache("/api/game-templates")
       await loadTemplates()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete template")

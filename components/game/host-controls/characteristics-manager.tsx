@@ -199,8 +199,8 @@ export function CharacteristicsManager({
       }
 
       fetchVoteCounts()
-      // Auto-refresh every 2 seconds as fallback
-      const interval = setInterval(fetchVoteCounts, 2000)
+      // Auto-refresh every 5 seconds (realtime handles live updates)
+      const interval = setInterval(fetchVoteCounts, 5000)
       
       // Subscribe to realtime updates for votes
       const supabase = createClient()

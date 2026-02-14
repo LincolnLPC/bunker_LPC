@@ -13,6 +13,11 @@ import {
   SAMPLE_TRAITS,
 } from "@/types/game"
 import { getSpecialOptionsForGender } from "@/lib/game/characteristics"
+import {
+  secureRandomItem,
+  secureRandomInt,
+  pickPreferringUnused,
+} from "@/lib/game/random"
 import { validateRoomCode } from "@/lib/security/validation"
 import {
   checkRateLimit,
@@ -21,22 +26,18 @@ import {
   createRateLimitHeaders,
 } from "@/lib/security/rate-limit"
 
-function getRandomItem<T>(arr: T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]
-}
-
 function getRandomAge(): number {
-  return Math.floor(Math.random() * 60) + 18
+  return secureRandomInt(60) + 18
 }
 
 function getRandomGender(): "М" | "Ж" | "А" {
   const genders: ("М" | "Ж" | "А")[] = ["М", "Ж", "А"]
-  return getRandomItem(genders)
+  return secureRandomItem(genders)
 }
 
 function getRandomGenderModifier(): "" | "(с)" | "(а)" {
   const modifiers: ("" | "(с)" | "(а)")[] = ["", "(с)", "(а)"]
-  return getRandomItem(modifiers)
+  return secureRandomItem(modifiers)
 }
 
 const RUSSIAN_NAMES = [
@@ -426,6 +427,29 @@ export async function POST(request: Request) {
       "additional",
     ]
 
+    // История характеристик игрока из прошлых игр — чтобы снизить повторы в новых играх
+    const historyCategories = [...categoriesForUniqueness, "gender", "age"]
+    const userRecentlyUsed: Record<string, Set<string>> = {}
+    historyCategories.forEach((cat) => {
+      userRecentlyUsed[cat] = new Set()
+    })
+    const { data: pastPlayers } = await supabase
+      .from("game_players")
+      .select("id")
+      .eq("user_id", user.id)
+      .neq("room_id", room.id)
+    const pastPlayerIds = pastPlayers?.map((p: { id: string }) => p.id) || []
+    if (pastPlayerIds.length > 0) {
+      const { data: pastChars } = await supabase
+        .from("player_characteristics")
+        .select("value, category")
+        .in("player_id", pastPlayerIds)
+        .in("category", historyCategories)
+      pastChars?.forEach((char: { value: string; category: string }) => {
+        if (userRecentlyUsed[char.category]) userRecentlyUsed[char.category].add(char.value)
+      })
+    }
+
     // Fetch used characteristics from existing players (for profession - needed before player create)
     const { data: initialPlayers } = await supabase
       .from("game_players")
@@ -446,28 +470,19 @@ export async function POST(request: Request) {
       if (usedValues[char.category]) usedValues[char.category].add(char.value)
     })
 
-    // Helper function to get unique value from list (excluding used values)
-    // For profession: assign by slot order (sequential)
-    // For others: assign randomly but uniquely
-    const getUniqueValue = (usedValues: Record<string, Set<string>>, category: string, options: string[], slot: number): string => {
+    // Выбор уникального значения: исключаем занятые в комнате, предпочитаем недавно неиспользованные игроком
+    const getUniqueValue = (usedValues: Record<string, Set<string>>, category: string, options: string[]): string => {
       const used = usedValues[category]
-      if (!used) return getRandomItem(options)
+      if (!used) return pickPreferringUnused(options, userRecentlyUsed[category] || new Set())
 
       const available = options.filter((opt) => !used.has(opt))
 
       if (available.length === 0) {
         console.warn(`[Join] All ${category} values are used, falling back to any value`)
-        return getRandomItem(options)
+        return secureRandomItem(options)
       }
 
-      let selected: string
-      if (category === "profession") {
-        const index = (slot - 1) % available.length
-        selected = available[index]
-      } else {
-        selected = getRandomItem(available)
-      }
-
+      const selected = pickPreferringUnused(available, userRecentlyUsed[category] || new Set())
       used.add(selected)
       return selected
     }
@@ -492,21 +507,23 @@ export async function POST(request: Request) {
       : genderOptions
     
     const gender = characteristicsSettings["gender"]?.enabled !== false
-      ? getRandomItem(filteredGenderOptions)
+      ? pickPreferringUnused([...filteredGenderOptions], userRecentlyUsed["gender"] || new Set())
       : getRandomGender()
     
     // Не применять модификатор, если пол "А"
     const genderModifier = (gender === "А" || gender === "а" || gender === "A" || gender === "a") ? "" : getRandomGenderModifier()
-    const age = getRandomAge()
+    // Возраст с учётом истории — предпочитаем значения, которые игрок давно не получал
+    const ageOptions = Array.from({ length: 61 }, (_, i) => `${i + 18} лет`)
+    const ageNum = pickPreferringUnused(ageOptions, userRecentlyUsed["age"] || new Set())
+    const age = parseInt(ageNum, 10) || getRandomAge()
     
     // Use custom settings for profession if available, and ensure uniqueness
-    // Assign professions sequentially by slot number
     const professionOptions = characteristicsSettings["profession"]?.customList && characteristicsSettings["profession"]?.customList.length > 0
       ? characteristicsSettings["profession"].customList
       : SAMPLE_PROFESSIONS
     const profession = characteristicsSettings["profession"]?.enabled !== false
-      ? getUniqueValue(usedValues, "profession", professionOptions, nextSlot)
-      : getRandomItem(SAMPLE_PROFESSIONS)
+      ? getUniqueValue(usedValues, "profession", professionOptions)
+      : pickPreferringUnused([...SAMPLE_PROFESSIONS], userRecentlyUsed["profession"] || new Set())
 
     console.log("[Join] Generated random attributes:", { gender, genderModifier, age, profession })
 
@@ -587,10 +604,10 @@ export async function POST(request: Request) {
       const optionsArr = options as string[]
 
       if (categoriesForUniqueness.includes(category)) {
-        return getUniqueValue(usedValues, category, optionsArr, nextSlot)
+        return getUniqueValue(usedValues, category, optionsArr)
       }
 
-      return getRandomItem(optionsArr)
+      return pickPreferringUnused(optionsArr, userRecentlyUsed[category] || new Set())
     }
 
     // Generate characteristics - all initially hidden including gender, age, profession

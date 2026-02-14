@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { User, RefreshCw, Check } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
+import { logger } from "@/lib/logger"
 import type { Player } from "@/types/game"
 
 interface VoteCountsModalProps {
@@ -44,7 +45,7 @@ export function VoteCountsModal({
     setLoading(true)
     try {
       const supabase = createClient()
-      console.log("[VoteCountsModal] Fetching votes for:", { roomId, currentRound, isSpectator })
+      logger.debug("[VoteCountsModal] Fetching votes for:", { roomId, currentRound })
       const { data: votes, error } = await supabase
         .from("votes")
         .select("target_id, vote_weight")
@@ -57,7 +58,7 @@ export function VoteCountsModal({
         return
       }
       
-      console.log("[VoteCountsModal] Raw votes data:", votes)
+      logger.debug("[VoteCountsModal] Raw votes data:", votes)
       
       if (votes && votes.length > 0) {
         const counts: Record<string, number> = {}
@@ -66,9 +67,9 @@ export function VoteCountsModal({
           counts[vote.target_id] = (counts[vote.target_id] || 0) + weight
         }
         setVoteCounts(counts)
-        console.log("[VoteCountsModal] Fetched vote counts:", counts)
+        logger.debug("[VoteCountsModal] Fetched vote counts:", counts)
       } else {
-        console.log("[VoteCountsModal] No votes found for room:", roomId, "round:", currentRound)
+        logger.debug("[VoteCountsModal] No votes found")
         setVoteCounts({})
       }
     } catch (err) {
@@ -83,8 +84,8 @@ export function VoteCountsModal({
     if (isOpen && roomId && currentRound !== undefined) {
       // Fetch immediately when modal opens
       fetchVoteCounts()
-      // Auto-refresh every 2 seconds as fallback
-      const interval = setInterval(fetchVoteCounts, 2000)
+      // Auto-refresh every 5 seconds (realtime handles live updates)
+      const interval = setInterval(fetchVoteCounts, 5000)
       
       // Subscribe to realtime updates for votes
       const supabase = createClient()

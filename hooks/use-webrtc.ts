@@ -1595,7 +1595,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
   // Периодическое восстановление потока из getReceivers() для connected пиров без stream
   useEffect(() => {
-    const RECOVERY_INTERVAL_MS = 4000
+    const RECOVERY_INTERVAL_MS = 6000 // Увеличено с 4 до 6 с для снижения нагрузки
     const id = setInterval(() => {
       for (const [playerId, peerManager] of peerConnectionsRef.current.entries()) {
         if (peerManager.getConnectionState() !== "connected") continue
@@ -1624,7 +1624,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   // Периодическая проверка: переподключение при failed/closed, зависании в ожидании answer или отсутствии потока
   useEffect(() => {
     const currentPlayerIds = new Set(otherPlayers.map((p) => p.playerId || p.id).filter(Boolean))
-    const RECONNECT_CHECK_MS = 6000
+    const RECONNECT_CHECK_MS = 10000 // Увеличено с 6 до 10 с для снижения нагрузки
     const id = setInterval(() => {
       if (!currentPlayerId || !signalingConnected) return
       let didRemove = false
