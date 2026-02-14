@@ -234,6 +234,18 @@ export async function POST(request: Request) {
 
     console.log("[Join] Room found:", { roomId: room.id, phase: room.phase, currentPlayers: room.game_players?.length || 0 })
 
+    // Check if user is banned in this room (host can always join)
+    if (!isHost) {
+      const settings = (room.settings as Record<string, unknown>) || {}
+      const bannedUserIds: string[] = Array.isArray(settings.banned_user_ids) ? settings.banned_user_ids : []
+      if (bannedUserIds.includes(user.id)) {
+        return NextResponse.json(
+          { error: "Вы заблокированы в этой комнате и не можете подключиться", isBanned: true },
+          { status: 403 }
+        )
+      }
+    }
+
     // Check if user already in room FIRST - allow rejoin regardless of phase
     const existingPlayer = room.game_players.find((p: { user_id: string }) => p.user_id === user.id)
     if (existingPlayer) {

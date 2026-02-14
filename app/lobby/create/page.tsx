@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { ArrowLeft, Flame, Loader2, Crown, Users, AlertTriangle, Home, Copy, Check, ChevronDown, ChevronUp, Settings2, Eye, EyeOff } from "lucide-react"
 import { SAMPLE_CATASTROPHES, SAMPLE_BUNKERS } from "@/types/game"
 import { CHARACTERISTICS_BY_CATEGORY, PROFESSIONS, HEALTH_CONDITIONS, HOBBIES, PHOBIAS, BAGGAGE, FACTS, SPECIAL, BIO, SKILLS, TRAITS } from "@/lib/game/characteristics"
+import { SPECIAL_CARD_TYPES_COUNT } from "@/lib/game/special-cards-types"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { GameTemplateSelector } from "@/components/lobby/game-template-selector"
@@ -40,6 +41,8 @@ export default function CreateGamePage() {
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null)
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false)
   const [excludeNonBinaryGender, setExcludeNonBinaryGender] = useState(false)
+  const [eliminatedCanVote, setEliminatedCanVote] = useState(false)
+  const [specialCardsPerPlayer, setSpecialCardsPerPlayer] = useState(1)
   const [roomPassword, setRoomPassword] = useState("")
   const [isRoomHidden, setIsRoomHidden] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -60,7 +63,7 @@ export default function CreateGamePage() {
     bio: true,
     skill: true,
     trait: true,
-    additional: true,
+    additional: false,
   })
   const [customCharacteristics, setCustomCharacteristics] = useState<Record<string, string>>({
     gender: "",
@@ -141,6 +144,8 @@ export default function CreateGamePage() {
     setSpectators(template.spectators)
     setHostRole(template.host_role)
     setExcludeNonBinaryGender(template.exclude_non_binary_gender)
+    if (template.eliminated_can_vote !== undefined) setEliminatedCanVote(template.eliminated_can_vote)
+    if (typeof template.special_cards_per_player === "number") setSpecialCardsPerPlayer(Math.min(SPECIAL_CARD_TYPES_COUNT, Math.max(1, template.special_cards_per_player)))
     
     if (template.catastrophe) {
       setCustomCatastrophe(template.catastrophe)
@@ -226,6 +231,8 @@ export default function CreateGamePage() {
         catastrophe,
         bunkerDescription,
         excludeNonBinaryGender,
+        eliminatedCanVote,
+        specialCardsPerPlayer,
         characteristicsSettings,
         customCharacteristics,
       }),
@@ -247,6 +254,8 @@ export default function CreateGamePage() {
       autoReveal,
       spectators,
       hostRole,
+      eliminatedCanVote,
+      specialCardsPerPlayer,
       catastrophe: customCatastrophe.trim() || selectedCatastrophe,
       bunkerDescription: customBunker.trim() || selectedBunker,
       excludeNonBinaryGender,
@@ -325,11 +334,13 @@ export default function CreateGamePage() {
             autoReveal,
             spectators,
             hostRole, // "host_and_player" or "host_only"
-            excludeNonBinaryGender, // Исключить пол "А" из опций
+            excludeNonBinaryGender,
+            eliminatedCanVote, // Изгнанные могут голосовать
+            specialCardsPerPlayer, // Спецкарт на игрока (1..SPECIAL_CARD_TYPES_COUNT)
             characteristics: characteristicsSettings,
-            roundMode, // "manual" or "automatic"
-            discussionTime, // Время на обсуждение (только для автоматического режима)
-            votingTime, // Время на голосование (только для автоматического режима)
+            roundMode,
+            discussionTime,
+            votingTime,
           },
         }),
       })
@@ -621,6 +632,38 @@ export default function CreateGamePage() {
                 <p className="text-sm text-muted-foreground">Не использовать небинарный пол при генерации игроков</p>
               </div>
               <Switch checked={excludeNonBinaryGender} onCheckedChange={setExcludeNonBinaryGender} />
+            </div>
+
+            {/* Eliminated can vote */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label>Изгнанные могут голосовать</Label>
+                <p className="text-sm text-muted-foreground">Разрешить исключённым игрокам участвовать в голосовании</p>
+              </div>
+              <Switch checked={eliminatedCanVote} onCheckedChange={setEliminatedCanVote} />
+            </div>
+
+            {/* Special cards per player */}
+            <div className="space-y-3">
+              <Label>Спецкарт на игрока</Label>
+              <Select
+                value={specialCardsPerPlayer.toString()}
+                onValueChange={(v) => setSpecialCardsPerPlayer(Number.parseInt(v, 10))}
+              >
+                <SelectTrigger className="bg-background/50">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: SPECIAL_CARD_TYPES_COUNT }, (_, i) => i + 1).map((n) => (
+                    <SelectItem key={n} value={n.toString()}>
+                      {n} {n === 1 ? "карта" : n < 5 ? "карты" : "карт"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                Сколько спецкарт выдаётся каждому игроку в начале игры (всего типов карт: {SPECIAL_CARD_TYPES_COUNT})
+              </p>
             </div>
 
             {/* Room Password */}

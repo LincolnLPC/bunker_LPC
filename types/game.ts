@@ -39,6 +39,8 @@ export interface Player {
   videoEnabled: boolean
   audioEnabled: boolean
   stream?: MediaStream
+  /** Метаданные для эффектов спецкарт (cannotVoteAgainst и др.) */
+  metadata?: { cannotVoteAgainst?: { playerId: string }[] }
 }
 
 export interface Vote {
@@ -142,7 +144,7 @@ export const SAMPLE_HEALTH_CONDITIONS = [
   "Тремор рук",
   "Не обследовался",
   "ВИЧ",
-  "Грибы и гомеопатия",
+  "Заражен не известным вирусом",
   "Диабет",
   "Астма",
   "Близорукость",
@@ -155,7 +157,7 @@ export const SAMPLE_HOBBIES = [
   "Современное искусство",
   "Пиротехника",
   "Паралимпийские игры",
-  "Котята",
+  "Блог",
   "Йога",
   "Шахматы",
   "Охота",
@@ -219,9 +221,9 @@ export const SAMPLE_BIO = [
 export const SAMPLE_SKILLS = [
   "Владение оружием",
   "Первая помощь",
-  "Электрик",
-  "Механик",
-  "Строитель",
+  "Электрика",
+  "Механика",
+  "Стройка",
   "Выживание в дикой природе",
 ]
 

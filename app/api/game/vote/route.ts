@@ -101,7 +101,9 @@ export async function POST(request: Request) {
       }, { status: 403 })
     }
 
-    if (voter.is_eliminated) {
+    const settings = (room.settings as Record<string, unknown>) || {}
+    const eliminatedCanVote = settings.eliminatedCanVote === true
+    if (voter.is_eliminated && !eliminatedCanVote) {
       return NextResponse.json({ 
         error: "Eliminated players cannot vote",
         details: "You have been eliminated from this game"
@@ -142,36 +144,13 @@ export async function POST(request: Request) {
     // If "no-vote-against" card was used, the restriction is stored in voter's metadata
     // The restriction means: voter (who has the restriction) cannot vote against the playerId in the restriction
     if (voterMetadata && voterMetadata.cannotVoteAgainst && Array.isArray(voterMetadata.cannotVoteAgainst)) {
-      const cannotVote = voterMetadata.cannotVoteAgainst.some(
-        (restriction: any) => restriction.playerId === targetPlayerId
-      )
+      const cannotVote = voterMetadata.cannotVoteAgainst.some((restriction: any) => {
+        const restrictedId = restriction.playerId ?? restriction.player_id
+        return restrictedId === targetPlayerId
+      })
       if (cannotVote) {
         return NextResponse.json(
-          { error: "You cannot vote against this player (special card effect)" },
-          { status: 403 }
-        )
-      }
-    }
-    
-    // Also check target's metadata - if target used "no-vote-against" against the voter
-    let targetMetadata: any = {}
-    try {
-      targetMetadata = target.metadata || {}
-      if (typeof targetMetadata === 'string') {
-        targetMetadata = JSON.parse(targetMetadata)
-      }
-    } catch (e) {
-      console.warn("[Vote] Error parsing target metadata:", e)
-      targetMetadata = {}
-    }
-    
-    if (targetMetadata && targetMetadata.cannotVoteAgainst && Array.isArray(targetMetadata.cannotVoteAgainst)) {
-      const cannotBeVoted = targetMetadata.cannotVoteAgainst.some(
-        (restriction: any) => restriction.playerId === voter.id
-      )
-      if (cannotBeVoted) {
-        return NextResponse.json(
-          { error: "This player cannot be voted against (special card effect)" },
+          { error: "Вы не можете голосовать против этого игрока (эффект спецкарты)" },
           { status: 403 }
         )
       }

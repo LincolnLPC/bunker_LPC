@@ -4,7 +4,7 @@ import { useState, useEffect } from "react"
 import type { Player } from "@/types/game"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { Check, User, X } from "lucide-react"
+import { Check, User, X, Sparkles } from "lucide-react"
 
 interface VotingPanelProps {
   players: Player[]
@@ -16,6 +16,10 @@ interface VotingPanelProps {
   onClose?: () => void
   isHost?: boolean
   onTimerEnd?: () => void
+  /** Идентификаторы игроков, против которых нельзя голосовать (эффект спецкарт «Будь другом» или «План Б») */
+  cannotVoteAgainstPlayerIds?: string[]
+  /** Открыть панель спецкарт (для использования во время голосования) */
+  onOpenSpecialCards?: () => void
 }
 
 export function VotingPanel({
@@ -28,6 +32,8 @@ export function VotingPanel({
   onClose,
   isHost = false,
   onTimerEnd,
+  cannotVoteAgainstPlayerIds = [],
+  onOpenSpecialCards,
 }: VotingPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(votedPlayerId || null)
   const [currentTimeRemaining, setCurrentTimeRemaining] = useState(timeRemaining)
@@ -72,10 +78,17 @@ export function VotingPanel({
     }
   }, [timeRemaining, onTimerEnd])
 
+  // Сбросить выбор, если выбран заблокированный игрок (эффект спецкарты)
+  useEffect(() => {
+    if (selectedId && cannotVoteAgainstPlayerIds.includes(selectedId)) {
+      setSelectedId(null)
+    }
+  }, [selectedId, cannotVoteAgainstPlayerIds])
 
   const eligiblePlayers = players.filter((p) => !p.isEliminated)
 
   const handleSelect = (playerId: string) => {
+    if (cannotVoteAgainstPlayerIds.includes(playerId)) return
     setSelectedId(playerId)
   }
 
@@ -96,11 +109,23 @@ export function VotingPanel({
             <p className="text-muted-foreground mb-4">
               Нет других игроков для голосования. Ведущий может завершить голосование.
             </p>
-            {isHost && onClose && (
-              <Button onClick={onClose} variant="default" size="lg">
-                Завершить голосование
-              </Button>
-            )}
+            <div className="flex gap-3 justify-center flex-wrap">
+              {onOpenSpecialCards && (
+                <Button
+                  variant="outline"
+                  className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                  onClick={onOpenSpecialCards}
+                >
+                  <Sparkles className="w-4 h-4 mr-2" />
+                  Спец. карты
+                </Button>
+              )}
+              {isHost && onClose && (
+                <Button onClick={onClose} variant="default" size="lg">
+                  Завершить голосование
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -110,18 +135,31 @@ export function VotingPanel({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-[oklch(0.05_0.01_60/0.9)] backdrop-blur-sm">
       <div className="w-full max-w-2xl mx-4 p-6 rounded-lg bg-card border-2 border-primary relative">
-        {/* Close button for host */}
-        {isHost && onClose && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute top-4 right-4"
-            onClick={onClose}
-            title="Завершить голосование (только для ведущего)"
-          >
-            <X className="h-5 w-5" />
-          </Button>
-        )}
+        {/* Header actions */}
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          {onOpenSpecialCards && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+              onClick={onOpenSpecialCards}
+              title="Спец. карты"
+            >
+              <Sparkles className="h-4 w-4 mr-1" />
+              Спец. карты
+            </Button>
+          )}
+          {isHost && onClose && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={onClose}
+              title="Завершить голосование (только для ведущего)"
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          )}
+        </div>
         
         {/* Header */}
         <div className="text-center mb-6">
@@ -136,38 +174,51 @@ export function VotingPanel({
 
         {/* Player selection grid */}
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-          {eligiblePlayers.map((player) => (
-            <button
-              key={player.id}
-              onClick={() => handleSelect(player.id)}
-              className={cn(
-                "p-3 rounded-lg border-2 transition-all text-left",
-                "hover:border-primary hover:bg-primary/10",
-                selectedId === player.id
-                  ? "border-primary bg-primary/20 card-glow-orange"
-                  : "border-border bg-secondary/50",
-              )}
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                  <User className="w-4 h-4 text-muted-foreground" />
+          {eligiblePlayers.map((player) => {
+            const isBlocked = cannotVoteAgainstPlayerIds.includes(player.id)
+            return (
+              <button
+                key={player.id}
+                onClick={() => handleSelect(player.id)}
+                disabled={isBlocked}
+                className={cn(
+                  "p-3 rounded-lg border-2 transition-all text-left",
+                  isBlocked
+                    ? "border-muted bg-muted/30 cursor-not-allowed opacity-75"
+                    : "hover:border-primary hover:bg-primary/10",
+                  !isBlocked && selectedId === player.id
+                    ? "border-primary bg-primary/20 card-glow-orange"
+                    : !isBlocked && "border-border bg-secondary/50",
+                )}
+              >
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                      <User className="w-4 h-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-foreground truncate">{player.name}</div>
+                      {/* Show profession only if revealed */}
+                      {(() => {
+                        const professionChar = player.characteristics?.find(c => c.category === 'profession' && c.isRevealed)
+                        return professionChar ? (
+                          <div className="text-xs text-muted-foreground truncate">{professionChar.value}</div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground truncate italic">Характеристики скрыты</div>
+                        )
+                      })()}
+                    </div>
+                    {selectedId === player.id && <Check className="w-5 h-5 text-primary flex-shrink-0" />}
+                  </div>
+                  {isBlocked && (
+                    <div className="text-xs text-amber-500/90 font-medium mt-1">
+                      Вы не можете голосовать против этого игрока (эффект спецкарты)
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="font-semibold text-foreground truncate">{player.name}</div>
-                  {/* Show profession only if revealed */}
-                  {(() => {
-                    const professionChar = player.characteristics?.find(c => c.category === 'profession' && c.isRevealed)
-                    return professionChar ? (
-                      <div className="text-xs text-muted-foreground truncate">{professionChar.value}</div>
-                    ) : (
-                      <div className="text-xs text-muted-foreground truncate italic">Характеристики скрыты</div>
-                    )
-                  })()}
-                </div>
-                {selectedId === player.id && <Check className="w-5 h-5 text-primary flex-shrink-0" />}
-              </div>
-            </button>
-          ))}
+              </button>
+            )
+          })}
         </div>
 
         {/* Action buttons */}

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
+import { getAllowedSpecialCardTypes } from "@/lib/game/special-cards-types"
 
 // POST - Start game
 export async function POST(request: Request) {
@@ -97,9 +98,16 @@ export async function POST(request: Request) {
     if (updateError) throw updateError
 
     // Grant special cards to all players
+    const settings = (room.settings as Record<string, unknown>) || {}
+    const characteristicsSettings = (settings.characteristics as Record<string, { enabled?: boolean }>) || {}
+    const allowedCardTypes = getAllowedSpecialCardTypes(characteristicsSettings)
+    const cardTypes = [...allowedCardTypes]
+    const cardsPerPlayer = Math.max(1, Number(settings.specialCardsPerPlayer) || 1)
     console.log("[GameStart] === Starting card granting process ===")
     console.log("[GameStart] Room ID:", roomId)
     console.log("[GameStart] Players in room:", room.game_players?.length || 0)
+    console.log("[GameStart] Cards per player:", cardsPerPlayer)
+    console.log("[GameStart] Allowed card types (filtered by enabled characteristics):", cardTypes.length)
     
     try {
       // Check if players are loaded
@@ -111,102 +119,38 @@ export async function POST(request: Request) {
         console.log(`[GameStart] ✅ Found ${room.game_players.length} players to grant cards to`)
         console.log("[GameStart] Player IDs:", room.game_players.map((p: any) => ({ id: p.id, name: p.name, userId: p.user_id })))
       }
-      
-      // All available card types
-      // Excluding: "exchange-skill" (Обмен навык) and all "reshuffle-*" cards (Давайте на чистоту)
-      const allCardTypes: Array<
-        | "exchange"
-        | "exchange-gender"
-        | "exchange-age"
-        | "exchange-profession"
-        | "exchange-bio"
-        | "exchange-health"
-        | "exchange-hobby"
-        | "exchange-phobia"
-        | "exchange-baggage"
-        | "exchange-fact"
-        | "exchange-special"
-        | "exchange-skill"
-        | "exchange-trait"
-        | "exchange-additional"
-        | "peek"
-        | "immunity"
-        | "reroll"
-        | "reveal"
-        | "steal"
-        | "double-vote"
-        | "no-vote-against"
-        | "reshuffle"
-        | "reshuffle-health"
-        | "reshuffle-bio"
-        | "reshuffle-fact"
-        | "reshuffle-baggage"
-        | "reshuffle-hobby"
-        | "revote"
-        | "replace-profession"
-        | "replace-health"
-      > = [
-        // Category-specific exchange cards
-        "exchange-gender",
-        "exchange-age",
-        "exchange-profession",
-        "exchange-bio",
-        "exchange-health",
-        "exchange-hobby",
-        "exchange-phobia",
-        "exchange-baggage",
-        "exchange-fact",
-        "exchange-special",
-        "exchange-skill", // Исключаем эту карту
-        "exchange-trait",
-        "exchange-additional",
-        // Other cards
-        "exchange",
-        "peek",
-        "immunity",
-        "reroll",
-        "reveal",
-        "steal",
-        "double-vote",
-        "no-vote-against",
-        "reshuffle",
-        // Category-specific reshuffle cards (Давайте на чистоту) - все исключаем
-        "reshuffle-health",
-        "reshuffle-bio",
-        "reshuffle-fact",
-        "reshuffle-baggage",
-        "reshuffle-hobby",
-        "revote",
-        "replace-profession",
-        "replace-health",
-      ]
+      console.log(`[GameStart] Available card types: ${cardTypes.length} types`)
 
-      // Исключаем карты:
-      // - exchange-skill (Обмен навык)
-      // - reshuffle (общая карта "Давайте на чистоту")
-      // НЕ исключаем категориальные reshuffle-* карты (Давайте на чистоту: Здоровья, Биологии и т.д.)
-      const cardTypes = allCardTypes.filter(
-        (cardType) => cardType !== "exchange-skill" && cardType !== "reshuffle"
-      )
+      if (cardTypes.length === 0) {
+        console.warn("[GameStart] ⚠️ No allowed card types after filtering - cannot grant cards")
+      }
 
-      console.log(`[GameStart] Available card types (after filtering): ${cardTypes.length} types`)
-      console.log("[GameStart] Card types list:", cardTypes)
-      console.log("[GameStart] Excluded cards: exchange-skill, reshuffle (general reshuffle card)")
-      console.log("[GameStart] Included category reshuffle cards: reshuffle-health, reshuffle-bio, reshuffle-fact, reshuffle-baggage, reshuffle-hobby")
-
-      // Выдаем одну случайную карту каждому игроку
-      const cardsToInsert = room.game_players.map((player: any) => {
-        // Выбираем случайную карту из доступных
-        const randomCardType = cardTypes[Math.floor(Math.random() * cardTypes.length)]
-        return {
-          player_id: player.id,
-          room_id: roomId,
-          card_type: randomCardType,
-          is_used: false,
+      // Каждому игроку выдаём до cardsPerPlayer карт. Уникальный индекс (player_id, card_type) допускает
+      // только одну карту каждого типа на игрока, поэтому выбираем без повторений.
+      const cardsPerPlayerActual = cardTypes.length === 0 ? 0 : Math.min(cardsPerPlayer, cardTypes.length)
+      const shuffle = <T>(arr: T[]): T[] => {
+        const a = [...arr]
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          ;[a[i], a[j]] = [a[j], a[i]]
         }
-      })
+        return a
+      }
+      const cardsToInsert: { player_id: string; room_id: string; card_type: string; is_used: boolean }[] = []
+      for (const player of room.game_players) {
+        const shuffled = shuffle(cardTypes)
+        const typesForPlayer = shuffled.slice(0, cardsPerPlayerActual)
+        for (const cardType of typesForPlayer) {
+          cardsToInsert.push({
+            player_id: player.id,
+            room_id: roomId,
+            card_type: cardType,
+            is_used: false,
+          })
+        }
+      }
 
-      console.log(`[GameStart] Prepared ${cardsToInsert.length} cards to insert (${room.game_players.length} players × 1 random card each)`)
+      console.log(`[GameStart] Prepared ${cardsToInsert.length} cards to insert (${room.game_players.length} players × ${cardsPerPlayer} cards each)`)
       console.log("[GameStart] Cards to grant:", cardsToInsert.map((c: any) => ({ playerId: c.player_id.substring(0, 8) + "...", cardType: c.card_type })))
       
       if (cardsToInsert.length > 0) {

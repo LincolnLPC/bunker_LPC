@@ -220,19 +220,16 @@ export default function GamePage() {
   const [showCharacteristicsManager, setShowCharacteristicsManager] = useState(false)
   const [showVoteCountsModal, setShowVoteCountsModal] = useState(false)
   const [specialCards, setSpecialCards] = useState<any[]>([])
-  // State for used card modal
-  const [usedCardData, setUsedCardData] = useState<{
-    playerName: string
-    cardName: string
-    cardDescription: string
-    cardType: string
-  } | null>(null)
-  
-  // State for bunker characteristic revealed modal
-  const [bunkerCharacteristicData, setBunkerCharacteristicData] = useState<{
-    characteristicName: string
-    characteristicType: "equipment" | "supply"
-  } | null>(null)
+  // Очередь модальных окон — показываются по одному, чтобы не перекрывать друг друга
+  type QueuedModal =
+    | { type: "special-card"; data: { playerName: string; cardName: string; cardDescription: string; cardType: string } }
+    | { type: "bunker-char"; data: { characteristicName: string; characteristicType: "equipment" | "supply" } }
+  const [modalQueue, setModalQueue] = useState<QueuedModal[]>([])
+  const currentModal = modalQueue[0] ?? null
+
+  const dismissCurrentModal = useCallback(() => {
+    setModalQueue((prev) => prev.slice(1))
+  }, [])
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
 
   // Debug: Log when selectedPlayer changes
@@ -1012,6 +1009,72 @@ export default function GamePage() {
     }
   }, [gameState.id, gameState.settings?.roundMode, refresh])
 
+  const handleKickPlayer = useCallback(
+    async (playerId: string) => {
+      if (!gameState.id) return
+      try {
+        const res = await fetch("/api/game/kick", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId: gameState.id, playerId }),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || "Не удалось исключить игрока")
+        }
+        refresh()
+      } catch (err) {
+        console.error("Kick error:", err)
+        throw err
+      }
+    },
+    [gameState.id, refresh]
+  )
+
+  const handleBanPlayer = useCallback(
+    async (userId: string) => {
+      if (!gameState.id) return
+      try {
+        const res = await fetch("/api/game/room/ban", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId: gameState.id, userId }),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || "Не удалось забанить игрока")
+        }
+        refresh()
+      } catch (err) {
+        console.error("Ban error:", err)
+        throw err
+      }
+    },
+    [gameState.id, refresh]
+  )
+
+  const handleUnbanPlayer = useCallback(
+    async (userId: string) => {
+      if (!gameState.id) return
+      try {
+        const res = await fetch("/api/game/room/unban", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId: gameState.id, userId }),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          throw new Error(data.error || "Не удалось разбанить игрока")
+        }
+        refresh()
+      } catch (err) {
+        console.error("Unban error:", err)
+        throw err
+      }
+    },
+    [gameState.id, refresh]
+  )
+
   // Handle next round - in manual mode, this also ends voting and shows results
   const handleNextRound = useCallback(async () => {
     if (!gameState.id) return
@@ -1346,19 +1409,31 @@ export default function GamePage() {
     })
 
     channel.on("broadcast", { event: "special_card_used" }, ({ payload }) => {
-      setUsedCardData({
-        playerName: payload.playerName,
-        cardName: payload.cardName,
-        cardDescription: payload.cardDescription,
-        cardType: payload.cardType,
-      })
+      setModalQueue((prev) => [
+        ...prev,
+        {
+          type: "special-card",
+          data: {
+            playerName: payload.playerName,
+            cardName: payload.cardName,
+            cardDescription: payload.cardDescription,
+            cardType: payload.cardType,
+          },
+        },
+      ])
     })
 
     channel.on("broadcast", { event: "bunker_characteristic_revealed" }, ({ payload }) => {
-      setBunkerCharacteristicData({
-        characteristicName: payload.characteristicName,
-        characteristicType: payload.characteristicType,
-      })
+      setModalQueue((prev) => [
+        ...prev,
+        {
+          type: "bunker-char",
+          data: {
+            characteristicName: payload.characteristicName,
+            characteristicType: payload.characteristicType,
+          },
+        },
+      ])
     })
 
     channel.subscribe()
@@ -1390,10 +1465,16 @@ export default function GamePage() {
       const lastRevealed = currentRevealed[currentRevealed.length - 1]
       
       if (lastRevealed && lastRevealed.name && lastRevealed.type) {
-        setBunkerCharacteristicData({
-          characteristicName: lastRevealed.name,
-          characteristicType: lastRevealed.type,
-        })
+        setModalQueue((prev) => [
+          ...prev,
+          {
+            type: "bunker-char",
+            data: {
+              characteristicName: lastRevealed.name,
+              characteristicType: lastRevealed.type,
+            },
+          },
+        ])
       }
     }
     
@@ -1444,9 +1525,16 @@ export default function GamePage() {
         return
       }
 
-      // Modal overlays: only one can be open. Open only when none are open; always allow toggle-close.
+      // Модальные окна — только одно активно. Не открывать новые, пока открыто голосование, результаты или очередь.
       const isModalOpen =
-        showChat || showSpecialCards || showBunkerInfo || showCharacteristicsManager || selectedPlayer !== null
+        showChat ||
+        showSpecialCards ||
+        showBunkerInfo ||
+        showCharacteristicsManager ||
+        selectedPlayer !== null ||
+        modalQueue.length > 0 ||
+        (gameState.phase === "voting" && showVotingPanel) ||
+        (gameState.phase === "results" && voteResults.length > 0)
 
       // е or t - toggle chat (KeyT = physical key for "е" in Russian layout)
       if (!event.shiftKey && (event.key === "t" || event.key === "T" || event.key === "е" || event.key === "Е" || event.code === "KeyT")) {
@@ -1467,6 +1555,18 @@ export default function GamePage() {
         return
       }
 
+      // ц or w - toggle Спец. карты (работает во время игры и голосования)
+      const specialCardsKeys = ["w", "W", "ц", "Ц"]
+      if ((gameState.phase === "playing" || gameState.phase === "voting") && !event.shiftKey && specialCardsKeys.includes(event.key) && !isSpectator) {
+        event.preventDefault()
+        if (showSpecialCards) {
+          setShowSpecialCards(false)
+        } else if (!isModalOpen) {
+          setShowSpecialCards(true)
+        }
+        return
+      }
+
       // Shortcuts only in playing phase
       if (gameState.phase !== "playing") return
 
@@ -1482,18 +1582,6 @@ export default function GamePage() {
           } else if (!isModalOpen) {
             setSelectedPlayer(cp)
           }
-        }
-        return
-      }
-
-      // ц or w - toggle Спец. карты
-      const specialCardsKeys = ["w", "W", "ц", "Ц"]
-      if (!event.shiftKey && specialCardsKeys.includes(event.key) && !isSpectator) {
-        event.preventDefault()
-        if (showSpecialCards) {
-          setShowSpecialCards(false)
-        } else if (!isModalOpen) {
-          setShowSpecialCards(true)
         }
         return
       }
@@ -1537,6 +1625,9 @@ export default function GamePage() {
     showBunkerInfo,
     showCharacteristicsManager,
     selectedPlayer,
+    modalQueue.length,
+    showVotingPanel,
+    voteResults.length,
   ])
 
   const getCardDescription = (type: string | null | undefined) => {
@@ -1601,7 +1692,7 @@ export default function GamePage() {
       "double-vote": "Ваш голос считается за два в этом голосовании",
       "no-vote-against": "Выбранный игрок до конца игры не голосует против вас",
       reshuffle: "Соберите все открытые карты определенной категории, перемешайте и перераздайте",
-      revote: "Все должны переголосовать заново, выбирая другого кандидата",
+      revote: "Сбросить все голоса; никто не может голосовать против вас до конца игры",
       "replace-profession": "Замените открытую карту профессии любого игрока на случайную из колоды",
       "replace-health": "Замените открытую карту здоровья любого игрока на случайную из колоды",
     }
@@ -1704,6 +1795,21 @@ export default function GamePage() {
             },
           })
         }
+        // Текущий игрок не получает свой broadcast (self: false), добавляем в очередь вручную
+        if (currentPlayer) {
+          setModalQueue((prev) => [
+            ...prev,
+            {
+              type: "special-card",
+              data: {
+                playerName: currentPlayer.name,
+                cardName: card.name,
+                cardDescription: card.description,
+                cardType: card.type,
+              },
+            },
+          ])
+        }
 
         // System message will be added by API via realtime subscription
         // No need to manually add it here - it will appear in gameState.chatMessages
@@ -1784,12 +1890,17 @@ export default function GamePage() {
   if (error && !loading && !isRefreshing) {
     // Only show error if it's not "Not authenticated" (which might be temporary during refresh)
     if (error === "Not authenticated") {
-      // Wait a bit for auth to restore, then show error
+      const loginUrl = `/auth/login?redirect=${encodeURIComponent(`/game/${roomCode}`)}`
       return (
         <div className="min-h-screen bg-background flex items-center justify-center">
-          <div className="text-center max-w-md">
-            <Loader2 className="h-12 w-12 text-primary animate-spin mx-auto mb-4" />
-            <p className="text-muted-foreground">Проверка авторизации...</p>
+          <div className="text-center max-w-md space-y-4">
+            <p className="text-muted-foreground">Чтобы зайти в комнату, войдите в аккаунт.</p>
+            <a
+              href={loginUrl}
+              className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-primary-foreground hover:bg-primary/90"
+            >
+              Войти
+            </a>
           </div>
         </div>
       )
@@ -2117,14 +2228,25 @@ export default function GamePage() {
         </>
       )}
 
-      {/* Voting Panel - Only show for players, not spectators */}
-      {gameState.phase === "voting" && voteResults.length === 0 && showVotingPanel && !isSpectator && (
+      {/* Voting Panel — только когда очередь модалок пуста */}
+      {gameState.phase === "voting" && voteResults.length === 0 && showVotingPanel && !isSpectator && modalQueue.length === 0 && (
         <VotingPanel
           players={playersWithStream}
           currentPlayerId={currentPlayerId}
           onVote={handleVote}
           onConfirm={handleConfirmVote}
           votedPlayerId={votedPlayerId}
+          cannotVoteAgainstPlayerIds={
+            (currentPlayer?.metadata?.cannotVoteAgainst ?? [])
+              .filter((r: { playerId?: string; player_id?: string; cardType?: string }) => {
+                const cardType = (r as any).cardType
+                if (cardType === "revote") return gameState.phase === "voting"
+                return true
+              })
+              .map((r: { playerId?: string; player_id?: string }) => (r as any).playerId ?? (r as any).player_id)
+              .filter((id): id is string => !!id)
+          }
+          onOpenSpecialCards={() => setShowSpecialCards(true)}
           timeRemaining={(() => {
             if (!gameState.roundStartedAt) return gameState.roundTimerSeconds
             const startedAt = new Date(gameState.roundStartedAt).getTime()
@@ -2138,8 +2260,8 @@ export default function GamePage() {
         />
       )}
 
-      {/* Vote Results */}
-      {gameState.phase === "results" && voteResults.length > 0 && (
+      {/* Vote Results — только когда очередь модалок пуста */}
+      {gameState.phase === "results" && voteResults.length > 0 && modalQueue.length === 0 && (
         <VoteResults
           players={playersWithStream}
           results={voteResults}
@@ -2189,6 +2311,7 @@ export default function GamePage() {
           cards={specialCards}
           players={playersWithStream}
           currentPlayerId={currentPlayerId}
+          currentPhase={gameState.phase}
           onUseCard={handleUseSpecialCard}
         />
       )}
@@ -2210,35 +2333,23 @@ export default function GamePage() {
         />
       )}
 
-      {/* Special Card Used Modal */}
-      {usedCardData && (
+      {/* Очередь модалок — спецкарта и раскрытие бункера по одному */}
+      {currentModal?.type === "special-card" && (
         <SpecialCardUsedModal
           isOpen={true}
-          playerName={usedCardData.playerName}
-          cardName={usedCardData.cardName}
-          cardDescription={usedCardData.cardDescription}
-          cardType={usedCardData.cardType}
-          onClose={() => setUsedCardData(null)}
+          playerName={currentModal.data.playerName}
+          cardName={currentModal.data.cardName}
+          cardDescription={currentModal.data.cardDescription}
+          cardType={currentModal.data.cardType}
+          onClose={dismissCurrentModal}
         />
       )}
-
-      {/* Bunker Characteristic Revealed Modal */}
-      {bunkerCharacteristicData && (
+      {currentModal?.type === "bunker-char" && (
         <BunkerCharacteristicRevealedModal
           isOpen={true}
-          characteristicName={bunkerCharacteristicData.characteristicName}
-          characteristicType={bunkerCharacteristicData.characteristicType}
-          onClose={() => setBunkerCharacteristicData(null)}
-        />
-      )}
-
-      {/* Bunker Characteristic Revealed Modal */}
-      {bunkerCharacteristicData && (
-        <BunkerCharacteristicRevealedModal
-          isOpen={true}
-          characteristicName={bunkerCharacteristicData.characteristicName}
-          characteristicType={bunkerCharacteristicData.characteristicType}
-          onClose={() => setBunkerCharacteristicData(null)}
+          characteristicName={currentModal.data.characteristicName}
+          characteristicType={currentModal.data.characteristicType}
+          onClose={dismissCurrentModal}
         />
       )}
       
@@ -2311,6 +2422,9 @@ export default function GamePage() {
           currentPhase={gameState.phase}
           roundMode={gameState.settings?.roundMode || "automatic"}
           onEliminatePlayer={(playerId) => handleEndVoting(playerId)}
+          onKickPlayer={handleKickPlayer}
+          onBanPlayer={handleBanPlayer}
+          onUnbanPlayer={handleUnbanPlayer}
         />
       )}
 
@@ -2332,6 +2446,16 @@ export default function GamePage() {
           }}
           votedPlayerId={votedPlayerId}
           isSpectator={isSpectator}
+          cannotVoteAgainstPlayerIds={
+            (currentPlayer?.metadata?.cannotVoteAgainst ?? [])
+              .filter((r: { playerId?: string; player_id?: string; cardType?: string }) => {
+                const cardType = (r as any).cardType
+                if (cardType === "revote") return gameState.phase === "voting"
+                return true
+              })
+              .map((r: { playerId?: string; player_id?: string }) => (r as any).playerId ?? (r as any).player_id)
+              .filter((id): id is string => !!id)
+          }
         />
       )}
     </div>

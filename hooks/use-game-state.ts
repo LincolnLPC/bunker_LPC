@@ -51,6 +51,18 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
         })
       }
       
+      let metadata: { cannotVoteAgainst?: Array<{ playerId?: string; player_id?: string; cardType?: string }> } | undefined
+      try {
+        const raw = p.metadata
+        if (raw != null && (typeof raw === "object" || typeof raw === "string")) {
+          const parsed = typeof raw === "string" ? JSON.parse(raw) : raw
+          if (parsed && Array.isArray(parsed.cannotVoteAgainst)) {
+            metadata = { cannotVoteAgainst: parsed.cannotVoteAgainst }
+          }
+        }
+      } catch {
+        // ignore parse errors
+      }
       return {
         id: p.id,
         userId: p.user_id, // Add user_id for reporting
@@ -66,6 +78,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
         isReady: p.is_ready ?? false,
         videoEnabled: p.video_enabled ?? true,
         audioEnabled: p.audio_enabled ?? true,
+        metadata,
       }
     })
     .sort((a, b) => a.slot - b.slot) // Фиксируем порядок игроков по slot
@@ -197,18 +210,12 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           isInitialLoadRef.current = false
           return
         }
-        // Enhanced error logging
-        console.error("[GameState] Error fetching room:", {
-          code: roomError.code,
-          message: roomError.message,
-          details: roomError.details,
-          hint: roomError.hint,
-          error: roomError,
-          roomCode,
-          errorString: String(roomError),
-          errorType: typeof roomError,
-          errorKeys: roomError ? Object.keys(roomError) : [],
-        })
+        // Enhanced error logging (PostgrestError may have non-enumerable props)
+        const code = (roomError as any)?.code
+        const message = (roomError as any)?.message
+        const details = (roomError as any)?.details
+        const hint = (roomError as any)?.hint
+        console.error("[GameState] Error fetching room:", message ?? code ?? String(roomError), { code, message, details, hint, roomCode })
         throw roomError
       }
       if (!room) {
@@ -749,36 +756,27 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       setIsRefreshing(false)
       loadingRef.current = false
     } catch (err) {
-      // Enhanced error logging with detailed information
-      const errorInfo = {
-        error: err,
-        errorType: typeof err,
-        errorName: err instanceof Error ? err.name : typeof err,
-        errorMessage: err instanceof Error ? err.message : String(err),
-        errorStack: err instanceof Error ? err.stack : undefined,
-        errorCode: (err as any)?.code,
-        errorDetails: (err as any)?.details,
-        errorHint: (err as any)?.hint,
-        isAbortError: err instanceof Error && err.name === "AbortError",
-        roomCode,
-        timestamp: new Date().toISOString(),
-      }
-      
-      console.error("Error loading game state:", errorInfo)
-      
-      // Handle AbortError separately (request was cancelled - usually not critical)
-      if (err instanceof Error && err.name === "AbortError") {
-        console.log("[GameState] Request was aborted (may be due to navigation or retry) - this is usually OK")
-        // Don't set error state for aborted requests - they're usually expected
+      const isAbortError = err instanceof Error && err.name === "AbortError"
+
+      // Handle AbortError separately (request was cancelled - e.g. Strict Mode, navigation)
+      if (isAbortError) {
+        if (process.env.NODE_ENV === "development") {
+          console.debug("[GameState] Request aborted (navigation or retry) - ignoring")
+        }
         isInitialLoadRef.current = false
         setLoading(false)
         setIsRefreshing(false)
         loadingRef.current = false
         return
       }
-      
+
+      // Log other errors with readable details (avoid empty {} in console)
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      const errorCode = (err as any)?.code
+      const errorDetails = (err as any)?.details
+      console.error("[GameState] Error loading game state:", errorMessage, { code: errorCode, details: errorDetails, roomCode })
+
       // For other errors, set error state
-      const errorMessage = err instanceof Error ? err.message : "Failed to load game state"
       setError(errorMessage)
       isInitialLoadRef.current = false
       setLoading(false)

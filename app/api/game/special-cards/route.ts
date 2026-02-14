@@ -347,6 +347,16 @@ export async function POST(request: Request) {
         actionResult = await handleStealCard(supabase, playerId, roomId, targetPlayerId, characteristicId)
         break
 
+      case "peek":
+        if (!targetPlayerId || !characteristicId) {
+          return NextResponse.json(
+            { error: "Target player and characteristic required for peek" },
+            { status: 400 }
+          )
+        }
+        actionResult = await handlePeekCard(supabase, playerId, roomId, targetPlayerId, characteristicId)
+        break
+
       case "immunity":
         actionResult = await handleImmunityCard(supabase, playerId, roomId)
         break
@@ -618,6 +628,57 @@ async function handleRevealCard(
   return { type: "reveal", characteristicId: characteristic.id, category, revealed: true }
 }
 
+async function handlePeekCard(
+  supabase: any,
+  playerId: string,
+  roomId: string,
+  targetPlayerId: string,
+  characteristicId: string,
+) {
+  // «Подглядывание»: вскрывает выбранную характеристику выбранного игрока (становится видна всем)
+  const { data: characteristic, error: charError } = await supabase
+    .from("player_characteristics")
+    .select("*")
+    .eq("player_id", targetPlayerId)
+    .eq("id", characteristicId)
+    .single()
+
+  if (charError || !characteristic) {
+    throw new Error("Characteristic not found")
+  }
+
+  if (characteristic.is_revealed) {
+    throw new Error("Characteristic is already revealed")
+  }
+
+  const { data: room, error: roomError } = await supabase
+    .from("game_rooms")
+    .select("current_round")
+    .eq("id", roomId)
+    .single()
+
+  if (roomError) throw roomError
+
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for peek")
+  }
+  const { error: updateError } = await updateClient
+    .from("player_characteristics")
+    .update({
+      is_revealed: true,
+      reveal_round: room.current_round || 0,
+    })
+    .eq("id", characteristicId)
+    .eq("player_id", targetPlayerId)
+
+  if (updateError) throw updateError
+
+  return { type: "peek", characteristicId, targetPlayerId, revealed: true }
+}
+
 async function handleRerollCard(supabase: any, playerId: string, roomId: string, characteristicId: string) {
   const { data: characteristic, error: charError } = await supabase
     .from("player_characteristics")
@@ -843,8 +904,8 @@ async function handleNoVoteAgainstCard(
   roomId: string,
   targetPlayerId: string,
 ) {
-  // Selected player cannot vote against you until end of game
-  // Store restriction in target player's metadata
+  // «Будь другом»: выбранный игрок (target) до конца игры не может голосовать против того, кто использовал карту (playerId)
+  // Ограничение сохраняем в metadata целевого игрока
   const { data: targetPlayer, error: targetPlayerError } = await supabase
     .from("game_players")
     .select("metadata")
@@ -872,16 +933,26 @@ async function handleNoVoteAgainstCard(
     metadata.cannotVoteAgainst = []
   }
   
-  // Check if restriction already exists
-  const exists = metadata.cannotVoteAgainst.some((r: any) => r.playerId === playerId)
-  if (!exists) {
+  // Check if no-vote-against restriction already exists (incl. legacy entries without cardType)
+  const hasNoVoteAgainst = metadata.cannotVoteAgainst.some(
+    (r: any) => r.playerId === playerId && (r.cardType === "no-vote-against" || !r.cardType)
+  )
+  if (!hasNoVoteAgainst) {
     metadata.cannotVoteAgainst.push({
       playerId,
       granted_at: new Date().toISOString(),
+      cardType: "no-vote-against",
     })
   }
 
-  const { error: updateError } = await supabase
+  // Обновляем metadata другого игрока — нужен service role (RLS разрешает только хост/собственную запись)
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for no-vote-against")
+  }
+  const { error: updateError } = await updateClient
     .from("game_players")
     .update({ metadata })
     .eq("id", targetPlayerId)
@@ -1247,7 +1318,7 @@ async function handleReshuffleCard(supabase: any, playerId: string, roomId: stri
 }
 
 async function handleRevoteCard(supabase: any, playerId: string, roomId: string) {
-  // Force all players to revote (clear all votes for current round)
+  // «План Б»: сбросить все голоса и запретить всем голосовать против того, кто использовал карту
   const { data: room, error: roomError } = await supabase
     .from("game_rooms")
     .select("current_round, phase")
@@ -1260,14 +1331,60 @@ async function handleRevoteCard(supabase: any, playerId: string, roomId: string)
     throw new Error("Can only use revote card during voting phase")
   }
 
-  // Delete all votes for current round
-  const { error: deleteError } = await supabase
+  // 1. Удалить все голоса за текущий раунд (service role — RLS не разрешает DELETE обычным пользователям)
+  let deleteClient: any = supabase
+  try {
+    deleteClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for revote delete")
+  }
+  const { error: deleteError } = await deleteClient
     .from("votes")
     .delete()
     .eq("room_id", roomId)
     .eq("round", room.current_round)
 
   if (deleteError) throw deleteError
+
+  // 2. Добавить всем остальным игрокам ограничение: не голосовать против playerId (использовавшего карту)
+  const { data: players, error: playersError } = await supabase
+    .from("game_players")
+    .select("id, metadata")
+    .eq("room_id", roomId)
+
+  if (playersError) throw playersError
+
+  let updateClient: any = supabase
+  try {
+    updateClient = createServiceRoleClient()
+  } catch {
+    console.warn("[SpecialCards] Service role unavailable for revote")
+  }
+
+  const restriction = { playerId, granted_at: new Date().toISOString(), cardType: "revote" }
+  for (const p of players || []) {
+    if (p.id === playerId) continue // самого себя не обновляем
+    let metadata: any = {}
+    try {
+      if (p.metadata) {
+        metadata = typeof p.metadata === "string" ? JSON.parse(p.metadata) : p.metadata
+      }
+    } catch {
+      metadata = {}
+    }
+    if (!metadata.cannotVoteAgainst) metadata.cannotVoteAgainst = []
+    const hasRevoteForThis = metadata.cannotVoteAgainst.some(
+      (r: any) => r.playerId === playerId && r.cardType === "revote"
+    )
+    if (!hasRevoteForThis) {
+      metadata.cannotVoteAgainst.push(restriction)
+      const { error: upErr } = await updateClient
+        .from("game_players")
+        .update({ metadata })
+        .eq("id", p.id)
+      if (upErr) throw upErr
+    }
+  }
 
   return { type: "revote", round: room.current_round }
 }

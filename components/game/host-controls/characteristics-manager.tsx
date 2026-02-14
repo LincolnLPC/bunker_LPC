@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Shuffle, RefreshCw, X, Skull, Vote, ArrowLeftRight } from "lucide-react"
+import { Shuffle, RefreshCw, X, Skull, Vote, ArrowLeftRight, UserX, Ban, UserCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/client"
 import type { Player, Characteristic } from "@/types/game"
@@ -42,6 +42,9 @@ interface CharacteristicsManagerProps {
   currentPhase?: "waiting" | "playing" | "voting" | "results" | "finished"
   roundMode?: "manual" | "automatic"
   onEliminatePlayer?: (playerId: string) => void
+  onKickPlayer?: (playerId: string) => Promise<void>
+  onBanPlayer?: (userId: string) => Promise<void>
+  onUnbanPlayer?: (userId: string) => Promise<void>
 }
 
 const CATEGORY_OPTIONS: Record<string, string[]> = {
@@ -69,6 +72,9 @@ export function CharacteristicsManager({
   currentPhase,
   roundMode = "automatic",
   onEliminatePlayer,
+  onKickPlayer,
+  onBanPlayer,
+  onUnbanPlayer,
 }: CharacteristicsManagerProps) {
   const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null)
   const [selectedChar, setSelectedChar] = useState<Characteristic | null>(null)
@@ -79,6 +85,8 @@ export function CharacteristicsManager({
   const [activeTab, setActiveTab] = useState("characteristics")
   // Exchange tab state
   const [exchangePlayer1, setExchangePlayer1] = useState<Player | null>(null)
+  const [bannedUsers, setBannedUsers] = useState<Array<{ userId: string; userName: string }>>([])
+  const [bannedLoading, setBannedLoading] = useState(false)
   const [exchangePlayer2, setExchangePlayer2] = useState<Player | null>(null)
   const [exchangeCategory, setExchangeCategory] = useState<string | null>(null)
 
@@ -96,6 +104,17 @@ export function CharacteristicsManager({
     // User can manually switch to elimination tab if needed
     setActiveTab("characteristics")
   }, [isOpen])
+
+  // Fetch banned users when players tab is active
+  useEffect(() => {
+    if (!isOpen || activeTab !== "players" || !roomId) return
+    setBannedLoading(true)
+    fetch(`/api/game/room/banned?roomId=${roomId}`)
+      .then((r) => r.json())
+      .then((data) => setBannedUsers(data.banned || []))
+      .catch(() => setBannedUsers([]))
+      .finally(() => setBannedLoading(false))
+  }, [isOpen, activeTab, roomId])
 
   // Update selectedPlayer when players prop changes (for real-time updates)
   useEffect(() => {
@@ -283,17 +302,18 @@ export function CharacteristicsManager({
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="!max-w-[72rem] w-[95vw] max-h-[90vh] overflow-hidden flex flex-col">
         <DialogHeader>
           <DialogTitle>Управление игрой</DialogTitle>
           <DialogDescription>Управление характеристиками и игроками (только для ведущего)</DialogDescription>
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-1 flex-col overflow-hidden">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="characteristics">Характеристики</TabsTrigger>
-            <TabsTrigger value="exchange">Обмен</TabsTrigger>
-            <TabsTrigger value="elimination">
+          <TabsList className="flex w-full gap-1 p-1 flex-wrap">
+            <TabsTrigger value="characteristics" className="flex-1 min-w-[120px]">Характеристики</TabsTrigger>
+            <TabsTrigger value="exchange" className="flex-1 min-w-[80px]">Обмен</TabsTrigger>
+            <TabsTrigger value="players" className="flex-1 min-w-[140px]">Управление игроками</TabsTrigger>
+            <TabsTrigger value="elimination" className="flex-1 min-w-[120px]">
               Изгнание игрока
               {stableCurrentPhase === "voting" && Object.keys(voteCounts).length > 0 && (
                 <span className="ml-2 text-xs bg-primary/20 px-1.5 py-0.5 rounded">Голоса</span>
@@ -551,6 +571,122 @@ export function CharacteristicsManager({
                   Обменять характеристики
                 </Button>
               )}
+            </div>
+          </TabsContent>
+
+          <TabsContent value="players" className="flex-1 overflow-hidden mt-4">
+            <div className="space-y-6">
+              <div>
+                <h3 className="font-semibold mb-3">Игроки в комнате</h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Исключите игрока из комнаты или заблокируйте его для этой комнаты
+                </p>
+                <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+                  {players
+                    .filter((p) => !p.isEliminated && !p.isHost)
+                    .sort((a, b) => (a.slot || 0) - (b.slot || 0))
+                    .map((player) => (
+                      <div
+                        key={player.id}
+                        className="flex items-center justify-between p-3 rounded-lg border border-border bg-card"
+                      >
+                        <div>
+                          <div className="font-semibold">{player.name}</div>
+                          {player.characteristics?.find((c) => c.category === "profession") && (
+                            <div className="text-xs text-muted-foreground">
+                              {player.characteristics.find((c) => c.category === "profession")?.value}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          {onKickPlayer && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-destructive border-destructive/50 hover:bg-destructive/10"
+                              onClick={async () => {
+                                if (confirm(`Исключить ${player.name} из комнаты?`)) {
+                                  try {
+                                    await onKickPlayer(player.id)
+                                  } catch (e) {
+                                    alert((e as Error).message)
+                                  }
+                                }
+                              }}
+                            >
+                              <UserX className="w-4 h-4 mr-1" />
+                              Исключить
+                            </Button>
+                          )}
+                          {onBanPlayer && player.userId && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-amber-600 border-amber-600/50 hover:bg-amber-600/10"
+                              onClick={async () => {
+                                if (confirm(`Заблокировать ${player.name} в этой комнате? Он не сможет подключиться снова.`)) {
+                                  try {
+                                    await onBanPlayer(player.userId!)
+                                    if (roomId) {
+                                      const res = await fetch(`/api/game/room/banned?roomId=${roomId}`)
+                                      const data = await res.json()
+                                      setBannedUsers(data.banned || [])
+                                    }
+                                  } catch (e) {
+                                    alert((e as Error).message)
+                                  }
+                                }
+                              }}
+                            >
+                              <Ban className="w-4 h-4 mr-1" />
+                              Заблокировать
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  {players.filter((p) => !p.isEliminated && !p.isHost).length === 0 && (
+                    <p className="text-sm text-muted-foreground py-4 text-center">Нет других игроков</p>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <h3 className="font-semibold mb-3">Заблокированные игроки</h3>
+                {bannedLoading ? (
+                  <p className="text-sm text-muted-foreground py-4">Загрузка...</p>
+                ) : bannedUsers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-4">Нет заблокированных игроков</p>
+                ) : (
+                  <div className="space-y-2 max-h-[25vh] overflow-y-auto">
+                    {bannedUsers.map((b) => (
+                      <div
+                        key={b.userId}
+                        className="flex items-center justify-between p-3 rounded-lg border border-amber-600/30 bg-amber-600/5"
+                      >
+                        <span className="font-medium">{b.userName}</span>
+                        {onUnbanPlayer && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={async () => {
+                              try {
+                                await onUnbanPlayer(b.userId)
+                                setBannedUsers((prev) => prev.filter((u) => u.userId !== b.userId))
+                              } catch (e) {
+                                alert((e as Error).message)
+                              }
+                            }}
+                          >
+                            <UserCheck className="w-4 h-4 mr-1" />
+                            Разблокировать
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </TabsContent>
 

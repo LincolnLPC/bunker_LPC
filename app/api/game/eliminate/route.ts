@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { clearRevoteRestrictions } from "@/lib/game/clear-revote-restrictions"
+import { pickEliminatedByVotes } from "@/lib/game/vote-elimination"
 
 // Helper function to check if a player has immunity for the current round
 function hasImmunity(player: any, currentRound: number): boolean {
@@ -89,33 +91,16 @@ export async function POST(request: Request) {
       
       eliminatedPlayerId = playerId
     } else {
-      // Automatic mode or manual mode without explicit selection - find player with most votes (excluding players with immunity)
-      // Sort players by vote count (descending)
-      const sortedPlayers = Object.entries(voteCounts)
-        .map(([playerId, count]) => ({
-          playerId,
-          votes: count,
-          player: room.game_players.find((p: any) => p.id === playerId)
-        }))
-        .sort((a, b) => b.votes - a.votes)
-      
-      // Find the first player without immunity
-      // Also check if the player with most votes has immunity (for notification)
-      const topPlayer = sortedPlayers[0]
-      let savedByImmunityPlayer: any = null
-      
-      if (topPlayer && topPlayer.player && hasImmunity(topPlayer.player, room.current_round)) {
-        savedByImmunityPlayer = topPlayer.player
-      }
-      
-      for (const { playerId, player } of sortedPlayers) {
-        if (player && !hasImmunity(player, room.current_round)) {
-          eliminatedPlayerId = playerId
-          break
-        }
-      }
-      
-      // Add system message if a player was saved by immunity
+      // Определяем изгнанного по голосам (при равных — случайный выбор среди лидеров)
+      const result = pickEliminatedByVotes(
+        voteCounts,
+        room.game_players || [],
+        room.current_round,
+        hasImmunity
+      )
+      eliminatedPlayerId = result.eliminatedPlayerId
+      const savedByImmunityPlayer = result.savedByImmunityPlayer
+
       if (savedByImmunityPlayer && eliminatedPlayerId && savedByImmunityPlayer.id !== eliminatedPlayerId) {
         await supabase.from("chat_messages").insert({
           room_id: roomId,
@@ -154,6 +139,7 @@ export async function POST(request: Request) {
       })
     }
 
+    await clearRevoteRestrictions(roomId)
     // Update room to results phase
     const { error: updateError } = await supabase.from("game_rooms").update({ phase: "results" }).eq("id", roomId)
 

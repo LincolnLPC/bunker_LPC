@@ -281,6 +281,19 @@ export function validateRoomSettings(settings: any): ValidationResult {
     errors.push("excludeNonBinaryGender должен быть булевым значением")
   }
 
+  // Validate eliminatedCanVote if present
+  if (settings.eliminatedCanVote !== undefined && typeof settings.eliminatedCanVote !== "boolean") {
+    errors.push("eliminatedCanVote должен быть булевым значением")
+  }
+
+  // Validate specialCardsPerPlayer if present (1 .. max card types)
+  if (settings.specialCardsPerPlayer !== undefined) {
+    const n = typeof settings.specialCardsPerPlayer === "string" ? parseInt(settings.specialCardsPerPlayer, 10) : settings.specialCardsPerPlayer
+    if (typeof n !== "number" || !Number.isInteger(n) || n < 1 || n > 30) {
+      errors.push("specialCardsPerPlayer должен быть целым числом от 1 до 30")
+    }
+  }
+
   // Validate characteristics if present
   if (settings.characteristics !== undefined) {
     if (typeof settings.characteristics !== "object" || Array.isArray(settings.characteristics)) {

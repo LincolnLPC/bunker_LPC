@@ -102,6 +102,8 @@ export async function POST(request: Request) {
       catastrophe,
       bunkerDescription,
       excludeNonBinaryGender,
+      eliminatedCanVote,
+      specialCardsPerPlayer,
       characteristicsSettings,
       customCharacteristics,
     } = body
@@ -145,6 +147,8 @@ export async function POST(request: Request) {
         catastrophe: catastrophe || null,
         bunker_description: bunkerDescription || null,
         exclude_non_binary_gender: excludeNonBinaryGender || false,
+        eliminated_can_vote: eliminatedCanVote || false,
+        special_cards_per_player: typeof specialCardsPerPlayer === "number" ? Math.min(30, Math.max(1, specialCardsPerPlayer)) : 1,
         characteristics_settings: characteristicsSettings || {},
         custom_characteristics: customCharacteristics || {},
       })

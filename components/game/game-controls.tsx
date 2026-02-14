@@ -194,6 +194,16 @@ export function GameControls({
         {currentPhase === "voting" && (
           <>
             <div className="text-sm text-[oklch(0.7_0.2_50)] animate-pulse">Идёт голосование...</div>
+            {!isSpectator && onOpenSpecialCards && (
+              <Button
+                variant="outline"
+                className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                onClick={onOpenSpecialCards}
+              >
+                <Sparkles className="w-4 h-4 mr-2" />
+                Спец. карты
+              </Button>
+            )}
             {onOpenVoteCounts && (
               <Button
                 variant="outline"

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { updateGameStatistics } from "@/lib/game/stats"
+import { clearRevoteRestrictions } from "@/lib/game/clear-revote-restrictions"
+import { pickEliminatedByVotes } from "@/lib/game/vote-elimination"
 
 // Helper function to check if a player has immunity for the current round
 function hasImmunity(player: any, currentRound: number): boolean {
@@ -78,10 +80,10 @@ export async function POST(request: Request) {
 
       if (votesError) throw votesError
 
-      // Get players with metadata to check immunity
+      // Get players with metadata to check immunity (name for messages)
       const { data: players, error: playersError } = await supabase
         .from("game_players")
-        .select("id, metadata")
+        .select("id, name, metadata")
         .eq("room_id", roomId)
 
       if (playersError) throw playersError
@@ -93,32 +95,13 @@ export async function POST(request: Request) {
         voteCounts[vote.target_id] = (voteCounts[vote.target_id] || 0) + weight
       }
 
-      // Find player with most votes (excluding players with immunity)
-      // Sort players by vote count (descending)
-      const sortedPlayers = Object.entries(voteCounts)
-        .map(([playerId, count]) => ({
-          playerId,
-          votes: count,
-          player: players?.find((p: any) => p.id === playerId)
-        }))
-        .sort((a, b) => b.votes - a.votes)
-      
-      // Find the first player without immunity
-      // Also check if the player with most votes has immunity (for notification)
-      const topPlayer = sortedPlayers[0]
-      let savedByImmunityPlayer: any = null
-      
-      if (topPlayer && topPlayer.player && hasImmunity(topPlayer.player, room.current_round)) {
-        savedByImmunityPlayer = topPlayer.player
-      }
-      
-      let eliminatedPlayerId: string | null = null
-      for (const { playerId, player } of sortedPlayers) {
-        if (player && !hasImmunity(player, room.current_round)) {
-          eliminatedPlayerId = playerId
-          break
-        }
-      }
+      // Определяем изгнанного (при равных голосах — случайный выбор среди лидеров)
+      const { eliminatedPlayerId, savedByImmunityPlayer } = pickEliminatedByVotes(
+        voteCounts,
+        players || [],
+        room.current_round,
+        hasImmunity
+      )
       
       // Add system message if a player was saved by immunity
       if (savedByImmunityPlayer && eliminatedPlayerId && savedByImmunityPlayer.id !== eliminatedPlayerId) {
@@ -161,6 +144,9 @@ export async function POST(request: Request) {
           message_type: "system",
         })
       }
+
+      // Clear "Plan B" restrictions (revote) — they only last until voting ends
+      await clearRevoteRestrictions(roomId)
 
       // Update room to results phase (to show results before next round)
       const { error: resultsError } = await supabase

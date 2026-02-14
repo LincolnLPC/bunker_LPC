@@ -19,6 +19,8 @@ interface VoteCountsModalProps {
   onVote?: (targetId: string) => Promise<void>
   votedPlayerId?: string
   isSpectator?: boolean
+  /** Идентификаторы игроков, против которых нельзя голосовать (эффект спецкарт «Будь другом» или «План Б») */
+  cannotVoteAgainstPlayerIds?: string[]
 }
 
 export function VoteCountsModal({
@@ -31,6 +33,7 @@ export function VoteCountsModal({
   onVote,
   votedPlayerId,
   isSpectator = false,
+  cannotVoteAgainstPlayerIds = [],
 }: VoteCountsModalProps) {
   const [voteCounts, setVoteCounts] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(false)
@@ -121,6 +124,13 @@ export function VoteCountsModal({
       setActiveTab("results")
     }
   }, [isOpen, isSpectator])
+
+  // Сбросить выбор, если выбран заблокированный игрок (эффект спецкарты)
+  useEffect(() => {
+    if (selectedPlayerId && cannotVoteAgainstPlayerIds.includes(selectedPlayerId)) {
+      setSelectedPlayerId(null)
+    }
+  }, [selectedPlayerId, cannotVoteAgainstPlayerIds])
 
   const sortedResults = Object.entries(voteCounts)
     .map(([playerId, count]) => ({
@@ -235,46 +245,60 @@ export function VoteCountsModal({
                 Выберите игрока для исключения из бункера
               </p>
               <div className="grid grid-cols-2 gap-3 max-h-[50vh] overflow-y-auto">
-                {eligiblePlayers.map((player) => (
-                  <button
-                    key={player.id}
-                    onClick={() => setSelectedPlayerId(player.id)}
-                    className={cn(
-                      "p-3 rounded-lg border-2 transition-all text-left",
-                      "hover:border-primary hover:bg-primary/10",
-                      selectedPlayerId === player.id
-                        ? "border-primary bg-primary/20"
-                        : "border-border bg-secondary/50",
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
-                        <User className="w-4 h-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="font-semibold text-foreground truncate">{player.name}</div>
-                        {/* Show profession only if revealed */}
-                        {(() => {
-                          const professionChar = player.characteristics?.find(
-                            (c) => c.category === "profession" && c.isRevealed,
-                          )
-                          return professionChar ? (
-                            <div className="text-xs text-muted-foreground truncate">
-                              {professionChar.value}
-                            </div>
-                          ) : (
-                            <div className="text-xs text-muted-foreground truncate italic">
-                              Характеристики скрыты
-                            </div>
-                          )
-                        })()}
-                      </div>
-                      {votedPlayerId === player.id && (
-                        <Check className="w-5 h-5 text-primary flex-shrink-0" />
+                {eligiblePlayers.map((player) => {
+                  const isBlocked = cannotVoteAgainstPlayerIds.includes(player.id)
+                  return (
+                    <button
+                      key={player.id}
+                      onClick={() => {
+                        if (isBlocked) return
+                        setSelectedPlayerId(player.id)
+                      }}
+                      disabled={isBlocked}
+                      className={cn(
+                        "p-3 rounded-lg border-2 transition-all text-left",
+                        isBlocked
+                          ? "border-muted bg-muted/30 cursor-not-allowed opacity-75"
+                          : "hover:border-primary hover:bg-primary/10",
+                        !isBlocked && selectedPlayerId === player.id
+                          ? "border-primary bg-primary/20"
+                          : !isBlocked && "border-border bg-secondary/50",
                       )}
-                    </div>
-                  </button>
-                ))}
+                    >
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                            <User className="w-4 h-4 text-muted-foreground" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="font-semibold text-foreground truncate">{player.name}</div>
+                            {/* Show profession only if revealed */}
+                            {(() => {
+                              const professionChar = player.characteristics?.find(
+                                (c) => c.category === "profession" && c.isRevealed,
+                              )
+                              return professionChar ? (
+                                <div className="text-xs text-muted-foreground truncate">
+                                  {professionChar.value}
+                                </div>
+                              ) : (
+                                <div className="text-xs text-muted-foreground truncate italic">
+                                  Характеристики скрыты
+                                </div>
+                              )
+                            })()}
+                          </div>
+                          {selectedPlayerId === player.id && <Check className="w-5 h-5 text-primary flex-shrink-0" />}
+                        </div>
+                        {isBlocked && (
+                          <div className="text-xs text-amber-500/90 font-medium mt-1">
+                            Вы не можете голосовать против этого игрока (эффект спецкарты)
+                          </div>
+                        )}
+                      </div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
 

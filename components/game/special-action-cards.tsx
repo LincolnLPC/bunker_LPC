@@ -61,6 +61,8 @@ interface SpecialActionCardsProps {
   cards: SpecialCard[]
   players: Player[]
   currentPlayerId: string
+  /** Текущая фаза игры. Карта «План Б» (revote) активна только при phase === "voting". */
+  currentPhase?: string
   onUseCard: (cardId: string, targetPlayerId?: string, characteristicId?: string, category?: string) => void
 }
 
@@ -70,6 +72,7 @@ export function SpecialActionCards({
   cards,
   players,
   currentPlayerId,
+  currentPhase = "waiting",
   onUseCard,
 }: SpecialActionCardsProps) {
   const [selectedCard, setSelectedCard] = useState<SpecialCard | null>(null)
@@ -101,7 +104,8 @@ export function SpecialActionCards({
 
   const handleUseCard = () => {
     if (!selectedCard) return
-    
+    if (selectedCard.type === "revote" && currentPhase !== "voting") return
+
     // For reveal card, pass category instead of characteristicId
     // For generic reshuffle card, pass selected category
     // For category-specific reshuffle cards, extract category from card type
@@ -210,11 +214,21 @@ export function SpecialActionCards({
           <ScrollArea className="h-[400px] pr-4">
             {availableCards.length > 0 ? (
               <div className="grid grid-cols-2 gap-3">
-                {availableCards.map((card) => (
+                {availableCards.map((card) => {
+                  const isRevoteDisabled = card.type === "revote" && currentPhase !== "voting"
+                  return (
                   <Card
                     key={card.id}
-                    className="bg-[oklch(0.15_0.02_60)] border-[oklch(0.3_0.01_60)] hover:border-[oklch(0.7_0.2_50)] transition-colors cursor-pointer"
-                    onClick={() => setSelectedCard(card)}
+                    className={
+                      isRevoteDisabled
+                        ? "bg-[oklch(0.15_0.02_60)] border-[oklch(0.3_0.01_60)] opacity-60 cursor-not-allowed"
+                        : "bg-[oklch(0.15_0.02_60)] border-[oklch(0.3_0.01_60)] hover:border-[oklch(0.7_0.2_50)] transition-colors cursor-pointer"
+                    }
+                    onClick={() => {
+                      if (isRevoteDisabled) return
+                      setSelectedCard(card)
+                    }}
+                    title={isRevoteDisabled ? "Карта «План Б» доступна только во время голосования" : undefined}
                   >
                     <CardHeader className="pb-2">
                       <CardTitle className="text-sm flex items-center gap-2 text-[oklch(0.7_0.2_50)]">
@@ -224,9 +238,12 @@ export function SpecialActionCards({
                     </CardHeader>
                     <CardContent>
                       <p className="text-xs text-muted-foreground">{card.description}</p>
+                      {isRevoteDisabled && (
+                        <p className="text-xs text-amber-400/90 mt-1">Только во время голосования</p>
+                      )}
                     </CardContent>
                   </Card>
-                ))}
+                )})}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
@@ -411,6 +428,9 @@ export function SpecialActionCards({
                           // For generic exchange, show current player's characteristics
                           availableChars = playerToShow.characteristics || []
                         } else if (selectedCard.type === "steal") {
+                          const targetPlayer = players.find((p) => p.id === selectedPlayer)
+                          availableChars = (targetPlayer?.characteristics || []).filter((c) => !c.isRevealed)
+                        } else if (selectedCard.type === "peek") {
                           const targetPlayer = players.find((p) => p.id === selectedPlayer)
                           availableChars = (targetPlayer?.characteristics || []).filter((c) => !c.isRevealed)
                         } else if (selectedCard.type === "no-vote-against") {

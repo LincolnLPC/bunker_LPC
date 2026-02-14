@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 import { updateGameStatistics } from "@/lib/game/stats"
+import { clearRevoteRestrictions } from "@/lib/game/clear-revote-restrictions"
 
 // POST - Check timer and auto-advance if needed
 // This endpoint is called periodically by clients to check if timer expired
@@ -163,6 +164,7 @@ export async function POST(request: Request) {
         const remainingPlayers = allPlayers?.length || 0
 
         if (remainingPlayers <= 2) {
+          await clearRevoteRestrictions(roomId)
           // Game finished - determine survivors and all players for stats/history
           const { data: allPlayersForStats } = await supabase
             .from("game_players")
@@ -206,6 +208,7 @@ export async function POST(request: Request) {
           })
         }
 
+        await clearRevoteRestrictions(roomId)
         // Advance to next round
         const { error: updateError } = await supabase
           .from("game_rooms")
