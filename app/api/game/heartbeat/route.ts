@@ -59,12 +59,15 @@ export async function POST(request: Request) {
 }
 
 // Helper function to check and remove inactive players
+// Host gets 90s grace period (allows page refresh); regular players 30s
+const HOST_INACTIVE_SECONDS = 90
+const PLAYER_INACTIVE_SECONDS = 30
+
 async function checkAndRemoveInactivePlayers(roomId: string, supabase: any) {
   try {
-    const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString()
+    const thirtySecondsAgo = new Date(Date.now() - PLAYER_INACTIVE_SECONDS * 1000).getTime()
+    const ninetySecondsAgo = new Date(Date.now() - HOST_INACTIVE_SECONDS * 1000).getTime()
 
-    // Find players who haven't sent heartbeat in last 30 seconds
-    // Query for players with null last_seen_at OR last_seen_at older than 30 seconds
     const { data: allPlayers, error: allPlayersError } = await supabase
       .from("game_players")
       .select("id, user_id, name, last_seen_at, room_id")
@@ -79,19 +82,7 @@ async function checkAndRemoveInactivePlayers(roomId: string, supabase: any) {
       return // No players in room
     }
 
-    // Filter inactive players manually (Supabase doesn't support complex OR queries easily)
-    const inactivePlayers = allPlayers.filter((p: any) => {
-      if (!p.last_seen_at) return true // Never sent heartbeat
-      const lastSeen = new Date(p.last_seen_at).getTime()
-      const thirtySecondsAgoTime = new Date(thirtySecondsAgo).getTime()
-      return lastSeen < thirtySecondsAgoTime
-    })
-
-    if (!inactivePlayers || inactivePlayers.length === 0) {
-      return // No inactive players
-    }
-
-    // Get room info to check if any inactive player is host
+    // Get room info for host_id
     const { data: room, error: roomError } = await supabase
       .from("game_rooms")
       .select("id, host_id, phase")
@@ -103,11 +94,22 @@ async function checkAndRemoveInactivePlayers(roomId: string, supabase: any) {
       return
     }
 
-    // Separate host from regular players
+    // Inactive = no heartbeat. Host: 90s grace (page refresh); regular: 30s
+    const inactivePlayers = allPlayers.filter((p: any) => {
+      if (!p.last_seen_at) return true
+      const lastSeen = new Date(p.last_seen_at).getTime()
+      const threshold = p.user_id === room.host_id ? ninetySecondsAgo : thirtySecondsAgo
+      return lastSeen < threshold
+    })
+
+    if (!inactivePlayers || inactivePlayers.length === 0) {
+      return
+    }
+
     const inactiveHosts = inactivePlayers.filter((p: any) => p.user_id === room.host_id)
     const inactiveRegularPlayers = inactivePlayers.filter((p: any) => p.user_id !== room.host_id)
 
-    // If host is inactive, close the entire room
+    // If host is inactive (90s), close the entire room
     if (inactiveHosts.length > 0) {
       console.log("[Heartbeat] Host is inactive, closing room:", roomId)
       

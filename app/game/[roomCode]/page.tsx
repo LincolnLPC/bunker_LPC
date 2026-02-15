@@ -775,25 +775,9 @@ export default function GamePage() {
   const eliminatedPlayers = gameState.players.filter((p) => p.isEliminated)
   const survivors = gameState.players.filter((p) => !p.isEliminated)
 
-  // Handle player leaving on tab close — do NOT send leave for host on beforeunload!
-  // Host refresh triggers beforeunload; sending leave would close the room. Heartbeat (30s timeout)
-  // will close the room when host is truly gone (closed tab). Host refresh returns in seconds.
-  useEffect(() => {
-    if (!gameState.id || !currentPlayerId) return
-    if (isHost) return // Host: no beforeunload leave — room stays on refresh
-
-    const handleBeforeUnload = () => {
-      try {
-        const data = JSON.stringify({ roomId: gameState.id, playerId: currentPlayerId })
-        navigator.sendBeacon("/api/game/leave", new Blob([data], { type: "application/json" }))
-      } catch (err) {
-        console.error("[GamePage] Error sending leave on unload:", err)
-      }
-    }
-
-    window.addEventListener("beforeunload", handleBeforeUnload)
-    return () => window.removeEventListener("beforeunload", handleBeforeUnload)
-  }, [isHost, gameState.id, currentPlayerId])
+  // Do NOT send leave on beforeunload for anyone — refresh and tab close both trigger it.
+  // Sending leave would remove players on refresh. Heartbeat removes inactive players instead:
+  // host 90s, regular players 30s. The "Выйти" button still calls leave API explicitly.
 
   // Debug: Log when showCharacteristicsManager changes (after isHost is defined)
   useEffect(() => {
