@@ -3,15 +3,15 @@ import { NextResponse } from "next/server"
 import type { NextRequest } from "next/server"
 
 /**
- * Next.js Middleware
+ * Next.js Proxy (formerly Middleware)
  * Handles Supabase session updates and other cross-cutting concerns
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   // Update Supabase session (handles auth)
   const response = await updateSession(request)
 
   // Rate limiting is handled per-endpoint in route handlers
-  // Additional middleware logic can be added here (CORS, logging, etc.)
+  // Additional proxy logic can be added here (CORS, logging, etc.)
 
   return response
 }
