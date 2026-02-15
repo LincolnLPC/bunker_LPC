@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2, Crown, MessageSquare } from "lucide-react"
+import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2, Crown, MessageSquare, Users, ExternalLink, Lock, Settings2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { CreateBanModal } from "@/components/admin/create-ban-modal"
@@ -31,6 +31,8 @@ import {
 } from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+import { Switch } from "@/components/ui/switch"
 
 interface Report {
   id: string
@@ -79,6 +81,20 @@ interface GameRoom {
   updated_at: string
 }
 
+interface AdminUser {
+  id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  subscription_tier: string
+  premium_expires_at: string | null
+  created_at: string
+  updated_at?: string
+  games_played: number
+  games_won: number
+  email?: string | null
+}
+
 export default function AdminPage() {
   const router = useRouter()
   const [user, setUser] = useState<SupabaseUser | null>(null)
@@ -108,6 +124,13 @@ export default function AdminPage() {
   const [ticketResponse, setTicketResponse] = useState("")
   const [updatingTicket, setUpdatingTicket] = useState(false)
   const [ticketError, setTicketError] = useState<string | null>(null)
+  const [users, setUsers] = useState<AdminUser[]>([])
+  const [loadingUsers, setLoadingUsers] = useState(false)
+  const [usersError, setUsersError] = useState<string | null>(null)
+  const [siteSettings, setSiteSettings] = useState<{ gateEnabled: boolean; productionMode: boolean; hasPassword: boolean } | null>(null)
+  const [siteSettingsPassword, setSiteSettingsPassword] = useState("")
+  const [siteSettingsSaving, setSiteSettingsSaving] = useState(false)
+  const [siteSettingsError, setSiteSettingsError] = useState<string | null>(null)
 
   useEffect(() => {
     const checkAdmin = async () => {
@@ -149,6 +172,8 @@ export default function AdminPage() {
         loadRooms()
         loadPremiumUsers()
         loadSupportTickets()
+        loadUsers()
+        loadSiteSettings()
       }
 
       setLoading(false)
@@ -507,6 +532,85 @@ export default function AdminPage() {
     }
   }
 
+  const loadUsers = async () => {
+    setLoadingUsers(true)
+    setUsersError(null)
+
+    try {
+      const { data, error: fetchError } = await safeFetch<{
+        success: boolean
+        users: AdminUser[]
+        count: number
+      }>("/api/admin/users", {
+        method: "GET",
+      })
+
+      if (fetchError) {
+        setUsersError(fetchError.message || "Не удалось загрузить пользователей")
+        setUsers([])
+        return
+      }
+
+      if (data?.success && data.users) {
+        setUsers(data.users)
+      } else {
+        setUsers([])
+      }
+    } catch (err) {
+      console.error("[Admin] Error loading users:", err)
+      setUsersError("Произошла ошибка при загрузке пользователей")
+      setUsers([])
+    } finally {
+      setLoadingUsers(false)
+    }
+  }
+
+  const loadSiteSettings = async () => {
+    try {
+      const { data, error: fetchError } = await safeFetch<{
+        gateEnabled: boolean
+        productionMode: boolean
+        hasPassword: boolean
+      }>("/api/admin/site-settings", { method: "GET" })
+      if (!fetchError && data) {
+        setSiteSettings({
+          gateEnabled: data.gateEnabled ?? false,
+          productionMode: data.productionMode ?? true,
+          hasPassword: data.hasPassword ?? false,
+        })
+      } else {
+        setSiteSettings({ gateEnabled: false, productionMode: true, hasPassword: false })
+      }
+    } catch {
+      setSiteSettings({ gateEnabled: false, productionMode: true, hasPassword: false })
+    }
+  }
+
+  const saveSiteSettings = async (updates: { gatePassword?: string | null; productionMode?: boolean }) => {
+    setSiteSettingsSaving(true)
+    setSiteSettingsError(null)
+    try {
+      const { data, error: fetchError } = await safeFetch<{ success: boolean }>(
+        "/api/admin/site-settings",
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updates),
+        }
+      )
+      if (fetchError || !data?.success) {
+        setSiteSettingsError(fetchError || "Не удалось сохранить настройки")
+        return
+      }
+      await loadSiteSettings()
+      setSiteSettingsPassword("")
+    } catch (err) {
+      setSiteSettingsError("Ошибка сохранения")
+    } finally {
+      setSiteSettingsSaving(false)
+    }
+  }
+
   const handleUpdateTicketStatus = async (ticketId: string, newStatus: string, response?: string) => {
     setUpdatingTicket(true)
     setTicketError(null)
@@ -651,6 +755,14 @@ export default function AdminPage() {
             <TabsTrigger value="support" className="flex items-center gap-2">
               <MessageSquare className="h-4 w-4" />
               Поддержка ({supportTickets.filter((t) => t.status === "open").length})
+            </TabsTrigger>
+            <TabsTrigger value="users" className="flex items-center gap-2">
+              <Users className="h-4 w-4" />
+              Пользователи ({users.length})
+            </TabsTrigger>
+            <TabsTrigger value="site-settings" className="flex items-center gap-2">
+              <Settings2 className="h-4 w-4" />
+              Настройки сайта
             </TabsTrigger>
           </TabsList>
 
@@ -1147,6 +1259,160 @@ export default function AdminPage() {
                     ))}
                   </div>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Users Tab */}
+          <TabsContent value="users">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle>Зарегистрированные пользователи</CardTitle>
+                    <CardDescription>
+                      Список всех пользователей с профилями. Нажмите на профиль, чтобы просмотреть данные на сайте.
+                    </CardDescription>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={loadUsers} disabled={loadingUsers}>
+                    {loadingUsers ? <Loader2 className="h-4 w-4 animate-spin" /> : "Обновить"}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {usersError && (
+                  <div className="mb-4 p-3 bg-destructive/10 text-destructive rounded text-sm flex items-center justify-between">
+                    <span>{usersError}</span>
+                    <Button variant="outline" size="sm" onClick={loadUsers}>
+                      Повторить
+                    </Button>
+                  </div>
+                )}
+                {loadingUsers ? (
+                  <div className="flex justify-center items-center py-12">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  </div>
+                ) : users.length === 0 && !usersError ? (
+                  <p className="text-center text-muted-foreground py-8">Нет зарегистрированных пользователей</p>
+                ) : users.length > 0 ? (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Пользователь</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Подписка</TableHead>
+                          <TableHead>Игр / Побед</TableHead>
+                          <TableHead>Регистрация</TableHead>
+                          <TableHead>Профиль</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {users.map((u) => (
+                          <TableRow key={u.id}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-medium">{u.display_name || u.username}</span>
+                                <span className="text-xs text-muted-foreground">@{u.username}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                              {u.email || "—"}
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant={u.subscription_tier === "premium" ? "default" : "secondary"}>
+                                {u.subscription_tier === "premium" ? "Премиум" : "Базовый"}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {u.games_played} / {u.games_won}
+                            </TableCell>
+                            <TableCell className="text-sm text-muted-foreground">
+                              {new Date(u.created_at).toLocaleDateString("ru-RU")}
+                            </TableCell>
+                            <TableCell>
+                              <Link href={`/profile/${u.id}`} target="_blank" rel="noopener noreferrer">
+                                <Button variant="ghost" size="sm" title="Открыть профиль на сайте">
+                                  <ExternalLink className="h-4 w-4" />
+                                </Button>
+                              </Link>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Site Settings Tab */}
+          <TabsContent value="site-settings">
+            <Card className="bg-card/50 border-border/50">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Lock className="h-5 w-5" />
+                  Настройки сайта
+                </CardTitle>
+                <CardDescription>
+                  Пароль для входа на сайт и режим работы (продакшен / разработка)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-8">
+                {siteSettingsError && (
+                  <div className="p-3 bg-destructive/10 text-destructive rounded text-sm">
+                    {siteSettingsError}
+                  </div>
+                )}
+
+                <div className="space-y-4">
+                  <div>
+                    <Label className="text-base font-medium">Пароль для доступа на сайт</Label>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Если пароль установлен, посетители видят страницу «Сайт в процессе разработки» и поле для ввода пароля. Оставьте пустым, чтобы сайт работал как обычно.
+                    </p>
+                    <div className="flex gap-2">
+                      <Input
+                        type="password"
+                        placeholder={siteSettings?.hasPassword ? "Новый пароль (оставьте пустым, чтобы убрать)" : "Введите пароль"}
+                        value={siteSettingsPassword}
+                        onChange={(e) => setSiteSettingsPassword(e.target.value)}
+                        className="max-w-xs"
+                      />
+                      <Button
+                        onClick={() => saveSiteSettings({ gatePassword: siteSettingsPassword })}
+                        disabled={siteSettingsSaving}
+                      >
+                        {siteSettingsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Сохранить пароль"}
+                      </Button>
+                    </div>
+                    {siteSettings?.hasPassword && (
+                      <p className="text-sm text-muted-foreground mt-2">
+                        Пароль установлен. Введите новый и сохраните, чтобы изменить, или оставьте пустым и сохраните, чтобы отключить.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="pt-4 border-t border-border">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label className="text-base font-medium">Режим продакшен</Label>
+                        <p className="text-sm text-muted-foreground">
+                          Включён: скрыты дебаг-элементы (Shift+U в игре). Выключен: показываются дебаг-элементы.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={siteSettings?.productionMode ?? true}
+                        onCheckedChange={(checked) => saveSiteSettings({ productionMode: checked })}
+                        disabled={siteSettingsSaving}
+                      />
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-2">
+                      Сейчас: <strong>{siteSettings?.productionMode ? "Продакшен (без дебага)" : "Режим разработки (с дебагом)"}</strong>
+                    </p>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>
