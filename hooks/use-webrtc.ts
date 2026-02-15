@@ -145,8 +145,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         console.warn("[WebRTC] Error enumerating devices (this is OK if permission not granted yet):", enumError)
       }
 
-      // Подготовить constraints для видео
-      videoConstraints = requestVideo
+      // Подготовить constraints для видео (с deviceId если задан)
+      const videoConstraintsWithDevice = requestVideo
         ? {
             width: { ideal: 640 },
             height: { ideal: 480 },
@@ -155,8 +155,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           }
         : false
 
-      // Подготовить constraints для аудио
-      audioConstraints = requestAudio
+      // Подготовить constraints для аудио (с deviceId если задан)
+      const audioConstraintsWithDevice = requestAudio
         ? {
             echoCancellation: true,
             noiseSuppression: true,
@@ -164,34 +164,63 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           }
         : false
 
+      // Constraints без deviceId (fallback при устаревших ID из профиля)
+      const videoConstraintsFallback = requestVideo
+        ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
+        : false
+      const audioConstraintsFallback = requestAudio
+        ? { echoCancellation: true, noiseSuppression: true }
+        : false
+
+      const tryGetUserMedia = async (useDeviceId: boolean) => {
+        videoConstraints = useDeviceId ? videoConstraintsWithDevice : videoConstraintsFallback
+        audioConstraints = useDeviceId ? audioConstraintsWithDevice : audioConstraintsFallback
+        const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
+          video: videoConstraints,
+          audio: audioConstraints,
+        })
+        const timeoutMs = 15000
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new DOMException("Timeout starting video/audio source. Camera might be busy or not responding.", "AbortError"))
+          }, timeoutMs)
+        })
+        return Promise.race([getUserMediaPromise, timeoutPromise])
+      }
+
       console.log("[WebRTC] 📹 Requesting camera and microphone access...", {
         video: requestVideo,
         audio: requestAudio,
-        videoConstraints: typeof videoConstraints === 'object' ? JSON.stringify(videoConstraints) : videoConstraints,
-        audioConstraints: typeof audioConstraints === 'object' ? JSON.stringify(audioConstraints) : audioConstraints,
-        cameraDeviceId: mediaSettings?.cameraDeviceId,
-        microphoneDeviceId: mediaSettings?.microphoneDeviceId,
+        cameraDeviceId: mediaSettings?.cameraDeviceId || null,
+        microphoneDeviceId: mediaSettings?.microphoneDeviceId || null,
         userAgent: navigator.userAgent,
         isSecureContext: window.isSecureContext,
         location: window.location.href,
       })
-      
-      console.log("[WebRTC] Calling getUserMedia now...")
-      
-      // Добавляем таймаут для getUserMedia (максимум 15 секунд для медленных камер)
-      const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
-        audio: audioConstraints,
-      })
-      
-      const timeoutMs = 15000 // 15 секунд таймаут (увеличено для медленных камер)
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new DOMException("Timeout starting video/audio source. Camera might be busy or not responding.", "AbortError"))
-        }, timeoutMs)
-      })
-      
-      const stream = await Promise.race([getUserMediaPromise, timeoutPromise])
+
+      let stream: MediaStream
+      try {
+        stream = await tryGetUserMedia(true)
+        console.log("[WebRTC] ✅ getUserMedia succeeded with deviceId (first attempt)")
+      } catch (firstErr) {
+        const msg = (firstErr as { message?: string })?.message ?? String(firstErr)
+        const name = (firstErr as { name?: string })?.name ?? ""
+        const isRetryable =
+          name === "NotReadableError" ||
+          name === "OverconstrainedError" ||
+          (name === "AbortError" && (msg.includes("Timeout") || msg.includes("timeout"))) ||
+          msg.includes("Could not start video source") ||
+          msg.includes("Could not start audio source") ||
+          msg.toLowerCase().includes("device in use")
+        const hasDevicePref = mediaSettings?.cameraDeviceId || mediaSettings?.microphoneDeviceId
+        if (isRetryable && hasDevicePref) {
+          console.warn("[WebRTC] First attempt failed (possibly stale deviceId), retrying without deviceId:", { name, message: msg })
+          stream = await tryGetUserMedia(false)
+          console.log("[WebRTC] ✅ getUserMedia succeeded without deviceId (fallback)")
+        } else {
+          throw firstErr
+        }
+      }
       console.log("[WebRTC] ✅ getUserMedia succeeded, got stream:", stream.id)
       
       console.log("[WebRTC] ✅ Media access granted, stream obtained:", {
