@@ -4,13 +4,40 @@ import type React from "react"
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Flame, Users, Shield, Zap, Clock, Trophy, User } from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { Flame, Users, Shield, Zap, Clock, Trophy, User, Lock } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
 export default function LandingPage() {
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const [gateCheck, setGateCheck] = useState<{ gateEnabled: boolean; unlocked: boolean } | null>(null)
+  const [gatePassword, setGatePassword] = useState("")
+  const [gateError, setGateError] = useState("")
+  const [gateSubmitting, setGateSubmitting] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchSettings = async () => {
+      try {
+        const res = await fetch("/api/site-settings")
+        if (!cancelled && res.ok) {
+          const data = await res.json()
+          setGateCheck({
+            gateEnabled: data.gateEnabled ?? false,
+            unlocked: data.unlocked ?? true,
+          })
+        } else if (!cancelled) {
+          setGateCheck({ gateEnabled: false, unlocked: true })
+        }
+      } catch {
+        if (!cancelled) setGateCheck({ gateEnabled: false, unlocked: true })
+      }
+    }
+    fetchSettings()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -36,6 +63,69 @@ export default function LandingPage() {
     checkUser()
     return () => { cancelled = true }
   }, [])
+
+  const handleGateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setGateError("")
+    setGateSubmitting(true)
+    try {
+      const res = await fetch("/api/site-settings/unlock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: gatePassword }),
+      })
+      const data = await res.json()
+      if (data.success) {
+        window.location.reload()
+      } else {
+        setGateError(data.error || "Неверный пароль")
+      }
+    } catch {
+      setGateError("Ошибка соединения")
+    } finally {
+      setGateSubmitting(false)
+    }
+  }
+
+  // Gate: site under development — show form only if gate enabled AND not unlocked
+  if (gateCheck?.gateEnabled && !gateCheck?.unlocked) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center px-6">
+        <div className="absolute inset-0 bg-gradient-to-br from-orange-950/20 via-background to-background" />
+        <div className="absolute inset-0 bg-[url('/apocalyptic-bunker-dark-texture.jpg')] opacity-10 bg-cover bg-center" />
+        <div className="relative z-10 text-center max-w-md w-full">
+          <Lock className="h-16 w-16 text-primary mx-auto mb-6" />
+          <h1 className="text-3xl font-bold mb-2">Сайт в процессе разработки</h1>
+          <p className="text-muted-foreground mb-8">Введите пароль для доступа</p>
+          <form onSubmit={handleGateSubmit} className="space-y-4">
+            <Input
+              type="password"
+              placeholder="Пароль"
+              value={gatePassword}
+              onChange={(e) => setGatePassword(e.target.value)}
+              className="text-center"
+              autoFocus
+              disabled={gateSubmitting}
+            />
+            {gateError && <p className="text-sm text-destructive">{gateError}</p>}
+            <Button type="submit" className="w-full" disabled={gateSubmitting}>
+              {gateSubmitting ? "Проверка…" : "Войти"}
+            </Button>
+          </form>
+        </div>
+      </div>
+    )
+  }
+
+  // Loading gate check
+  if (gateCheck === null) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Flame className="h-12 w-12 text-primary animate-pulse" />
+      </div>
+    )
+  }
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
       {/* Hero Section */}
