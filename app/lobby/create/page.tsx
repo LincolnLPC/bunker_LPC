@@ -260,8 +260,10 @@ export default function CreateGamePage() {
     })
 
     if (!response.ok) {
-      const errorData = await response.json()
-      throw new Error(errorData.error || "Failed to save template")
+      const errorData = await response.json().catch(() => ({}))
+      const msg = errorData.error || "Failed to save template"
+      const detail = errorData.detail ? `: ${errorData.detail}` : ""
+      throw new Error(msg + detail)
     }
   }
 

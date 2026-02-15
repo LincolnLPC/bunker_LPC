@@ -165,7 +165,13 @@ export async function POST(request: Request) {
           { status: 409 }
         )
       }
-      throw insertError
+      // Return actual error so client/Vercel logs can show cause (e.g. RLS, missing table, FK)
+      const message = (insertError as { message?: string }).message ?? insertError.message ?? String(insertError)
+      console.error("Error creating template (insert):", insertError)
+      return NextResponse.json(
+        { error: "Failed to create template", detail: message },
+        { status: 500 }
+      )
     }
 
     const jsonResponse = NextResponse.json({ template })
@@ -177,7 +183,11 @@ export async function POST(request: Request) {
 
     return jsonResponse
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
     console.error("Error creating template:", error)
-    return NextResponse.json({ error: "Failed to create template" }, { status: 500 })
+    return NextResponse.json(
+      { error: "Failed to create template", detail: message },
+      { status: 500 }
+    )
   }
 }
