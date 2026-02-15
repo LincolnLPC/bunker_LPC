@@ -113,6 +113,9 @@ scripts/034-grant-premium-subscription.sql
 scripts/035-add-premium-expires-at.sql
 scripts/036-create-achievements-system.sql
 scripts/037-create-support-tickets-table.sql
+scripts/038-create-whoami-tables.sql
+scripts/039-whoami-player-update-policy.sql
+scripts/040-create-site-settings.sql
 
 Примечание: скрипты 026, 027, 028, 029 — диагностические, можно пропустить.
 
