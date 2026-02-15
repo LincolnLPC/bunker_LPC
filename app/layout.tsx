@@ -2,6 +2,7 @@ import type React from "react"
 import type { Metadata } from "next"
 import { Geist, Geist_Mono } from "next/font/google"
 import "./globals.css"
+import { DevIndicatorGate } from "@/components/dev-indicator-gate"
 
 // Analytics is optional - import only if available and needed
 // Uncomment if you want analytics tracking
@@ -42,6 +43,7 @@ export default function RootLayout({
     <html lang="ru" className="dark">
       <body className={`font-sans antialiased`}>
         {children}
+        <DevIndicatorGate />
         {/* Analytics - uncomment if needed */}
         {/* {process.env.NODE_ENV === "production" && <Analytics />} */}
       </body>

@@ -2,6 +2,7 @@ import crypto from 'crypto'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Оригинальный индикатор включён; скрываем при production_mode через DevIndicatorGate
   typescript: {
     ignoreBuildErrors: true,
   },
