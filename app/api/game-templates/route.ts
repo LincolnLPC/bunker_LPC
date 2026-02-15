@@ -132,40 +132,47 @@ export async function POST(request: Request) {
       )
     }
 
-    // Insert template
-    const { data: template, error: insertError } = await supabase
-      .from("game_templates")
-      .insert({
-        user_id: user.id,
-        name: name.trim(),
-        description: description?.trim() || null,
-        max_players: maxPlayers || 12,
-        round_mode: roundMode || "automatic",
-        discussion_time: discussionTime || 120,
-        voting_time: votingTime || 60,
-        auto_reveal: autoReveal || false,
-        spectators: spectators !== undefined ? spectators : true,
-        host_role: hostRole || "host_and_player",
-        catastrophe: catastrophe || null,
-        bunker_description: bunkerDescription || null,
-        exclude_non_binary_gender: excludeNonBinaryGender || false,
-        eliminated_can_vote: eliminatedCanVote || false,
-        special_cards_per_player: typeof specialCardsPerPlayer === "number" ? Math.min(30, Math.max(1, specialCardsPerPlayer)) : 1,
-        characteristics_settings: characteristicsSettings || {},
-        custom_characteristics: customCharacteristics || {},
-      })
-      .select()
-      .single()
+    // Base row: works when DB has only 033 schema (no eliminated_can_vote / special_cards_per_player)
+    const baseRow = {
+      user_id: user.id,
+      name: name.trim(),
+      description: description?.trim() || null,
+      max_players: maxPlayers || 12,
+      round_mode: roundMode || "automatic",
+      discussion_time: discussionTime || 120,
+      voting_time: votingTime || 60,
+      auto_reveal: autoReveal || false,
+      spectators: spectators !== undefined ? spectators : true,
+      host_role: hostRole || "host_and_player",
+      catastrophe: catastrophe || null,
+      bunker_description: bunkerDescription || null,
+      exclude_non_binary_gender: excludeNonBinaryGender || false,
+      characteristics_settings: characteristicsSettings || {},
+      custom_characteristics: customCharacteristics || {},
+    }
 
+    // Try full row first (DB with 034 migration); fallback to base row if columns missing
+    const fullRow = {
+      ...baseRow,
+      eliminated_can_vote: eliminatedCanVote || false,
+      special_cards_per_player: typeof specialCardsPerPlayer === "number" ? Math.min(30, Math.max(1, specialCardsPerPlayer)) : 1,
+    }
+
+    let result = await supabase.from("game_templates").insert(fullRow).select().single()
+    const errMsg = (result.error as { message?: string })?.message ?? result.error?.message ?? ""
+
+    if (result.error && /eliminated_can_vote|special_cards_per_player|schema cache/i.test(errMsg)) {
+      result = await supabase.from("game_templates").insert(baseRow).select().single()
+    }
+
+    const insertError = result.error
     if (insertError) {
       if (insertError.code === "23505") {
-        // Unique constraint violation (duplicate name)
         return NextResponse.json(
           { error: "Template with this name already exists" },
           { status: 409 }
         )
       }
-      // Return actual error so client/Vercel logs can show cause (e.g. RLS, missing table, FK)
       const message = (insertError as { message?: string }).message ?? insertError.message ?? String(insertError)
       console.error("Error creating template (insert):", insertError)
       return NextResponse.json(
@@ -173,6 +180,8 @@ export async function POST(request: Request) {
         { status: 500 }
       )
     }
+
+    const template = result.data
 
     const jsonResponse = NextResponse.json({ template })
 
