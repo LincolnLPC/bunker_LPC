@@ -13,7 +13,8 @@
     "monitor:server": "node scripts/monitor-server-logs.js",
     "dev:log": "node scripts/log-server.js",
     "monitor:log": "node scripts/monitor-log-file.js",
-    "generate-cert": "node scripts/generate-https-cert.js"
+    "generate-cert": "node scripts/generate-https-cert.js",
+    "generate-whoami-words": "npx tsx scripts/generate-whoami-words-list.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
