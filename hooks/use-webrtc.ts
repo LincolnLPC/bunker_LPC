@@ -172,14 +172,13 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         ? { echoCancellation: true, noiseSuppression: true }
         : false
 
-      const tryGetUserMedia = async (useDeviceId: boolean) => {
+      const tryGetUserMedia = async (useDeviceId: boolean, timeoutMs = 25000) => {
         videoConstraints = useDeviceId ? videoConstraintsWithDevice : videoConstraintsFallback
         audioConstraints = useDeviceId ? audioConstraintsWithDevice : audioConstraintsFallback
         const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           video: videoConstraints,
           audio: audioConstraints,
         })
-        const timeoutMs = 15000
         const timeoutPromise = new Promise<never>((_, reject) => {
           setTimeout(() => {
             reject(new DOMException("Timeout starting video/audio source. Camera might be busy or not responding.", "AbortError"))
@@ -205,18 +204,20 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       } catch (firstErr) {
         const msg = (firstErr as { message?: string })?.message ?? String(firstErr)
         const name = (firstErr as { name?: string })?.name ?? ""
+        const isTimeout = name === "AbortError" && (msg.includes("Timeout") || msg.includes("timeout"))
         const isRetryable =
           name === "NotReadableError" ||
           name === "OverconstrainedError" ||
-          (name === "AbortError" && (msg.includes("Timeout") || msg.includes("timeout"))) ||
+          isTimeout ||
           msg.includes("Could not start video source") ||
           msg.includes("Could not start audio source") ||
           msg.toLowerCase().includes("device in use")
         const hasDevicePref = mediaSettings?.cameraDeviceId || mediaSettings?.microphoneDeviceId
-        if (isRetryable && hasDevicePref) {
-          console.warn("[WebRTC] First attempt failed (possibly stale deviceId), retrying without deviceId:", { name, message: msg })
-          stream = await tryGetUserMedia(false)
-          console.log("[WebRTC] ✅ getUserMedia succeeded without deviceId (fallback)")
+        const shouldRetry = isRetryable && (hasDevicePref || isTimeout)
+        if (shouldRetry) {
+          console.warn("[WebRTC] First attempt failed, retrying without deviceId" + (isTimeout ? " with longer timeout" : "") + ":", { name, message: msg })
+          stream = await tryGetUserMedia(false, isTimeout ? 40000 : undefined)
+          console.log("[WebRTC] ✅ getUserMedia succeeded (fallback retry)")
         } else {
           throw firstErr
         }

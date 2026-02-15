@@ -96,28 +96,13 @@ function EditProfileForm() {
     loadProfile()
   }, [router])
 
-  // Функция для загрузки списка устройств
+  // Функция для загрузки списка устройств (БЕЗ getUserMedia — не занимаем камеру/микрофон,
+  // иначе они будут заняты и недоступны при входе в игру)
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true)
     try {
-      // Запросить временный доступ к медиа для получения меток устройств
-      // (в некоторых браузерах метки доступны только после запроса доступа)
-      let hasPermission = false
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        try {
-          // Запрашиваем временный доступ только для получения меток
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-          // Сразу останавливаем поток
-          stream.getTracks().forEach(track => track.stop())
-          hasPermission = true
-          console.log("[Profile] Got temporary media access for device labels")
-        } catch (err) {
-          // Игнорируем ошибки доступа - мы просто пытаемся получить метки
-          console.debug("[Profile] Could not get temporary media access for device labels:", err)
-        }
-      }
-
-      // Получить список устройств
+      // Только enumerateDevices — без getUserMedia, чтобы не блокировать камеру/микрофон для игры.
+      // Метки могут быть пустыми до первого разрешения в игре — показываем "Камера 1" и т.д.
       if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
         const devices = await navigator.mediaDevices.enumerateDevices()
         console.log("[Profile] Enumerated devices:", devices.length, devices)
@@ -126,7 +111,7 @@ function EditProfileForm() {
           .filter(device => device.kind === "videoinput" && device.deviceId && device.deviceId.trim() !== "")
           .map((device, index) => ({
             deviceId: device.deviceId,
-            label: device.label || (hasPermission ? `Камера ${index + 1}` : `Камера ${device.deviceId.substring(0, 8)}...`),
+            label: device.label || `Камера ${index + 1}`,
             kind: device.kind as MediaDeviceKind,
           }))
         
@@ -134,7 +119,7 @@ function EditProfileForm() {
           .filter(device => device.kind === "audioinput" && device.deviceId && device.deviceId.trim() !== "")
           .map((device, index) => ({
             deviceId: device.deviceId,
-            label: device.label || (hasPermission ? `Микрофон ${index + 1}` : `Микрофон ${device.deviceId.substring(0, 8)}...`),
+            label: device.label || `Микрофон ${index + 1}`,
             kind: device.kind as MediaDeviceKind,
           }))
 
