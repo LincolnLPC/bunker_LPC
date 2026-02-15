@@ -28,6 +28,7 @@ interface RoomListItem {
   isFull: boolean
   catastrophe: string
   bunkerDescription: string
+  gameMode?: "bunker" | "whoami"
   phase: string
   currentRound: number
   roundTimerSeconds: number
@@ -295,25 +296,36 @@ export default function RoomsListPage() {
                   )}
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  {/* Catastrophe */}
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />
-                      <p className="text-xs font-semibold text-muted-foreground">Катастрофа</p>
-                    </div>
-                    <p className="text-sm font-medium line-clamp-1">{room.catastrophe}</p>
+                  {/* Game mode badge */}
+                  <div className="flex items-center gap-2">
+                    <Badge variant={room.gameMode === "whoami" ? "secondary" : "default"} className="text-xs">
+                      {room.gameMode === "whoami" ? "Кто Я?" : "Бункер"}
+                    </Badge>
                   </div>
 
-                  {/* Bunker */}
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <Home className="h-3.5 w-3.5 text-muted-foreground" />
-                      <p className="text-xs font-semibold text-muted-foreground">Бункер</p>
+                  {/* Catastrophe — только для Бункера */}
+                  {room.gameMode !== "whoami" && (
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <AlertTriangle className="h-3.5 w-3.5 text-muted-foreground" />
+                        <p className="text-xs font-semibold text-muted-foreground">Катастрофа</p>
+                      </div>
+                      <p className="text-sm font-medium line-clamp-1">{room.catastrophe}</p>
                     </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {room.bunkerDescription}
-                    </p>
-                  </div>
+                  )}
+
+                  {/* Bunker — только для Бункера */}
+                  {room.gameMode !== "whoami" && (
+                    <div>
+                      <div className="flex items-center gap-1.5 mb-1">
+                        <Home className="h-3.5 w-3.5 text-muted-foreground" />
+                        <p className="text-xs font-semibold text-muted-foreground">Бункер</p>
+                      </div>
+                      <p className="text-xs text-muted-foreground line-clamp-2">
+                        {room.bunkerDescription}
+                      </p>
+                    </div>
+                  )}
 
                   {/* Stats */}
                   <div className="flex items-center justify-between pt-2 border-t border-border/50">

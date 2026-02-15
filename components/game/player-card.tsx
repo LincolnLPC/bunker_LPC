@@ -18,6 +18,7 @@ interface PlayerCardProps {
   player: Player
   slotNumber: number
   isCurrentPlayer?: boolean
+  gameMode?: "bunker" | "whoami"
   /** Stable callback: (playerId, characteristicId) — не создаёт новую функцию при каждом рендере */
   onToggleCharacteristic?: (playerId: string, characteristicId: string) => void
   /** Stable callback: (player) — не создаёт новую функцию при каждом рендере */
@@ -37,6 +38,7 @@ const PlayerCardComponent = ({
   player,
   slotNumber,
   isCurrentPlayer = false,
+  gameMode = "bunker",
   onToggleCharacteristic,
   onSelectPlayer,
   isMuted = false,
@@ -172,13 +174,18 @@ const PlayerCardComponent = ({
     isMuted,
   ])
 
-  // Get gender, age, profession from characteristics if revealed
-  const genderChar = player.characteristics.find(c => c.category === 'gender' && c.isRevealed)
-  const ageChar = player.characteristics.find(c => c.category === 'age' && c.isRevealed)
-  const professionChar = player.characteristics.find(c => c.category === 'profession' && c.isRevealed)
+  const isWhoami = gameMode === "whoami"
+  const whoamiCurrentWord = isWhoami && player.whoamiWords
+    ? player.whoamiWords.find((w) => !w.isGuessed)?.word
+    : undefined
+
+  // Get gender, age, profession from characteristics if revealed (only for bunker mode)
+  const genderChar = !isWhoami && player.characteristics.find(c => c.category === 'gender' && c.isRevealed)
+  const ageChar = !isWhoami && player.characteristics.find(c => c.category === 'age' && c.isRevealed)
+  const professionChar = !isWhoami && player.characteristics.find(c => c.category === 'profession' && c.isRevealed)
   
   // Other revealed characteristics (excluding gender, age, profession)
-  const revealedChars = player.characteristics.filter((c) => 
+  const revealedChars = isWhoami ? [] : player.characteristics.filter((c) => 
     c.isRevealed && !['gender', 'age', 'profession'].includes(c.category)
   )
 
@@ -340,7 +347,15 @@ const PlayerCardComponent = ({
           <div className="flex items-start gap-1.5">
             <div className="flex flex-col items-start">
               <h3 className="text-sm font-bold text-foreground truncate drop-shadow-lg leading-tight">{player.name}</h3>
-              {/* Profession directly under name, aligned with name - same position as on image */}
+              {/* Кто Я?: показываем текущее слово другим игрокам */}
+              {isWhoami && whoamiCurrentWord !== undefined && (
+                <div className="mt-0.5 leading-tight self-start">
+                  <span className="text-base font-bold text-[oklch(0.8_0.2_200)] drop-shadow-lg">
+                    {isCurrentPlayer ? "???" : whoamiCurrentWord}
+                  </span>
+                </div>
+              )}
+              {/* Profession directly under name (bunker mode only) */}
               {professionChar && (
                 <div className="mt-0 leading-tight self-start">
                   <span className="text-[10px] font-semibold text-[oklch(0.7_0.2_50)] drop-shadow-lg">{professionChar.value}</span>

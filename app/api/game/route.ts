@@ -183,14 +183,14 @@ export async function POST(request: Request) {
     console.log("[CreateRoom] Subscription check temporarily disabled for testing")
 
     const roomCode = generateRoomCode()
-    // Use provided catastrophe/bunker or random if not provided
-    const finalCatastrophe = catastrophe || getRandomItem(SAMPLE_CATASTROPHES)
-    const finalBunkerDescription = bunkerDescription || getRandomItem(SAMPLE_BUNKERS)
+    const gameMode = (settings as any)?.gameMode || "bunker"
+    // Для режима "Кто Я?" не назначаем катастрофу и бункер
+    const finalCatastrophe = gameMode === "whoami" ? "—" : (catastrophe || getRandomItem(SAMPLE_CATASTROPHES))
+    const finalBunkerDescription = gameMode === "whoami" ? "—" : (bunkerDescription || getRandomItem(SAMPLE_BUNKERS))
 
-    // Generate full bunker info with random equipment and supplies
-    // Capacity is determined based on maxPlayers: 8->2-4, 12->3-5, 16->3-8, 20->4-11
+    // Generate full bunker info (пустой для Кто Я?)
     const { generateBunkerInfo } = await import("@/lib/game/bunkers")
-    const bunkerInfo = generateBunkerInfo(finalBunkerDescription, maxPlayers)
+    const bunkerInfo = gameMode === "whoami" ? { description: "—", area: 0, capacity: 0, duration: "", supplies: [], equipment: [], threats: [], revealedCharacteristics: [], totalRevealed: 0 } : generateBunkerInfo(finalBunkerDescription, maxPlayers)
 
     // Extract password and is_hidden from settings or body
     const { password, isHidden } = body

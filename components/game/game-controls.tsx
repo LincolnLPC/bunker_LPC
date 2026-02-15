@@ -1,9 +1,10 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile, RefreshCw } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile, RefreshCw, List, ArrowRight } from "lucide-react"
 
 interface GameControlsProps {
+  gameMode?: "bunker" | "whoami"
   isHost: boolean
   isSpectator?: boolean
   currentPhase: "waiting" | "playing" | "voting" | "results" | "finished"
@@ -30,9 +31,12 @@ interface GameControlsProps {
   onOpenTeasePanel?: () => void
   showTeasePanel?: boolean
   onReconnectVideo?: () => void
+  onViewMyWords?: () => void
+  onWhoamiNextWord?: () => void
 }
 
 export function GameControls({
+  gameMode = "bunker",
   isHost,
   isSpectator = false,
   currentPhase,
@@ -40,6 +44,8 @@ export function GameControls({
   onToggleVideo,
   onRevealCharacteristic,
   onViewMyCharacteristics,
+  onViewMyWords,
+  onWhoamiNextWord,
   onStartVoting,
   onNextRound,
   onFinishGame,
@@ -137,38 +143,63 @@ export function GameControls({
         {/* Game actions */}
         {currentPhase === "playing" && (
           <>
-            {!isSpectator && onViewMyCharacteristics && (
-              <Button
-                variant="outline"
-                className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
-                onClick={onViewMyCharacteristics}
-              >
-                <FileText className="w-4 h-4 mr-2" />
-                Мои характеристики
-              </Button>
+            {gameMode === "whoami" ? (
+              <>
+                {!isSpectator && onViewMyWords && (
+                  <Button
+                    variant="outline"
+                    className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
+                    onClick={onViewMyWords}
+                  >
+                    <List className="w-4 h-4 mr-2" />
+                    Мои слова
+                  </Button>
+                )}
+                {!isSpectator && onWhoamiNextWord && (
+                  <Button
+                    variant="outline"
+                    className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                    onClick={onWhoamiNextWord}
+                  >
+                    <ArrowRight className="w-4 h-4 mr-2" />
+                    Следующее слово
+                  </Button>
+                )}
+              </>
+            ) : (
+              <>
+                {!isSpectator && onViewMyCharacteristics && (
+                  <Button
+                    variant="outline"
+                    className="border-blue-500 text-blue-400 hover:bg-blue-500/10 bg-transparent"
+                    onClick={onViewMyCharacteristics}
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    Мои характеристики
+                  </Button>
+                )}
+                {!isSpectator && onOpenSpecialCards && (
+                  <Button
+                    variant="outline"
+                    className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
+                    onClick={onOpenSpecialCards}
+                  >
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Спец. карты
+                  </Button>
+                )}
+                <Button
+                  variant="outline"
+                  className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10 bg-transparent"
+                  onClick={onOpenBunkerInfo}
+                >
+                  <Home className="w-4 h-4 mr-2" />
+                  Бункер
+                </Button>
+              </>
             )}
 
-            {!isSpectator && (
-              <Button
-                variant="outline"
-                className="border-purple-500 text-purple-400 hover:bg-purple-500/10 bg-transparent"
-                onClick={onOpenSpecialCards}
-              >
-                <Sparkles className="w-4 h-4 mr-2" />
-                Спец. карты
-              </Button>
-            )}
-
-            <Button
-              variant="outline"
-              className="border-cyan-500 text-cyan-400 hover:bg-cyan-500/10 bg-transparent"
-              onClick={onOpenBunkerInfo}
-            >
-              <Home className="w-4 h-4 mr-2" />
-              Бункер
-            </Button>
-
-            {isHost && (
+            {isHost && gameMode === "bunker" && (
               <>
                 <Button
                   variant="outline"
@@ -191,7 +222,7 @@ export function GameControls({
           </>
         )}
 
-        {currentPhase === "voting" && (
+        {currentPhase === "voting" && gameMode === "bunker" && (
           <>
             <div className="text-sm text-[oklch(0.7_0.2_50)] animate-pulse">Идёт голосование...</div>
             {!isSpectator && onOpenSpecialCards && (
@@ -259,7 +290,7 @@ export function GameControls({
           </>
         )}
 
-        {currentPhase === "results" && isHost && (
+        {currentPhase === "results" && gameMode === "bunker" && isHost && (
           <>
             {onNextRound && (
               <Button

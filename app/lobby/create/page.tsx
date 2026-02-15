@@ -12,13 +12,15 @@ import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Textarea } from "@/components/ui/textarea"
-import { ArrowLeft, Flame, Loader2, Crown, Users, AlertTriangle, Home, Copy, Check, ChevronDown, ChevronUp, Settings2, Eye, EyeOff } from "lucide-react"
+import { ArrowLeft, Flame, Loader2, Crown, Users, AlertTriangle, Home, Copy, Check, ChevronDown, ChevronUp, Settings2, Eye, EyeOff, HelpCircle } from "lucide-react"
 import { SAMPLE_CATASTROPHES, SAMPLE_BUNKERS } from "@/types/game"
 import { CHARACTERISTICS_BY_CATEGORY, PROFESSIONS, HEALTH_CONDITIONS, HOBBIES, PHOBIAS, BAGGAGE, FACTS, SPECIAL, BIO, SKILLS, TRAITS } from "@/lib/game/characteristics"
 import { SPECIAL_CARD_TYPES_COUNT } from "@/lib/game/special-cards-types"
 import { Badge } from "@/components/ui/badge"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { GameTemplateSelector } from "@/components/lobby/game-template-selector"
+import { WHOAMI_DEFAULT_WORDS } from "@/lib/game/whoami-words"
 import { createClient } from "@/lib/supabase/client"
 
 export default function CreateGamePage() {
@@ -47,6 +49,12 @@ export default function CreateGamePage() {
   const [isRoomHidden, setIsRoomHidden] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [subscriptionTier, setSubscriptionTier] = useState<"basic" | "premium">("basic")
+
+  // Режим игры: Бункер или Кто Я?
+  const [gameMode, setGameMode] = useState<"bunker" | "whoami">("bunker")
+  const [whoamiWordsPerPlayer, setWhoamiWordsPerPlayer] = useState(5)
+  const [whoamiCustomWords, setWhoamiCustomWords] = useState("")
+  const [whoamiNextWordByVoting, setWhoamiNextWordByVoting] = useState(false)
   
   // Characteristics settings
   const [showCharacteristicsSettings, setShowCharacteristicsSettings] = useState(false)
@@ -136,6 +144,12 @@ export default function CreateGamePage() {
 
   // Handle template selection
   const handleSelectTemplate = (template: any) => {
+    setGameMode(template.game_mode || "bunker")
+    if (template.game_mode === "whoami") {
+      setWhoamiWordsPerPlayer(template.whoami_words_per_player ?? 5)
+      setWhoamiCustomWords(template.whoami_custom_words ?? "")
+      setWhoamiNextWordByVoting(template.whoami_next_word_by_voting ?? false)
+    }
     setMaxPlayers(template.max_players as 8 | 12 | 16 | 20)
     setRoundMode(template.round_mode)
     setDiscussionTime(template.discussion_time)
@@ -183,15 +197,21 @@ export default function CreateGamePage() {
       }
     }
     
-    if (!bunkerDescription) {
+    if (gameMode === "bunker" && !bunkerDescription) {
       if (selectedBunker === "random" || !selectedBunker || selectedBunker === "") {
         bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
       } else if (selectedBunker && selectedBunker !== "custom") {
         bunkerDescription = selectedBunker
+      } else {
+        bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
       }
     }
+    if (gameMode === "whoami") {
+      catastrophe = "—"
+      bunkerDescription = "—"
+    }
 
-    // Prepare characteristics settings
+    // Prepare characteristics settings (only for bunker mode)
     const characteristicsSettings: Record<string, { enabled: boolean; customList?: string[] }> = {}
     Object.keys(characteristicsEnabled).forEach((category) => {
       const enabled = characteristicsEnabled[category]
@@ -248,6 +268,10 @@ export default function CreateGamePage() {
   const getCurrentSettings = () => {
     return {
       maxPlayers,
+      gameMode,
+      whoamiWordsPerPlayer,
+      whoamiCustomWords,
+      whoamiNextWordByVoting,
       roundMode,
       discussionTime,
       votingTime,
@@ -268,23 +292,24 @@ export default function CreateGamePage() {
     setLoading(true)
 
     try {
-      // Determine catastrophe and bunker
-      // If nothing is selected, choose random
-      let catastrophe = customCatastrophe.trim()
-      let bunkerDescription = customBunker.trim()
-      
-      if (!catastrophe) {
+      // Determine catastrophe and bunker (only for bunker mode)
+      let catastrophe = ""
+      let bunkerDescription = ""
+      if (gameMode === "bunker") {
+        catastrophe = customCatastrophe.trim()
+        bunkerDescription = customBunker.trim()
+      }
+      if (gameMode === "bunker" && !catastrophe) {
         if (selectedCatastrophe === "random" || !selectedCatastrophe || selectedCatastrophe === "") {
           catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
         } else if (selectedCatastrophe && selectedCatastrophe !== "custom") {
           catastrophe = selectedCatastrophe
         } else {
-          // If custom is selected but no custom text, choose random
           catastrophe = SAMPLE_CATASTROPHES[Math.floor(Math.random() * SAMPLE_CATASTROPHES.length)]
         }
       }
       
-      if (!bunkerDescription) {
+      if (gameMode === "bunker" && !bunkerDescription) {
         if (selectedBunker === "random" || !selectedBunker || selectedBunker === "") {
           bunkerDescription = SAMPLE_BUNKERS[Math.floor(Math.random() * SAMPLE_BUNKERS.length)]
         } else if (selectedBunker && selectedBunker !== "custom") {
@@ -331,6 +356,10 @@ export default function CreateGamePage() {
           password: roomPassword.trim() || null, // Send password if provided
           isHidden: isRoomHidden, // Send is_hidden flag
           settings: {
+            gameMode,
+            whoamiWordsPerPlayer: gameMode === "whoami" ? whoamiWordsPerPlayer : undefined,
+            whoamiCustomWords: gameMode === "whoami" ? whoamiCustomWords.trim() || undefined : undefined,
+            whoamiNextWordByVoting: gameMode === "whoami" ? whoamiNextWordByVoting : undefined,
             autoReveal,
             spectators,
             hostRole, // "host_and_player" or "host_only"
@@ -537,6 +566,19 @@ export default function CreateGamePage() {
               )}
             </div>
 
+            {/* Game Mode Tabs */}
+            <Tabs value={gameMode} onValueChange={(v) => setGameMode(v as "bunker" | "whoami")} className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="bunker" className="flex items-center gap-2">
+                  <Flame className="h-4 w-4" />
+                  Бункер
+                </TabsTrigger>
+                <TabsTrigger value="whoami" className="flex items-center gap-2">
+                  <HelpCircle className="h-4 w-4" />
+                  Кто Я?
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="bunker" className="space-y-8 mt-6">
             {/* Round Mode */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -664,45 +706,6 @@ export default function CreateGamePage() {
               <p className="text-xs text-muted-foreground">
                 Сколько спецкарт выдаётся каждому игроку в начале игры (всего типов карт: {SPECIAL_CARD_TYPES_COUNT})
               </p>
-            </div>
-
-            {/* Room Password */}
-            <div className="space-y-3">
-              <Label>Пароль на комнату (необязательно)</Label>
-              <div className="relative">
-                <Input
-                  type={showPassword ? "text" : "password"}
-                  placeholder="Введите пароль для защиты комнаты..."
-                  value={roomPassword}
-                  onChange={(e) => setRoomPassword(e.target.value)}
-                  className="bg-background/50 pr-10"
-                />
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
-                  onClick={() => setShowPassword(!showPassword)}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4 text-muted-foreground" />
-                  ) : (
-                    <Eye className="h-4 w-4 text-muted-foreground" />
-                  )}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Если установлен пароль, игроки должны будут ввести его для присоединения
-              </p>
-            </div>
-
-            {/* Hide Room */}
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <Label>Скрыть комнату</Label>
-                <p className="text-sm text-muted-foreground">Комната не будет отображаться в списке комнат</p>
-              </div>
-              <Switch checked={isRoomHidden} onCheckedChange={setIsRoomHidden} />
             </div>
 
             {/* Catastrophe Selection */}
@@ -920,6 +923,91 @@ export default function CreateGamePage() {
                 </div>
               </CollapsibleContent>
             </Collapsible>
+              </TabsContent>
+              <TabsContent value="whoami" className="space-y-6 mt-6">
+                <p className="text-sm text-muted-foreground">
+                  Каждому игроку назначается слово (существительное), которое нужно отгадать. Остальные видят слово на карточке игрока. Победит тот, кто первым отгадает все свои слова.
+                </p>
+                <div className="space-y-3">
+                  <Label>Количество слов на игрока</Label>
+                  <Select
+                    value={whoamiWordsPerPlayer.toString()}
+                    onValueChange={(v) => setWhoamiWordsPerPlayer(Number.parseInt(v, 10))}
+                  >
+                    <SelectTrigger className="bg-background/50">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {[3, 5, 7, 10, 15, 20].map((n) => (
+                        <SelectItem key={n} value={n.toString()}>
+                          {n} {n === 1 ? "слово" : n < 5 ? "слова" : "слов"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-3">
+                  <Label>Свои слова (необязательно)</Label>
+                  <Textarea
+                    placeholder={`Слова через запятую. По умолчанию: ${WHOAMI_DEFAULT_WORDS.length} слов`}
+                    value={whoamiCustomWords}
+                    onChange={(e) => setWhoamiCustomWords(e.target.value)}
+                    className="min-h-[120px] bg-background/50"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Оставьте пустым для использования стандартного списка из {WHOAMI_DEFAULT_WORDS.length} слов. Слова назначаются случайно, без повторов.
+                  </p>
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <Label>Следующее слово по голосованию</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Игрок может сменить слово только если все остальные подтвердят, что он угадал
+                    </p>
+                  </div>
+                  <Switch checked={whoamiNextWordByVoting} onCheckedChange={setWhoamiNextWordByVoting} />
+                </div>
+              </TabsContent>
+            </Tabs>
+
+            {/* Room Password - общие настройки комнаты */}
+            <div className="space-y-3">
+              <Label>Пароль на комнату (необязательно)</Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Введите пароль для защиты комнаты..."
+                  value={roomPassword}
+                  onChange={(e) => setRoomPassword(e.target.value)}
+                  className="bg-background/50 pr-10"
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0 top-0 h-full px-3 hover:bg-transparent"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  ) : (
+                    <Eye className="h-4 w-4 text-muted-foreground" />
+                  )}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Если установлен пароль, игроки должны будут ввести его для присоединения
+              </p>
+            </div>
+
+            {/* Hide Room */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <Label>Скрыть комнату</Label>
+                <p className="text-sm text-muted-foreground">Комната не будет отображаться в списке комнат</p>
+              </div>
+              <Switch checked={isRoomHidden} onCheckedChange={setIsRoomHidden} />
+            </div>
 
             <Button onClick={handleCreate} className="w-full bg-primary hover:bg-primary/90" disabled={loading}>
               {loading ? (

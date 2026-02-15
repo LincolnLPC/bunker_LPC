@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Trophy, Skull, Users, ArrowRight, RotateCcw, Home } from "lucide-react"
+import { Trophy, Skull, Users, ArrowRight, RotateCcw, Home, Star } from "lucide-react"
 import type { Player, GameState } from "@/types/game"
 
 interface GameResultsProps {
@@ -15,6 +15,91 @@ interface GameResultsProps {
 }
 
 export function GameResults({ gameState, survivors, eliminated, onPlayAgain, onBackToLobby }: GameResultsProps) {
+  const gameMode = (gameState.settings as any)?.gameMode || "bunker"
+  const whoamiWinnerId = (gameState.settings as any)?.whoamiWinnerId as string | undefined
+  const whoamiWinner = whoamiWinnerId
+    ? gameState.players.find((p) => p.id === whoamiWinnerId)
+    : undefined
+
+  if (gameMode === "whoami" && whoamiWinner) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6">
+        <div className="max-w-2xl w-full space-y-8">
+          <div className="text-center space-y-4">
+            <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-[oklch(0.7_0.2_200/0.2)] mb-4">
+              <Trophy className="w-10 h-10 text-[oklch(0.7_0.2_200)]" />
+            </div>
+            <h1 className="text-4xl font-bold text-[oklch(0.7_0.2_200)]">Игра «Кто Я?» окончена</h1>
+            <p className="text-2xl font-semibold text-foreground">
+              Победитель: <span className="text-[oklch(0.7_0.2_200)]">{whoamiWinner.name}</span>
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold flex items-center gap-2">
+              <Star className="w-5 h-5 text-[oklch(0.7_0.2_200)]" />
+              Игроки и их слова
+            </h2>
+            <ScrollArea className="h-[400px] pr-4">
+              <div className="space-y-3">
+                {gameState.players.map((player) => (
+                  <Card
+                    key={player.id}
+                    className={`bg-[oklch(0.15_0.02_60)] ${
+                      player.id === whoamiWinnerId ? "border-[oklch(0.7_0.2_200)] border-2" : "border-[oklch(0.25_0.01_60)]"
+                    }`}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <p className="font-semibold">{player.name}</p>
+                        {player.id === whoamiWinnerId && (
+                          <span className="text-xs font-bold text-[oklch(0.7_0.2_200)] px-2 py-0.5 rounded bg-[oklch(0.7_0.2_200/0.2)]">
+                            Победитель
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {(player.whoamiWords || []).map((w) => (
+                          <span
+                            key={w.id}
+                            className="text-sm px-2 py-1 rounded bg-[oklch(0.2_0.02_60)] text-muted-foreground"
+                          >
+                            {w.word}
+                          </span>
+                        ))}
+                        {(!player.whoamiWords || player.whoamiWords.length === 0) && (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        )}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+
+          <div className="flex gap-4">
+            <Button
+              variant="outline"
+              className="flex-1 border-[oklch(0.3_0.01_60)] hover:bg-[oklch(0.15_0.02_60)] bg-transparent"
+              onClick={onBackToLobby}
+            >
+              <Home className="w-4 h-4 mr-2" />
+              В лобби
+            </Button>
+            <Button
+              className="flex-1 bg-[oklch(0.7_0.2_200)] text-[oklch(0.1_0_0)] hover:bg-[oklch(0.75_0.22_200)]"
+              onClick={onPlayAgain}
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Играть снова
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const survivalRate = Math.round((survivors.length / gameState.players.length) * 100)
 
   return (

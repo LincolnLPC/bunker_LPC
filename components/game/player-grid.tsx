@@ -9,6 +9,7 @@ interface PlayerGridProps {
   players: Player[]
   maxPlayers: 8 | 12 | 16 | 20
   currentPlayerId?: string
+  gameMode?: "bunker" | "whoami"
   onToggleCharacteristic?: (playerId: string, characteristicId: string) => void
   onSelectPlayer?: (player: Player) => void
   mutedPlayers?: Set<string>
@@ -23,6 +24,7 @@ const PlayerGridInner = ({
   players,
   maxPlayers,
   currentPlayerId,
+  gameMode = "bunker",
   onToggleCharacteristic,
   onSelectPlayer,
   mutedPlayers,
@@ -58,6 +60,7 @@ const PlayerGridInner = ({
               player={player}
               slotNumber={index + 1}
               isCurrentPlayer={player.id === currentPlayerId}
+              gameMode={gameMode}
               onToggleCharacteristic={onToggleCharacteristic}
               onSelectPlayer={onSelectPlayer}
               isMuted={mutedPlayers?.has(player.id) ?? false}

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 import { getAllowedSpecialCardTypes } from "@/lib/game/special-cards-types"
+import { WHOAMI_DEFAULT_WORDS } from "@/lib/game/whoami-words"
 
 // POST - Start game
 export async function POST(request: Request) {
@@ -97,8 +98,65 @@ export async function POST(request: Request) {
 
     if (updateError) throw updateError
 
-    // Grant special cards to all players
     const settings = (room.settings as Record<string, unknown>) || {}
+    const gameMode = (settings.gameMode as string) || "bunker"
+
+    // Режим "Кто Я?": назначаем слова, не выдаём спецкарты
+    if (gameMode === "whoami") {
+      const wordsPerPlayer = Math.max(1, Math.min(20, Number(settings.whoamiWordsPerPlayer) || 5))
+      const customWordsRaw = (settings.whoamiCustomWords as string) || ""
+      const customWords = customWordsRaw
+        .split(/[,;]+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length > 0)
+
+      const wordPool = customWords.length >= wordsPerPlayer * actualPlayers.length
+        ? customWords
+        : [...WHOAMI_DEFAULT_WORDS]
+
+      const shuffle = <T>(arr: T[]): T[] => {
+        const a = [...arr]
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1))
+          ;[a[i], a[j]] = [a[j], a[i]]
+        }
+        return a
+      }
+
+      const shuffled = shuffle(wordPool)
+      const totalNeeded = actualPlayers.length * wordsPerPlayer
+      if (shuffled.length < totalNeeded) {
+        return NextResponse.json(
+          { error: "Недостаточно слов для игры. Добавьте свои слова или уменьшите количество слов на игрока." },
+          { status: 400 }
+        )
+      }
+
+      const toAssign = shuffled.slice(0, totalNeeded)
+      const inserts: { player_id: string; word: string; word_index: number; is_guessed: boolean }[] = []
+      let idx = 0
+      for (const player of actualPlayers) {
+        for (let i = 0; i < wordsPerPlayer; i++) {
+          inserts.push({
+            player_id: player.id,
+            word: toAssign[idx],
+            word_index: i,
+            is_guessed: false,
+          })
+          idx++
+        }
+      }
+
+      const { error: whoamiError } = await supabase.from("player_whoami_words").insert(inserts)
+      if (whoamiError) {
+        console.error("[GameStart] Whoami words insert error:", whoamiError)
+        return NextResponse.json({ error: "Не удалось назначить слова игрокам" }, { status: 500 })
+      }
+
+      return NextResponse.json({ success: true })
+    }
+
+    // Grant special cards to all players (только для режима Бункер)
     const characteristicsSettings = (settings.characteristics as Record<string, { enabled?: boolean }>) || {}
     const allowedCardTypes = getAllowedSpecialCardTypes(characteristicsSettings)
     const cardTypes = [...allowedCardTypes]

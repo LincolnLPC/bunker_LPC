@@ -95,6 +95,11 @@ const BunkerCharacteristicRevealedModal = dynamic(() => import("@/components/gam
   loading: () => null,
 })
 
+const WhoamiWordsModal = dynamic(() => import("@/components/game/whoami-words-modal").then(mod => ({ default: mod.WhoamiWordsModal })), {
+  ssr: false,
+  loading: () => null,
+})
+
 const CatastropheIntroScreen = dynamic(() => import("@/components/game/catastrophe-intro-screen").then(mod => ({ default: mod.CatastropheIntroScreen })), {
   ssr: false,
   loading: () => null,
@@ -150,6 +155,8 @@ export default function GamePage() {
     toggleReady,
     useSpecialCard,
     broadcastCameraEffect,
+    whoamiNextWord,
+    whoamiVoteConfirm,
   } = useGameState(roomCode, { onCameraEffect: onCameraEffectFromRoom })
 
   // Загрузить настройки медиа из профиля
@@ -253,10 +260,27 @@ export default function GamePage() {
   const [sendingMessage, setSendingMessage] = useState(false)
   const [showDebugInfo, setShowDebugInfo] = useState(false) // Hidden by default
   const [showRefreshIndicator, setShowRefreshIndicator] = useState(false) // Hidden by default
+  const [siteProductionMode, setSiteProductionMode] = useState(true) // true = hide debug
   const [topPanelVisible, setTopPanelVisible] = useState(true) // Toggle with N or T key
   const [bottomPanelVisible, setBottomPanelVisible] = useState(true) // Toggle with И or B key
   const [showTeasePanel, setShowTeasePanel] = useState(false)
   const [isPremium, setIsPremium] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/site-settings")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setSiteProductionMode(data.productionMode !== false)
+      })
+      .catch(() => {
+        if (!cancelled) setSiteProductionMode(true)
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  const showDebug = !siteProductionMode || process.env.NODE_ENV === "development"
+
   useEffect(() => {
     if (!currentPlayerId) return
     let cancelled = false
@@ -1209,6 +1233,9 @@ export default function GamePage() {
     // Only check when game is loaded and not refreshing
     if (loading || !gameState.id) return false
     
+    // Кто Я? mode — не показываем интро катастрофы
+    if ((gameState.settings as any)?.gameMode === "whoami") return false
+    
     // Must be in playing phase, round 1
     if (gameState.phase !== "playing" || gameState.currentRound !== 1) return false
     
@@ -1222,6 +1249,7 @@ export default function GamePage() {
   }, [
     loading,
     gameState.id,
+    gameState.settings,
     gameState.phase,
     gameState.currentRound,
     gameState.roundStartedAt, // Only this should change to hide the intro
@@ -1455,8 +1483,8 @@ export default function GamePage() {
         return
       }
 
-      // Check for Shift+U (case insensitive)
-      if (event.shiftKey && (event.key === "U" || event.key === "u" || event.key.toLowerCase() === "u")) {
+      // Check for Shift+U (case insensitive) - only in dev mode
+      if (showDebug && event.shiftKey && (event.key === "U" || event.key === "u" || event.key.toLowerCase() === "u")) {
         event.preventDefault()
         event.stopPropagation()
         setShowDebugInfo((prev) => {
@@ -1517,9 +1545,11 @@ export default function GamePage() {
         return
       }
 
-      // ц or w - toggle Спец. карты (работает во время игры и голосования)
+      const gameMode = (gameState.settings as any)?.gameMode || "bunker"
+
+      // ц or w - toggle Спец. карты (только в режиме Бункер)
       const specialCardsKeys = ["w", "W", "ц", "Ц"]
-      if ((gameState.phase === "playing" || gameState.phase === "voting") && !event.shiftKey && specialCardsKeys.includes(event.key) && !isSpectator) {
+      if (gameMode !== "whoami" && (gameState.phase === "playing" || gameState.phase === "voting") && !event.shiftKey && specialCardsKeys.includes(event.key) && !isSpectator) {
         event.preventDefault()
         if (showSpecialCards) {
           setShowSpecialCards(false)
@@ -1532,7 +1562,7 @@ export default function GamePage() {
       // Shortcuts only in playing phase
       if (gameState.phase !== "playing") return
 
-      // й or q - toggle Мои характеристики
+      // й or q - toggle Мои характеристики / Мои слова
       const myCharsKeys = ["q", "Q", "й", "Й"]
       if (!event.shiftKey && myCharsKeys.includes(event.key) && !isSpectator) {
         event.preventDefault()
@@ -1548,9 +1578,9 @@ export default function GamePage() {
         return
       }
 
-      // у or e - toggle Бункер
+      // у or e - toggle Бункер (только в режиме Бункер)
       const bunkerKeys = ["e", "E", "у", "У"]
-      if (!event.shiftKey && bunkerKeys.includes(event.key)) {
+      if (gameMode !== "whoami" && !event.shiftKey && bunkerKeys.includes(event.key)) {
         event.preventDefault()
         if (showBunkerInfo) {
           setShowBunkerInfo(false)
@@ -1578,6 +1608,7 @@ export default function GamePage() {
     }
   }, [
     gameState.phase,
+    gameState.settings,
     gameState.players,
     currentPlayerId,
     isSpectator,
@@ -1912,7 +1943,7 @@ export default function GamePage() {
   return (
     <div className="h-dvh max-h-dvh min-h-0 bg-background flex flex-col relative overflow-hidden">
       {/* Subtle refresh indicator in top-right corner (hidden by default, toggle with Shift+U) */}
-      {isRefreshing && showRefreshIndicator && (
+      {showDebug && isRefreshing && showRefreshIndicator && (
         <div className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border rounded-lg px-3 py-2 shadow-lg flex items-center gap-2">
           <Loader2 className="h-4 w-4 text-primary animate-spin" />
           <span className="text-sm text-muted-foreground">Обновление...</span>
@@ -1993,7 +2024,6 @@ export default function GamePage() {
                 setUnreadMessagesCount(0)
               }
             }}
-            unreadMessagesCount={unreadMessagesCount}
             onOpenSettings={() => setShowSettings(true)}
             onOpenJournal={() => setShowJournal(true)}
             onOpenAltar={() => setShowAltar(true)}
@@ -2010,7 +2040,9 @@ export default function GamePage() {
             }}
           />
 
-          <CatastropheBanner catastrophe={gameState.catastrophe} bunkerDescription={gameState.bunkerDescription} />
+          {(gameState.settings as any)?.gameMode !== "whoami" && (
+            <CatastropheBanner catastrophe={gameState.catastrophe} bunkerDescription={gameState.bunkerDescription} />
+          )}
           </div>
           </div>
 
@@ -2019,6 +2051,7 @@ export default function GamePage() {
               players={playersWithStream}
               maxPlayers={gameState.maxPlayers}
               currentPlayerId={currentPlayerId}
+              gameMode={(gameState.settings as any)?.gameMode || "bunker"}
               onToggleCharacteristic={toggleCharacteristic}
               onSelectPlayer={setSelectedPlayer}
               mutedPlayers={mutedPlayers}
@@ -2042,11 +2075,12 @@ export default function GamePage() {
             }`}
           >
           <GameControls
+            gameMode={(gameState.settings as any)?.gameMode || "bunker"}
             onOpenTeasePanel={() => setShowTeasePanel((p) => !p)}
             showTeasePanel={showTeasePanel}
             onReconnectVideo={reconnectVideo}
         isHost={isHost}
-        isSpectator={isSpectator}
+        isSpectator={!!isSpectator}
         currentPhase={gameState.phase}
         allPlayersMuted={allPlayersMuted}
         onToggleAllPlayersMute={toggleAllPlayersMute}
@@ -2145,7 +2179,7 @@ export default function GamePage() {
             })
         }}
         onRevealCharacteristic={() => setShowRevealModal(true)}
-        onViewMyCharacteristics={() => {
+        onViewMyCharacteristics={(gameState.settings as any)?.gameMode === "whoami" ? undefined : () => {
           logger.log("[GameControls] onViewMyCharacteristics clicked", {
             currentPlayerId,
             currentPlayer: currentPlayer ? { id: currentPlayer.id, name: currentPlayer.name } : null,
@@ -2162,6 +2196,13 @@ export default function GamePage() {
             })
           }
         }}
+        onViewMyWords={(gameState.settings as any)?.gameMode === "whoami" && currentPlayer ? () => {
+          setSelectedPlayer(currentPlayer)
+        } : undefined}
+        onWhoamiNextWord={(gameState.settings as any)?.gameMode === "whoami" && currentPlayerId ? async () => {
+          const r = await whoamiNextWord(currentPlayerId)
+          if (r.error) alert(r.error)
+        } : undefined}
         onStartVoting={startVoting}
         onNextRound={handleNextRound}
         onFinishGame={finishGame}
@@ -2315,8 +2356,8 @@ export default function GamePage() {
         />
       )}
       
-      {/* Debug info - remove in production */}
-      {process.env.NODE_ENV === "development" && showDebugInfo && (
+      {/* Debug info - only when dev mode (site setting or NODE_ENV) */}
+      {showDebug && showDebugInfo && (
         <div className="fixed top-20 right-4 bg-black/80 text-white text-xs p-2 rounded z-50 max-w-xs max-h-96 overflow-auto">
           <div className="font-bold mb-2">Debug Info</div>
           <div>Current Player ID: {currentPlayerId || "None"}</div>
@@ -2349,8 +2390,28 @@ export default function GamePage() {
         />
       )}
 
-      {/* Player Detail Modal */}
-      {selectedPlayer && (
+      {/* Player Detail Modal (Бункер) or Whoami Words Modal (Кто Я?) */}
+      {selectedPlayer && (gameState.settings as any)?.gameMode === "whoami" ? (() => {
+        const currentWord = selectedPlayer.whoamiWords?.find((w) => !w.isGuessed)
+        const voteKey = currentWord ? `${selectedPlayer.id}:${currentWord.wordIndex}` : ""
+        const votedIds = (gameState.whoamiVotes || {})[voteKey] || []
+        const hasVoted = !!currentPlayerId && votedIds.includes(currentPlayerId)
+        const votedPlayerNames = votedIds
+          .map((id) => gameState.players.find((p) => p.id === id)?.name)
+          .filter((n): n is string => !!n)
+        return (
+          <WhoamiWordsModal
+            player={selectedPlayer}
+            isCurrentPlayer={selectedPlayer.id === currentPlayerId}
+            onClose={() => setSelectedPlayer(null)}
+            onNextWord={whoamiNextWord}
+            onVoteConfirm={whoamiVoteConfirm}
+            nextWordByVoting={!!(gameState.settings as any)?.whoamiNextWordByVoting}
+            hasVoted={hasVoted}
+            votedPlayerNames={votedPlayerNames}
+          />
+        )
+      })() : selectedPlayer ? (
         <PlayerDetailModal
           player={selectedPlayer}
           isCurrentPlayer={selectedPlayer.id === currentPlayerId}
@@ -2367,10 +2428,10 @@ export default function GamePage() {
               : undefined
           }
         />
-      )}
+      ) : null}
 
-      {/* Characteristics Manager (Host only) */}
-      {isHost && (
+      {/* Characteristics Manager (Host only, bunker mode only) */}
+      {isHost && (gameState.settings as any)?.gameMode !== "whoami" && (
         <CharacteristicsManager
             isOpen={showCharacteristicsManager}
           onClose={() => setShowCharacteristicsManager(false)}
@@ -2407,7 +2468,7 @@ export default function GamePage() {
             }
           }}
           votedPlayerId={votedPlayerId}
-          isSpectator={isSpectator}
+          isSpectator={!!isSpectator}
           cannotVoteAgainstPlayerIds={
             (currentPlayer?.metadata?.cannotVoteAgainst ?? [])
               .filter((r: { playerId?: string; player_id?: string; cardType?: string }) => {

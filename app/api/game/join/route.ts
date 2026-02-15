@@ -403,11 +403,49 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Room is full" }, { status: 400 })
     }
 
+    const gameMode = (room.settings as any)?.gameMode || "bunker"
+
     // Find next available slot
     const takenSlots = room.game_players.map((p: { slot: number }) => p.slot)
     let nextSlot = 1
     while (takenSlots.includes(nextSlot)) {
       nextSlot++
+    }
+
+    // Режим "Кто Я?" — не назначаем характеристики, создаём игрока с заглушками
+    if (gameMode === "whoami") {
+      const takenSlotsWhoami = room.game_players.map((p: { slot: number }) => p.slot)
+      let nextSlotWhoami = 1
+      while (takenSlotsWhoami.includes(nextSlotWhoami)) nextSlotWhoami++
+
+      const { data: playerWhoami, error: playerErrorWhoami } = await supabase
+        .from("game_players")
+        .insert({
+          room_id: room.id,
+          user_id: user.id,
+          slot: nextSlotWhoami,
+          name: playerName,
+          gender: "А",
+          gender_modifier: "",
+          age: 0,
+          profession: "-",
+          is_host: room.host_id === user.id,
+          last_seen_at: new Date().toISOString(),
+        })
+        .select()
+        .single()
+
+      if (playerErrorWhoami) {
+        console.error("[Join] Error creating player (whoami):", playerErrorWhoami)
+        throw new Error(`Failed to create player: ${playerErrorWhoami.message}`)
+      }
+      if (!playerWhoami) throw new Error("Player creation failed - no player returned")
+
+      return NextResponse.json({
+        player: playerWhoami,
+        roomCode: room.room_code,
+        message: "Joined successfully (Кто Я? mode)",
+      })
     }
 
     // Get characteristics settings from room settings

@@ -145,6 +145,7 @@ export async function GET(request: Request) {
         isFull,
         catastrophe: room.catastrophe,
         bunkerDescription: room.bunker_description,
+        gameMode: (room.settings as any)?.gameMode || "bunker",
         phase: room.phase,
         currentRound: room.current_round,
         roundTimerSeconds: room.round_timer_seconds,

@@ -41,6 +41,8 @@ export interface Player {
   stream?: MediaStream
   /** Метаданные для эффектов спецкарт (cannotVoteAgainst и др.) */
   metadata?: { cannotVoteAgainst?: { playerId: string }[] }
+  /** Слова для режима "Кто Я?" */
+  whoamiWords?: { id: string; word: string; wordIndex: number; isGuessed: boolean }[]
 }
 
 export interface Vote {
@@ -110,6 +112,8 @@ export interface GameState {
     votingTime?: number // Время на голосование (секунды)
     [key: string]: any
   }
+  /** Голоса за отгадку (Кто Я?): key = "targetPlayerId:wordIndex", value = voter player IDs */
+  whoamiVotes?: Record<string, string[]>
 }
 
 export interface CharacteristicCard {

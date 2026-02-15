@@ -65,6 +65,15 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
       } catch {
         // ignore parse errors
       }
+      const whoamiWords = (p.player_whoami_words || [])
+        .map((w: any) => ({
+          id: w.id,
+          word: w.word,
+          wordIndex: w.word_index,
+          isGuessed: w.is_guessed || false,
+        }))
+        .sort((a: { wordIndex: number }, b: { wordIndex: number }) => a.wordIndex - b.wordIndex)
+
       return {
         id: p.id,
         userId: p.user_id, // Add user_id for reporting
@@ -81,6 +90,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
         videoEnabled: p.video_enabled ?? true,
         audioEnabled: p.audio_enabled ?? true,
         metadata,
+        whoamiWords: whoamiWords.length > 0 ? whoamiWords : undefined,
       }
     })
     .sort((a, b) => a.slot - b.slot) // Фиксируем порядок игроков по slot
@@ -115,6 +125,7 @@ function transformRoomToGameState(room: any, currentUserId: string): { state: Ga
     roundStartedAt: room.round_started_at || undefined,
     createdAt: room.created_at || new Date().toISOString(),
     settings: room.settings || {},
+    whoamiVotes: (room as any).whoamiVotes || undefined,
   }
 
   return { state, currentPlayerId: foundPlayerId, currentSpectatorId: foundSpectatorId }
@@ -180,6 +191,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       }
 
       // Fetch room data with user_id in game_players and spectators
+      // player_whoami_words — отдельным запросом, т.к. таблица может отсутствовать или схема не обновлена
       let { data: room, error: roomError } = await supabase
         .from("game_rooms")
         .select(
@@ -199,6 +211,46 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         )
         .eq("room_code", roomCode)
         .single()
+
+      const attachWhoamiWords = async (r: any) => {
+        if (!r?.game_players?.length) return
+        try {
+          const playerIds = r.game_players.map((p: any) => p.id)
+          const { data: whoamiWords } = await supabase
+            .from("player_whoami_words")
+            .select("*")
+            .in("player_id", playerIds)
+          if (whoamiWords?.length) {
+            for (const p of r.game_players) {
+              (p as any).player_whoami_words = whoamiWords.filter((w: any) => w.player_id === p.id)
+            }
+          }
+        } catch {
+          // Таблица player_whoami_words может отсутствовать — игнорируем
+        }
+      }
+      const attachWhoamiVotes = async (r: any) => {
+        if ((r?.settings as any)?.gameMode !== "whoami" || !r?.id) return
+        try {
+          const { data: votes } = await supabase
+            .from("whoami_word_votes")
+            .select("target_player_id, word_index, voter_player_id")
+            .eq("room_id", r.id)
+          if (votes?.length) {
+            const map: Record<string, string[]> = {}
+            for (const v of votes) {
+              const key = `${v.target_player_id}:${v.word_index}`
+              if (!map[key]) map[key] = []
+              map[key].push(v.voter_player_id)
+            }
+            (r as any).whoamiVotes = map
+          }
+        } catch {
+          // Игнорируем
+        }
+      }
+      await attachWhoamiWords(room)
+      await attachWhoamiVotes(room)
 
       // Handle case when room is deleted (PGRST116 = "Cannot coerce the result to a single JSON object")
       if (roomError) {
@@ -333,6 +385,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
               .single()
             
             if (updatedRoom) {
+              await attachWhoamiWords(updatedRoom)
+              await attachWhoamiVotes(updatedRoom)
               room = updatedRoom
             }
           } else if (joinResponse.status === 403 && (responseData?.requiresPassword || responseData?.error?.includes("паролем"))) {
@@ -487,6 +541,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 if (roomReloadError) {
                   console.error("[GameState] Error reloading room after join:", roomReloadError)
                 } else if (updatedRoom) {
+                  await attachWhoamiWords(updatedRoom)
+                  await attachWhoamiVotes(updatedRoom)
                   room = updatedRoom // Use updated room for further processing
                   
                   // Find player ID if not already set
@@ -627,6 +683,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           .single()
 
         if (!reloadError && reloadedRoom) {
+          await attachWhoamiWords(reloadedRoom)
+          await attachWhoamiVotes(reloadedRoom)
           // Check if characteristics are missing for current player
           const currentPlayerInReloaded = reloadedRoom.game_players?.find((p: any) => p.user_id === user.id)
           if (currentPlayerInReloaded && (!currentPlayerInReloaded.player_characteristics || currentPlayerInReloaded.player_characteristics.length === 0)) {
@@ -959,6 +1017,57 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       supabase.removeChannel(channel)
     }
   }, [gameState?.id, gameState?.players, supabase, loadGameStateDebounced])
+
+  // Subscribe to player_whoami_words changes (Кто Я? mode)
+  useEffect(() => {
+    const gameMode = (gameState?.settings as any)?.gameMode
+    if (!gameState?.id || gameMode !== "whoami" || !gameState.players?.length) return
+
+    const playerIds = gameState.players.map((p) => p.id).filter(Boolean)
+    if (playerIds.length === 0) return
+
+    const channel = supabase
+      .channel(`player_whoami_words_changes:${gameState.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "player_whoami_words",
+          filter: `player_id=in.(${playerIds.join(",")})`,
+        },
+        () => loadGameStateDebounced()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [gameState?.id, gameState?.players, gameState?.settings, supabase, loadGameStateDebounced])
+
+  // Subscribe to whoami_word_votes changes (Кто Я? mode)
+  useEffect(() => {
+    const gameMode = (gameState?.settings as any)?.gameMode
+    if (!gameState?.id || gameMode !== "whoami") return
+
+    const channel = supabase
+      .channel(`whoami_word_votes_changes:${gameState.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "whoami_word_votes",
+          filter: `room_id=eq.${gameState.id}`,
+        },
+        () => loadGameStateDebounced()
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [gameState?.id, gameState?.settings, supabase, loadGameStateDebounced])
 
   // Subscribe to chat_messages table changes for realtime chat
   useEffect(() => {
@@ -1812,6 +1921,44 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     }
   }, [gameState, currentPlayerId])
 
+  // Кто Я?: следующее слово
+  const whoamiNextWord = useCallback(
+    async (playerId: string) => {
+      if (!gameState?.id) return { error: "No game" }
+      const res = await fetch("/api/game/whoami/next-word", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: gameState.id, targetPlayerId: playerId }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) return { error: data.error || "Failed" }
+      loadGameState()
+      return { success: true, ...data }
+    },
+    [gameState?.id, loadGameState]
+  )
+
+  // Кто Я?: подтвердить, что игрок отгадал слово (голосование)
+  const whoamiVoteConfirm = useCallback(
+    async (targetPlayerId: string) => {
+      if (!gameState?.id) return { error: "No game" }
+      const res = await fetch("/api/game/whoami/next-word", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: gameState.id,
+          targetPlayerId,
+          vote: true,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) return { error: data.error || "Failed" }
+      loadGameState()
+      return { success: true }
+    },
+    [gameState?.id, loadGameState]
+  )
+
   // Use special card
   const useSpecialCard = useCallback(
     async (cardId: string, cardType: string, targetPlayerId?: string, characteristicId?: string, category?: string) => {
@@ -1908,5 +2055,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     getSpecialCards,
     useSpecialCard,
     broadcastCameraEffect,
+    whoamiNextWord,
+    whoamiVoteConfirm,
   }
 }
