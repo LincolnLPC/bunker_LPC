@@ -4,7 +4,7 @@ import type React from "react"
 
 import { Suspense, useState } from "react"
 import Link from "next/link"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -13,7 +13,6 @@ import { Flame, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 
 function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const redirectTo = searchParams.get("redirect") || "/lobby"
   const [email, setEmail] = useState("")
@@ -38,7 +37,8 @@ function LoginForm() {
       return
     }
 
-    router.push(redirectTo)
+    // Full page navigation ensures auth cookies are sent on next request (fixes session persistence on Vercel)
+    window.location.href = redirectTo
   }
 
   return (

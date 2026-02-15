@@ -83,15 +83,19 @@ async function updateSessionInner(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   // Protected routes - redirect to login if not authenticated
+  // Preserve intended path (including query, e.g. /lobby/join?code=ABC123) so user returns there after login
+  const redirectTarget = request.nextUrl.pathname + (request.nextUrl.search || "")
   if (request.nextUrl.pathname.startsWith("/game") && !user) {
     const url = request.nextUrl.clone()
     url.pathname = "/auth/login"
+    url.searchParams.set("redirect", redirectTarget)
     return NextResponse.redirect(url)
   }
 
   if (request.nextUrl.pathname.startsWith("/lobby") && !user) {
     const url = request.nextUrl.clone()
     url.pathname = "/auth/login"
+    url.searchParams.set("redirect", redirectTarget)
     return NextResponse.redirect(url)
   }
 
