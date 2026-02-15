@@ -23,6 +23,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
   const [audioEnabled, setAudioEnabled] = useState(true)
   const [videoEnabled, setVideoEnabled] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [isMediaLoading, setIsMediaLoading] = useState(false)
   const [connectionStates, setConnectionStates] = useState<Map<string, RTCPeerConnectionState>>(new Map())
   const [signalingConnected, setSignalingConnected] = useState(false)
   const [reconnectTrigger, setReconnectTrigger] = useState(0)
@@ -64,12 +65,12 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
   // Initialize local media stream
   const initializeMedia = useCallback(async (options?: { video?: boolean; audio?: boolean }) => {
-    // Определяем переменные вне try-catch, чтобы они были доступны в catch
     const requestVideo = options?.video !== false
     const requestAudio = options?.audio !== false
     let videoConstraints: MediaTrackConstraints | boolean = false
     let audioConstraints: MediaTrackConstraints | boolean = false
-    
+
+    setIsMediaLoading(true)
     try {
       // Если указан VDO.ninja URL, пропускаем getUserMedia для видео
       // VDO.ninja будет отображаться через iframe в PlayerCard
@@ -121,46 +122,46 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         console.log("[WebRTC] Permissions API not available or failed (this is OK):", permError)
       }
 
-      // Проверка доступных устройств (для диагностики)
-      console.log("[WebRTC] Checking available devices...")
+      // Проверка доступных устройств (валидация deviceId — не используем устаревшие ID)
+      let validCameraDeviceId: string | null = null
+      let validMicrophoneDeviceId: string | null = null
       try {
         const devices = await navigator.mediaDevices.enumerateDevices()
         const videoDevices = devices.filter(d => d.kind === 'videoinput')
         const audioDevices = devices.filter(d => d.kind === 'audioinput')
-        console.log("[WebRTC] Available devices:", {
-          videoDevices: videoDevices.length,
-          audioDevices: audioDevices.length,
-          videoDeviceLabels: videoDevices.map(d => ({ id: d.deviceId, label: d.label || 'No label (permission not granted)' })),
-          audioDeviceLabels: audioDevices.map(d => ({ id: d.deviceId, label: d.label || 'No label (permission not granted)' })),
-        })
-        
-        // Если устройства без label, это означает, что разрешение еще не предоставлено
-        if (videoDevices.length > 0 && videoDevices.every(d => !d.label)) {
-          console.warn("[WebRTC] Video devices found but no labels - permission may not be granted")
+        const videoIds = new Set(videoDevices.map(d => d.deviceId))
+        const audioIds = new Set(audioDevices.map(d => d.deviceId))
+        if (mediaSettings?.cameraDeviceId && videoIds.has(mediaSettings.cameraDeviceId)) {
+          validCameraDeviceId = mediaSettings.cameraDeviceId
+        } else if (mediaSettings?.cameraDeviceId) {
+          console.warn("[WebRTC] cameraDeviceId from profile not found in enumerateDevices, will use default")
         }
-        if (audioDevices.length > 0 && audioDevices.every(d => !d.label)) {
-          console.warn("[WebRTC] Audio devices found but no labels - permission may not be granted")
+        if (mediaSettings?.microphoneDeviceId && audioIds.has(mediaSettings.microphoneDeviceId)) {
+          validMicrophoneDeviceId = mediaSettings.microphoneDeviceId
+        } else if (mediaSettings?.microphoneDeviceId) {
+          console.warn("[WebRTC] microphoneDeviceId from profile not found in enumerateDevices, will use default")
         }
+        console.log("[WebRTC] Device validation:", { validCameraDeviceId, validMicrophoneDeviceId, videoCount: videoDevices.length, audioCount: audioDevices.length })
       } catch (enumError) {
         console.warn("[WebRTC] Error enumerating devices (this is OK if permission not granted yet):", enumError)
       }
 
-      // Подготовить constraints для видео (с deviceId если задан)
+      // Подготовить constraints для видео (с deviceId только если валиден)
       const videoConstraintsWithDevice = requestVideo
         ? {
             width: { ideal: 640 },
             height: { ideal: 480 },
             facingMode: "user",
-            ...(mediaSettings?.cameraDeviceId && { deviceId: { ideal: mediaSettings.cameraDeviceId } }),
+            ...(validCameraDeviceId && { deviceId: { ideal: validCameraDeviceId } }),
           }
         : false
 
-      // Подготовить constraints для аудио (с deviceId если задан)
+      // Подготовить constraints для аудио (с deviceId только если валиден)
       const audioConstraintsWithDevice = requestAudio
         ? {
             echoCancellation: true,
             noiseSuppression: true,
-            ...(mediaSettings?.microphoneDeviceId && { deviceId: { ideal: mediaSettings.microphoneDeviceId } }),
+            ...(validMicrophoneDeviceId && { deviceId: { ideal: validMicrophoneDeviceId } }),
           }
         : false
 
@@ -218,6 +219,14 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           console.warn("[WebRTC] First attempt failed, retrying without deviceId" + (isTimeout ? " with longer timeout" : "") + ":", { name, message: msg })
           stream = await tryGetUserMedia(false, isTimeout ? 40000 : undefined)
           console.log("[WebRTC] ✅ getUserMedia succeeded (fallback retry)")
+          // Сброс устаревших deviceId в профиле — следующий вход не будет использовать невалидные ID
+          if (hasDevicePref) {
+            fetch("/api/profile/media-settings", {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cameraDeviceId: null, microphoneDeviceId: null }),
+            }).catch((e) => console.debug("[WebRTC] Failed to clear stale deviceIds in profile:", e))
+          }
         } else {
           throw firstErr
         }
@@ -413,6 +422,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       }
       
       return null
+    } finally {
+      setIsMediaLoading(false)
     }
   }, [mediaSettings])
 
@@ -1724,6 +1735,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     audioEnabled,
     videoEnabled,
     error,
+    isMediaLoading,
     clearMediaError,
     connectionStates,
     initializeMedia,

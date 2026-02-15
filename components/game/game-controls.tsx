@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile, RefreshCw, List, ArrowRight } from "lucide-react"
+import { Mic, MicOff, Video, VideoOff, Hand, Vote, SkipForward, CheckCircle, Sparkles, Home, Settings2, Camera, FileText, Volume2, VolumeX, BarChart3, Flag, Smile, RefreshCw, List, ArrowRight, Loader2 } from "lucide-react"
 
 interface GameControlsProps {
   gameMode?: "bunker" | "whoami"
@@ -33,6 +33,7 @@ interface GameControlsProps {
   onReconnectVideo?: () => void
   onViewMyWords?: () => void
   onWhoamiNextWord?: () => void
+  isMediaLoading?: boolean
 }
 
 export function GameControls({
@@ -65,6 +66,7 @@ export function GameControls({
   onOpenTeasePanel,
   showTeasePanel = false,
   onReconnectVideo,
+  isMediaLoading = false,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -72,15 +74,22 @@ export function GameControls({
         {/* Media controls */}
         <div className="flex items-center gap-2 px-3 py-1 bg-[oklch(0.12_0.01_60)] rounded-lg">
           {!hasLocalStream && onRequestMedia && (
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-primary text-primary hover:bg-primary/10"
-              onClick={onRequestMedia}
-            >
-              <Camera className="w-4 h-4 mr-2" />
-              Включить камеру
-            </Button>
+            isMediaLoading ? (
+              <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-muted-foreground">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Подключение камеры…
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="border-primary text-primary hover:bg-primary/10"
+                onClick={onRequestMedia}
+              >
+                <Camera className="w-4 h-4 mr-2" />
+                Включить камеру
+              </Button>
+            )
           )}
           {hasLocalStream && (
             <>

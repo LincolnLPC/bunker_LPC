@@ -168,6 +168,7 @@ export default function GamePage() {
     audioEnabled,
     videoEnabled,
     error: mediaError,
+    isMediaLoading,
     clearMediaError,
     initializeMedia,
     toggleAudio,
@@ -1936,8 +1937,18 @@ export default function GamePage() {
         />
       )}
 
+      {/* Media loading indicator */}
+      {isMediaLoading && !localStream && (
+        <div className="bg-primary/10 border-b border-primary/30 px-4 py-2 text-sm text-primary">
+          <div className="max-w-7xl mx-auto flex items-center gap-2">
+            <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+            <span>Подключение камеры и микрофона…</span>
+          </div>
+        </div>
+      )}
+
       {/* Media error banner */}
-      {mediaError && !localStream && (
+      {mediaError && !localStream && !isMediaLoading && (
         <div className="bg-destructive/20 border-b border-destructive/50 px-4 py-2 text-sm text-destructive">
           <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
             <span className="flex-1 min-w-0">{mediaError}</span>
@@ -2045,6 +2056,7 @@ export default function GamePage() {
             onOpenTeasePanel={() => setShowTeasePanel((p) => !p)}
             showTeasePanel={showTeasePanel}
             onReconnectVideo={reconnectVideo}
+            isMediaLoading={isMediaLoading}
         isHost={isHost}
         isSpectator={!!isSpectator}
         currentPhase={gameState.phase}

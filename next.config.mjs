@@ -2,6 +2,21 @@ import crypto from 'crypto'
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Permission Policy — явно разрешаем камеру и микрофон только для нашего origin
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Permissions-Policy',
+            value: 'camera=(self), microphone=(self), geolocation=()',
+          },
+        ],
+      },
+    ]
+  },
+
   // Оригинальный индикатор включён; скрываем при production_mode через DevIndicatorGate
   typescript: {
     ignoreBuildErrors: true,

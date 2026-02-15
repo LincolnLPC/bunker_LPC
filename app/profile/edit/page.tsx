@@ -96,8 +96,8 @@ function EditProfileForm() {
     loadProfile()
   }, [router])
 
-  // Функция для загрузки списка устройств (БЕЗ getUserMedia — не занимаем камеру/микрофон,
-  // иначе они будут заняты и недоступны при входе в игру)
+  // Единый источник медиа: getUserMedia вызывается ТОЛЬКО на странице игры (hooks/use-webrtc.ts).
+  // Здесь — только enumerateDevices, без getUserMedia, чтобы не занимать камеру/микрофон.
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true)
     try {
