@@ -569,7 +569,8 @@ export default function GamePage() {
 
   // Initialize media when game is loaded and room is ready
   const [mediaInitialized, setMediaInitialized] = useState(false)
-  
+  const mediaRequestInProgressRef = useRef(false)
+
   useEffect(() => {
     // Логируем состояние для диагностики
     logger.log("[Media] Checking conditions for media initialization:", {
@@ -592,14 +593,17 @@ export default function GamePage() {
     
     // Запрашиваем доступ только когда игра загружена и комната существует, и еще не инициализировали
     // Также проверяем настройки пользователя - должен ли автоматически запрашивать доступ
+    // mediaRequestInProgressRef предотвращает повторные одновременные вызовы (причина таймаута)
     if (
       !loading &&
       !mediaSettingsLoading &&
       gameState.id &&
       currentPlayerId &&
       !mediaInitialized &&
+      !mediaRequestInProgressRef.current &&
       (mediaSettings.autoRequestCamera || mediaSettings.autoRequestMicrophone)
     ) {
+      mediaRequestInProgressRef.current = true
       logger.log("[Media] Conditions met - requesting camera/microphone access...", {
         loading,
         mediaSettingsLoading,
@@ -652,8 +656,10 @@ export default function GamePage() {
             // Set initialized to true so we don't keep retrying automatically
             setMediaInitialized(true)
           }
+          mediaRequestInProgressRef.current = false
         })
         .catch((err) => {
+          mediaRequestInProgressRef.current = false
           // Детальное логирование ошибки - логируем саму ошибку и её свойства
           console.error("[Media] ❌ Caught error in initializeMedia:", err)
           console.error("[Media] Error type:", typeof err)
@@ -726,6 +732,7 @@ export default function GamePage() {
       if (!gameState.id) reasons.push("no roomId")
       if (!currentPlayerId) reasons.push("no currentPlayerId")
       if (mediaInitialized) reasons.push("already initialized")
+      if (mediaRequestInProgressRef.current) reasons.push("request already in progress")
       if (!mediaSettings.autoRequestCamera && !mediaSettings.autoRequestMicrophone) reasons.push("auto-request disabled")
       
       if (reasons.length > 0) {
