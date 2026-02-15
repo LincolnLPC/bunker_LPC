@@ -41,6 +41,7 @@ export default function CreateGamePage() {
   const [customCatastrophe, setCustomCatastrophe] = useState("")
   const [customBunker, setCustomBunker] = useState("")
   const [createdRoomCode, setCreatedRoomCode] = useState<string | null>(null)
+  const [roomCodeCopied, setRoomCodeCopied] = useState(false)
   const [inviteLinkCopied, setInviteLinkCopied] = useState(false)
   const [excludeNonBinaryGender, setExcludeNonBinaryGender] = useState(false)
   const [eliminatedCanVote, setEliminatedCanVote] = useState(false)
@@ -428,37 +429,43 @@ export default function CreateGamePage() {
     }
   }
 
+  const copyToClipboard = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text)
+        return true
+      }
+      const textArea = document.createElement("textarea")
+      textArea.value = text
+      textArea.setAttribute("readonly", "")
+      textArea.style.position = "fixed"
+      textArea.style.left = "-9999px"
+      textArea.style.top = "-9999px"
+      document.body.appendChild(textArea)
+      textArea.focus()
+      textArea.setSelectionRange(0, text.length)
+      const ok = document.execCommand("copy")
+      document.body.removeChild(textArea)
+      return ok
+    } catch {
+      return false
+    }
+  }
+
+  const handleCopyRoomCode = async () => {
+    if (!createdRoomCode) return
+    if (await copyToClipboard(createdRoomCode)) {
+      setRoomCodeCopied(true)
+      setTimeout(() => setRoomCodeCopied(false), 2000)
+    }
+  }
+
   const handleCopyInviteLink = async () => {
     if (!createdRoomCode) return
     const inviteLink = `${window.location.origin}/lobby/join?code=${createdRoomCode}`
-    
-    try {
-      // Check if clipboard API is available
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(inviteLink)
-        setInviteLinkCopied(true)
-        setTimeout(() => setInviteLinkCopied(false), 2000)
-      } else {
-        // Fallback for browsers that don't support clipboard API
-        const textArea = document.createElement('textarea')
-        textArea.value = inviteLink
-        textArea.style.position = 'fixed'
-        textArea.style.left = '-999999px'
-        textArea.style.top = '-999999px'
-        document.body.appendChild(textArea)
-        textArea.focus()
-        textArea.select()
-        try {
-          document.execCommand('copy')
-          setInviteLinkCopied(true)
-          setTimeout(() => setInviteLinkCopied(false), 2000)
-        } catch (err) {
-          console.error('Failed to copy:', err)
-        }
-        document.body.removeChild(textArea)
-      }
-    } catch (err) {
-      console.error('Failed to copy invite link:', err)
+    if (await copyToClipboard(inviteLink)) {
+      setInviteLinkCopied(true)
+      setTimeout(() => setInviteLinkCopied(false), 2000)
     }
   }
 
@@ -1040,10 +1047,11 @@ export default function CreateGamePage() {
                         <Button
                           variant="outline"
                           size="icon"
-                          onClick={handleCopyInviteLink}
+                          onClick={handleCopyRoomCode}
                           className="flex-shrink-0"
+                          title="Скопировать код"
                         >
-                          {inviteLinkCopied ? (
+                          {roomCodeCopied ? (
                             <Check className="h-4 w-4 text-green-500" />
                           ) : (
                             <Copy className="h-4 w-4" />

@@ -30,32 +30,25 @@ export function WaitingRoom({
 
   const handleCopyCode = async () => {
     try {
-      // Check if clipboard API is available
-      if (navigator.clipboard && navigator.clipboard.writeText) {
+      if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(gameState.roomCode)
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
       } else {
-        // Fallback for browsers that don't support clipboard API
-        const textArea = document.createElement('textarea')
+        const textArea = document.createElement("textarea")
         textArea.value = gameState.roomCode
-        textArea.style.position = 'fixed'
-        textArea.style.left = '-999999px'
-        textArea.style.top = '-999999px'
+        textArea.setAttribute("readonly", "")
+        textArea.style.position = "fixed"
+        textArea.style.left = "-9999px"
+        textArea.style.top = "-9999px"
         document.body.appendChild(textArea)
         textArea.focus()
-        textArea.select()
-        try {
-          document.execCommand('copy')
-          setCopied(true)
-          setTimeout(() => setCopied(false), 2000)
-        } catch (err) {
-          console.error('Failed to copy:', err)
-        }
+        textArea.setSelectionRange(0, gameState.roomCode.length)
+        document.execCommand("copy")
         document.body.removeChild(textArea)
       }
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     } catch (err) {
-      console.error('Failed to copy room code:', err)
+      console.error("Failed to copy room code:", err)
     }
   }
 
