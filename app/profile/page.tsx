@@ -5,10 +5,11 @@ import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2, Award, MessageSquare, UserPlus, Circle } from "lucide-react"
+import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2, Award, MessageSquare, UserPlus, Circle, Mail } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { AchievementsSection } from "@/components/profile/achievements-section"
@@ -39,6 +40,10 @@ function ProfilePageContent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [friends, setFriends] = useState<{ friend_user_id: string; display_name: string | null; username: string; avatar_url: string | null; last_seen_at: string | null; show_online_status: boolean }[]>([])
+  const [friendEmail, setFriendEmail] = useState("")
+  const [addByEmailLoading, setAddByEmailLoading] = useState(false)
+  const [addByEmailError, setAddByEmailError] = useState<string | null>(null)
+  const [addByEmailSuccess, setAddByEmailSuccess] = useState(false)
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -359,7 +364,58 @@ function ProfilePageContent() {
               </Link>
             </div>
           </CardHeader>
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-4">
+            <div className="flex flex-col sm:flex-row gap-2">
+              <div className="flex-1 flex gap-2">
+                <Input
+                  type="email"
+                  placeholder="Email друга"
+                  value={friendEmail}
+                  onChange={(e) => {
+                    setFriendEmail(e.target.value)
+                    setAddByEmailError(null)
+                    setAddByEmailSuccess(false)
+                  }}
+                  className="flex-1"
+                />
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={addByEmailLoading || !friendEmail.trim()}
+                  onClick={async () => {
+                    setAddByEmailError(null)
+                    setAddByEmailSuccess(false)
+                    setAddByEmailLoading(true)
+                    try {
+                      const res = await fetch("/api/friends/add-by-email", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ email: friendEmail.trim() }),
+                      })
+                      const data = await res.json()
+                      if (res.ok) {
+                        setAddByEmailSuccess(true)
+                        setFriendEmail("")
+                        const fr = await fetch("/api/friends?status=accepted")
+                        const fd = await fr.json()
+                        if (fd.friends) setFriends(fd.friends)
+                      } else {
+                        setAddByEmailError(data.error || "Ошибка")
+                      }
+                    } catch {
+                      setAddByEmailError("Ошибка запроса")
+                    } finally {
+                      setAddByEmailLoading(false)
+                    }
+                  }}
+                >
+                  {addByEmailLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4 mr-1" />}
+                  Добавить по email
+                </Button>
+              </div>
+            </div>
+            {addByEmailError && <p className="text-sm text-destructive">{addByEmailError}</p>}
+            {addByEmailSuccess && <p className="text-sm text-green-600">Запрос в друзья отправлен.</p>}
             {friends.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Пока нет друзей. Добавляйте игроков в друзья с их страницы профиля.

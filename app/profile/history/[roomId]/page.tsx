@@ -21,8 +21,10 @@ import {
   User,
   Shield,
   MessageSquare,
+  UserPlus,
 } from "lucide-react"
 import { safeFetch } from "@/lib/api/safe-fetch"
+import { createClient } from "@/lib/supabase/client"
 
 interface GameDetails {
   game: {
@@ -102,6 +104,16 @@ export default function GameDetailsPage() {
   const [gameDetails, setGameDetails] = useState<GameDetails | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const getCurrentUser = async () => {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      setCurrentUserId(user?.id ?? null)
+    }
+    getCurrentUser()
+  }, [])
 
   useEffect(() => {
     if (!roomId) return
@@ -282,6 +294,15 @@ export default function GameDetailsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground pb-2 border-b">
+                <span>Режим игры: {(gameDetails.game.settings as any)?.gameMode === "whoami" ? "Кто я" : "Бункер"}</span>
+                <span>Раунды: {(gameDetails.game.settings as any)?.roundMode === "manual" ? "ручной" : "автоматический"}</span>
+                {currentUserId && (
+                  <span>
+                    Ваша роль: {gameDetails.players.find((p) => p.userId === currentUserId)?.isHost ? "Ведущий" : "Игрок"}
+                  </span>
+                )}
+              </div>
               <div>
                 <p className="text-sm font-semibold text-muted-foreground mb-1">Катастрофа</p>
                 <p className="text-lg font-medium">{gameDetails.game.catastrophe}</p>
@@ -366,10 +387,10 @@ export default function GameDetailsPage() {
                     {gameDetails.survivors.map((player) => (
                       <Card key={player.id} className="bg-green-950/20 border-green-500/30">
                         <CardContent className="p-4">
-                          <div className="flex items-start justify-between">
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2 mb-2">
-                                <Trophy className="w-4 h-4 text-green-400" />
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                <Trophy className="w-4 h-4 text-green-400 shrink-0" />
                                 <p className="font-semibold">{player.displayName}</p>
                                 {player.isHost && (
                                   <Badge variant="secondary" className="text-xs">
@@ -382,15 +403,21 @@ export default function GameDetailsPage() {
                                 {player.gender}, {player.age} лет • {player.profession}
                               </div>
                               <div className="flex flex-wrap gap-2">
-                                {player.characteristics
-                                  .filter((c) => c.isRevealed)
-                                  .map((char) => (
-                                    <Badge key={char.id} variant="outline" className="text-xs">
-                                      {getCategoryLabel(char.category)}: {char.value}
-                                    </Badge>
-                                  ))}
+                                {player.characteristics.map((char) => (
+                                  <Badge key={char.id} variant="outline" className="text-xs">
+                                    {getCategoryLabel(char.category)}: {char.value}
+                                  </Badge>
+                                ))}
                               </div>
                             </div>
+                            {player.userId && player.userId !== currentUserId && (
+                              <Link href={`/profile/${player.userId}`}>
+                                <Button variant="outline" size="sm" className="shrink-0">
+                                  <UserPlus className="w-4 h-4 mr-1" />
+                                  В друзья
+                                </Button>
+                              </Link>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -409,10 +436,10 @@ export default function GameDetailsPage() {
                       {gameDetails.eliminated.map((player) => (
                         <Card key={player.id} className="bg-destructive/10 border-destructive/30 opacity-75">
                           <CardContent className="p-4">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <div className="flex items-center gap-2 mb-2">
-                                  <Skull className="w-4 h-4 text-destructive" />
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                  <Skull className="w-4 h-4 text-destructive shrink-0" />
                                   <p className="font-semibold line-through">{player.displayName}</p>
                                   {player.isHost && (
                                     <Badge variant="secondary" className="text-xs">
@@ -425,15 +452,21 @@ export default function GameDetailsPage() {
                                   {player.gender}, {player.age} лет • {player.profession}
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                  {player.characteristics
-                                    .filter((c) => c.isRevealed)
-                                    .map((char) => (
-                                      <Badge key={char.id} variant="outline" className="text-xs">
-                                        {getCategoryLabel(char.category)}: {char.value}
-                                      </Badge>
-                                    ))}
+                                  {player.characteristics.map((char) => (
+                                    <Badge key={char.id} variant="outline" className="text-xs">
+                                      {getCategoryLabel(char.category)}: {char.value}
+                                    </Badge>
+                                  ))}
                                 </div>
                               </div>
+                              {player.userId && player.userId !== currentUserId && (
+                                <Link href={`/profile/${player.userId}`}>
+                                  <Button variant="outline" size="sm" className="shrink-0">
+                                    <UserPlus className="w-4 h-4 mr-1" />
+                                    В друзья
+                                  </Button>
+                                </Link>
+                              )}
                             </div>
                           </CardContent>
                         </Card>

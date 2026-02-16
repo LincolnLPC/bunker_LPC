@@ -20,6 +20,9 @@ interface GameHistoryItem {
   phase: string
   players_count?: number
   was_winner?: boolean
+  is_host?: boolean
+  round_mode?: string
+  game_mode?: string
 }
 
 export default function GameHistoryPage() {
@@ -44,7 +47,7 @@ export default function GameHistoryPage() {
         // First, get all finished game rooms where user participated
         const { data: playerGames, error: playerGamesError } = await supabase
           .from("game_players")
-          .select("id, is_eliminated, room_id")
+          .select("id, is_eliminated, room_id, is_host")
           .eq("user_id", user.id)
 
         if (playerGamesError) throw playerGamesError
@@ -55,13 +58,11 @@ export default function GameHistoryPage() {
           return
         }
 
-        // Get room IDs
         const roomIds = playerGames.map((pg) => pg.room_id)
 
-        // Get finished games
         const { data: finishedRooms, error: roomsError } = await supabase
           .from("game_rooms")
-          .select("id, room_code, catastrophe, bunker_description, current_round, max_players, created_at, phase")
+          .select("id, room_code, catastrophe, bunker_description, current_round, max_players, created_at, phase, settings")
           .in("id", roomIds)
           .eq("phase", "finished")
           .order("created_at", { ascending: false })
@@ -69,15 +70,16 @@ export default function GameHistoryPage() {
 
         if (roomsError) throw roomsError
 
-        // Create a map of player data by room_id
-        const playerMap = new Map<string, typeof playerGames[0]>()
+        const playerMap = new Map<string, (typeof playerGames)[0]>()
         playerGames.forEach((pg) => {
           playerMap.set(pg.room_id, pg)
         })
 
-        // Transform and enrich data
         const gamesData: GameHistoryItem[] = (finishedRooms || []).map((room: any) => {
           const playerData = playerMap.get(room.id)
+          const settings = room.settings || {}
+          const roundMode = settings.roundMode || "automatic"
+          const gameMode = settings.gameMode || "bunker"
           return {
             id: room.id,
             room_code: room.room_code,
@@ -88,6 +90,9 @@ export default function GameHistoryPage() {
             created_at: room.created_at,
             phase: room.phase,
             was_winner: playerData ? !playerData.is_eliminated : false,
+            is_host: !!playerData?.is_host,
+            round_mode: roundMode,
+            game_mode: gameMode,
           }
         })
 
@@ -210,6 +215,13 @@ export default function GameHistoryPage() {
                   <div>
                     <p className="text-sm font-semibold text-muted-foreground mb-1">Бункер</p>
                     <p className="text-sm text-foreground line-clamp-2">{game.bunker_description}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2 pt-2 border-t border-border/50 text-sm text-muted-foreground">
+                    <span>Режим: {game.game_mode === "whoami" ? "Кто я" : "Бункер"}</span>
+                    <span>•</span>
+                    <span>Раунды: {game.round_mode === "manual" ? "ручной" : "авто"}</span>
+                    <span>•</span>
+                    <span>Роль: {game.is_host ? "Ведущий" : "Игрок"}</span>
                   </div>
                   <div className="flex items-center gap-4 pt-2 border-t border-border/50">
                     <div className="flex items-center gap-2 text-sm text-muted-foreground">
