@@ -290,8 +290,8 @@ function ProfileViewContent() {
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-primary flex-shrink-0" />
-                <span>Рейтинг игрока</span>
+                <Award className="w-7 h-7 text-primary flex-shrink-0" />
+                <span>Игрок</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -301,8 +301,8 @@ function ProfileViewContent() {
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Mic className="w-5 h-5 text-primary flex-shrink-0" />
-                <span>Рейтинг ведущего</span>
+                <Mic className="w-7 h-7 text-primary flex-shrink-0" />
+                <span>Ведущий</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -312,7 +312,7 @@ function ProfileViewContent() {
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-primary flex-shrink-0" />
+                <Calendar className="w-7 h-7 text-primary flex-shrink-0" />
                 <span>Игр сыграно</span>
               </CardTitle>
             </CardHeader>
@@ -323,7 +323,7 @@ function ProfileViewContent() {
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-primary flex-shrink-0" />
+                <Trophy className="w-7 h-7 text-primary flex-shrink-0" />
                 <span>Побед</span>
               </CardTitle>
             </CardHeader>
@@ -341,7 +341,7 @@ function ProfileViewContent() {
         <Card className="bg-card/50 border-border/50 mb-6">
           <CardHeader className="pb-2">
             <CardTitle className="text-lg flex items-center gap-2">
-              <Users className="w-5 h-5 text-primary flex-shrink-0" />
+              <Users className="w-7 h-7 text-primary flex-shrink-0" />
               <span>Аккаунт</span>
             </CardTitle>
           </CardHeader>

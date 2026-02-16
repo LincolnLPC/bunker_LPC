@@ -4,7 +4,6 @@ import { useEffect, useState, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -20,6 +19,13 @@ interface Conversation {
   last_activity_at: string
   last_message_from_me: boolean
   unread_count: number
+}
+
+interface FriendEntry {
+  friend_user_id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
 }
 
 interface Message {
@@ -44,14 +50,18 @@ function MessagesContent() {
   const [newBody, setNewBody] = useState("")
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [friendRequestsIncoming, setFriendRequestsIncoming] = useState<{ id?: string; user_id: string; username: string; display_name: string | null; avatar_url: string | null }[]>([])
+  const [friends, setFriends] = useState<FriendEntry[]>([])
   const [totalUnread, setTotalUnread] = useState(0)
 
-  const loadFriendRequests = async () => {
+  const loadFriendsAndRequests = async () => {
     const res = await fetch("/api/friends")
     const data = await res.json()
     if (res.ok && data.friends) {
-      const incoming = data.friends.filter((f: any) => f.is_incoming_request)
-      setFriendRequestsIncoming(incoming.map((f: any) => ({ id: f.id, user_id: f.friend_user_id, username: f.username, display_name: f.display_name, avatar_url: f.avatar_url })))
+      const list = data.friends as any[]
+      const incoming = list.filter((f) => f.is_incoming_request)
+      setFriendRequestsIncoming(incoming.map((f) => ({ id: f.id, user_id: f.friend_user_id, username: f.username, display_name: f.display_name, avatar_url: f.avatar_url })))
+      const accepted = list.filter((f) => f.status === "accepted").map((f) => ({ friend_user_id: f.friend_user_id, username: f.username, display_name: f.display_name, avatar_url: f.avatar_url }))
+      setFriends(accepted)
     }
   }
 
@@ -88,7 +98,7 @@ function MessagesContent() {
       }
       setCurrentUserId(user.id)
       await loadConversations()
-      await loadFriendRequests()
+      await loadFriendsAndRequests()
       if (withUserId) await loadThread(withUserId)
       setLoading(false)
     }
@@ -148,103 +158,129 @@ function MessagesContent() {
         </span>
       </header>
 
-      <main className="relative z-10 flex-1 flex overflow-hidden max-w-4xl mx-auto w-full">
-        {!withUserId ? (
-          <Card className="flex-1 m-4 bg-card/50 border-border/50 overflow-hidden flex flex-col">
-            <CardContent className="p-0 flex-1 overflow-auto">
-              {friendRequestsIncoming.length > 0 && (
-                <div className="p-3 border-b border-border/50">
-                  <p className="text-sm font-medium text-muted-foreground mb-2">Заявки в друзья</p>
-                  <ul className="space-y-2">
-                    {friendRequestsIncoming.map((r) => (
-                      <li key={r.user_id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-muted/30">
-                        <Link href={`/profile/${r.user_id}`} className="flex items-center gap-2 flex-1 min-w-0">
-                          <Avatar className="h-8 w-8">
-                            <AvatarImage src={r.avatar_url || undefined} />
-                            <AvatarFallback>{(r.display_name || r.username)[0]}</AvatarFallback>
-                          </Avatar>
-                          <span className="font-medium truncate text-sm">{r.display_name || r.username}</span>
-                        </Link>
-                        <div className="flex gap-1 flex-shrink-0">
-                          <Button
-                            size="sm"
-                            onClick={async () => {
-                              await fetch("/api/friends", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ action: "accept", request_id: r.id }),
-                              })
-                              loadFriendRequests()
-                              loadConversations()
-                            }}
-                          >
-                            Принять
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={async () => {
-                              await fetch("/api/friends", {
-                                method: "POST",
-                                headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify({ action: "decline", request_id: r.id }),
-                              })
-                              loadFriendRequests()
-                            }}
-                          >
-                            Отклонить
-                          </Button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {conversations.length === 0 && friendRequestsIncoming.length === 0 ? (
-                <div className="p-8 text-center text-muted-foreground">
-                  <MessageSquare className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Нет диалогов. Напишите кому-нибудь из профиля или из списка друзей.</p>
-                  <Link href="/profile" className="mt-4 inline-block">
-                    <Button variant="outline">К профилю</Button>
-                  </Link>
-                </div>
-              ) : conversations.length > 0 ? (
-                <ul className="divide-y divide-border/50">
-                  {conversations.map((c) => (
-                    <li key={c.user_id}>
-                      <Link
-                        href={`/messages?with=${c.user_id}`}
-                        className="flex items-center gap-3 p-4 hover:bg-muted/50 transition-colors"
-                      >
-                        <Avatar className="h-10 w-10">
-                          <AvatarImage src={c.avatar_url || undefined} />
-                          <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
+      <main className="relative z-10 flex-1 flex overflow-hidden w-full max-w-6xl mx-auto">
+        {/* Left: list of friends and conversations (most recent first) */}
+        <aside className="w-full sm:w-80 flex-shrink-0 border-r border-border/50 bg-card/30 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-auto min-h-0">
+            {friendRequestsIncoming.length > 0 && (
+              <div className="p-3 border-b border-border/50">
+                <p className="text-sm font-medium text-muted-foreground mb-2">Заявки в друзья</p>
+                <ul className="space-y-2">
+                  {friendRequestsIncoming.map((r) => (
+                    <li key={r.user_id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-muted/30">
+                      <Link href={`/profile/${r.user_id}`} className="flex items-center gap-2 flex-1 min-w-0">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={r.avatar_url || undefined} />
+                          <AvatarFallback>{(r.display_name || r.username)[0]}</AvatarFallback>
                         </Avatar>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium truncate">{c.display_name || c.username}</span>
-                            {c.unread_count > 0 && (
-                              <span className="bg-primary text-primary-foreground text-xs rounded-full px-2">
-                                {c.unread_count}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-sm text-muted-foreground truncate">
-                            {c.last_message_from_me ? "Вы: " : ""}
-                            {c.last_activity_at ? new Date(c.last_activity_at).toLocaleString("ru-RU") : ""}
-                          </p>
+                        <span className="font-medium truncate text-sm">{r.display_name || r.username}</span>
+                      </Link>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={async (e) => {
+                            e.preventDefault()
+                            await fetch("/api/friends", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "accept", request_id: r.id }),
+                            })
+                            loadFriendsAndRequests()
+                            loadConversations()
+                          }}
+                        >
+                          Принять
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async (e) => {
+                            e.preventDefault()
+                            await fetch("/api/friends", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "decline", request_id: r.id }),
+                            })
+                            loadFriendsAndRequests()
+                          }}
+                        >
+                          Отклонить
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {/* Conversations (sorted by most recent) + friends without dialog */}
+            {conversations.length > 0 && (
+              <ul className="divide-y divide-border/50">
+                {conversations.map((c) => (
+                  <li key={c.user_id}>
+                    <Link
+                      href={`/messages?with=${c.user_id}`}
+                      className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""}`}
+                    >
+                      <Avatar className="h-10 w-10 flex-shrink-0">
+                        <AvatarImage src={c.avatar_url || undefined} />
+                        <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium truncate">{c.display_name || c.username}</span>
+                          {c.unread_count > 0 && (
+                            <Badge className="h-5 min-w-5 px-1.5 text-xs">{c.unread_count > 99 ? "99+" : c.unread_count}</Badge>
+                          )}
                         </div>
+                        <p className="text-sm text-muted-foreground truncate">
+                          {c.last_message_from_me ? "Вы: " : ""}
+                          {c.last_activity_at ? new Date(c.last_activity_at).toLocaleString("ru-RU") : ""}
+                        </p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {/* Friends with no conversation yet */}
+            {friends.filter((f) => !conversations.some((c) => c.user_id === f.friend_user_id)).length > 0 && (
+              <div className="p-3 border-t border-border/50">
+                <p className="text-sm font-medium text-muted-foreground mb-2">Друзья</p>
+                <ul className="space-y-1">
+                  {friends.filter((f) => !conversations.some((c) => c.user_id === f.friend_user_id)).map((f) => (
+                    <li key={f.friend_user_id}>
+                      <Link
+                        href={`/messages?with=${f.friend_user_id}`}
+                        className={`flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors ${withUserId === f.friend_user_id ? "bg-muted/50" : ""}`}
+                      >
+                        <Avatar className="h-10 w-10 flex-shrink-0">
+                          <AvatarImage src={f.avatar_url || undefined} />
+                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium truncate">{f.display_name || f.username}</span>
                       </Link>
                     </li>
                   ))}
                 </ul>
-              ) : null}
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="flex-1 flex flex-col w-full px-4">
+              </div>
+            )}
+            {conversations.length === 0 && friends.length === 0 && friendRequestsIncoming.length === 0 && (
+              <div className="p-6 text-center text-muted-foreground text-sm">
+                <MessageSquare className="h-10 w-10 mx-auto mb-3 opacity-50" />
+                <p>Нет диалогов. Добавьте друзей в профиле и напишите им.</p>
+                <Link href="/profile" className="mt-3 inline-block">
+                  <Button variant="outline" size="sm">К профилю</Button>
+                </Link>
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* Center: selected dialog or placeholder */}
+        {withUserId ? (
+          <div className="flex-1 flex flex-col min-w-0 border-l border-border/50">
             {otherUser && (
-              <div className="py-2 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50">
+              <div className="py-2 px-4 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50">
                 <Link href={`/profile/${otherUser.id}`} className="hover:underline">
                   {otherUser.display_name || otherUser.username}
                 </Link>
@@ -256,7 +292,7 @@ function MessagesContent() {
                 )}
               </div>
             )}
-            <div className="flex-1 overflow-auto py-4 space-y-3">
+            <div className="flex-1 overflow-auto py-4 px-4 space-y-3">
               {messages.map((m) => {
                 const isMe = m.from_user_id === currentUserId
                 return (
@@ -278,7 +314,7 @@ function MessagesContent() {
                 )
               })}
             </div>
-            <div className="py-3 flex gap-2">
+            <div className="py-3 flex gap-2 px-4">
               <Input
                 placeholder="Сообщение..."
                 value={newBody}
@@ -291,6 +327,12 @@ function MessagesContent() {
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center min-w-0 p-6 text-center text-muted-foreground">
+            <MessageSquare className="h-16 w-16 mb-4 opacity-40" />
+            <p className="text-lg font-medium">Выберите диалог</p>
+            <p className="text-sm mt-1">Список друзей и диалогов — слева</p>
           </div>
         )}
       </main>

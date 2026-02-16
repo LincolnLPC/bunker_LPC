@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
 import { Flame, Plus, Users, LogOut, User, Settings, HelpCircle, MessageSquare } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
@@ -13,6 +14,7 @@ export default function LobbyPage() {
   const router = useRouter()
   const [user, setUser] = useState<SupabaseUser | null>(null)
   const [loading, setLoading] = useState(true)
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0)
 
   useEffect(() => {
     const checkUser = async () => {
@@ -27,11 +29,23 @@ export default function LobbyPage() {
       }
 
       setUser(user)
+      const unreadRes = await fetch("/api/messages/unread")
+      const unreadData = await unreadRes.json()
+      if (unreadRes.ok && typeof unreadData.count === "number") setUnreadMessagesCount(unreadData.count)
       setLoading(false)
     }
 
     checkUser()
   }, [router])
+
+  useEffect(() => {
+    if (!user) return
+    const refresh = () => fetch("/api/messages/unread").then((r) => r.json()).then((d) => { if (d.count != null) setUnreadMessagesCount(d.count) })
+    const t = setInterval(refresh, 60000)
+    const onFocus = () => refresh()
+    window.addEventListener("focus", onFocus)
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus) }
+  }, [user])
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -70,9 +84,14 @@ export default function LobbyPage() {
               <span className="hidden sm:inline">{user?.user_metadata?.username || user?.email?.split("@")[0]}</span>
             </Button>
           </Link>
-          <Link href="/messages">
+          <Link href="/messages" className="relative inline-flex">
             <Button variant="ghost" size="icon" title="Сообщения">
               <MessageSquare className="h-5 w-5" />
+              {unreadMessagesCount > 0 && (
+                <Badge className="absolute -top-1 -right-1 h-5 min-w-5 px-1.5 text-xs bg-primary text-primary-foreground">
+                  {unreadMessagesCount > 99 ? "99+" : unreadMessagesCount}
+                </Badge>
+              )}
             </Button>
           </Link>
           <Link href="/profile">
