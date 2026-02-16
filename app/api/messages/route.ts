@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
 
-const MESSAGE_BODY_MAX_LENGTH = 2000
+const MESSAGE_BODY_MAX_LENGTH = 5000
 
 // GET - List conversations (users I have messages with) with last message and unread count
 export async function GET(request: Request) {
@@ -126,11 +126,16 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "to_user_id required" }, { status: 400 })
   }
 
-  const trimmed = typeof messageBody === "string" ? messageBody.trim() : ""
-  if (!trimmed) {
+  let bodyStr: string
+  if (typeof messageBody === "string") {
+    bodyStr = messageBody.trim()
+  } else {
+    bodyStr = ""
+  }
+  if (!bodyStr) {
     return NextResponse.json({ error: "Message body required" }, { status: 400 })
   }
-  if (trimmed.length > MESSAGE_BODY_MAX_LENGTH) {
+  if (bodyStr.length > MESSAGE_BODY_MAX_LENGTH) {
     return NextResponse.json({ error: "Message too long" }, { status: 400 })
   }
 
@@ -143,7 +148,7 @@ export async function POST(request: Request) {
     .insert({
       from_user_id: user.id,
       to_user_id: toUserId,
-      body: trimmed,
+      body: bodyStr,
     })
     .select("id, from_user_id, to_user_id, body, read_at, created_at")
     .single()

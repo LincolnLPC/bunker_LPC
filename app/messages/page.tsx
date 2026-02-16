@@ -1,15 +1,68 @@
 "use client"
 
-import { useEffect, useState, Suspense } from "react"
+import { useEffect, useState, useRef, Suspense } from "react"
+import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { ArrowLeft, MessageSquare, Send, Loader2, Circle } from "lucide-react"
+import { ArrowLeft, MessageSquare, Send, Loader2, Circle, Smile, ImageIcon } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { isUserOnline } from "@/lib/online"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { STICKERS, parseStickerCode, isStickerCode } from "@/lib/stickers"
+import { cn } from "@/lib/utils"
+
+const EMOJIS = [
+  "😀", "😃", "😄", "😁", "😅", "😂", "🤣", "😊", "😇", "🙂",
+  "😉", "😌", "😍", "🥰", "😘", "😋", "😛", "😜", "🤪", "😝",
+  "👍", "👎", "👊", "✊", "🤞", "✌️", "👌", "👋", "💪", "🙏",
+  "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "💔", "💕", "🔥",
+  "⭐", "✨", "💫", "🌸", "🎮", "🎯", "🎉", "🎊", "🎁", "🏆",
+  "✅", "❌",
+]
+
+function parseMessageBody(body: string): { type: "text" | "image" | "sticker"; content?: string; url?: string; stickerId?: string; caption?: string } {
+  const t = body.trim()
+  if (!t) return { type: "text", content: "" }
+  if (t.startsWith("{")) {
+    try {
+      const j = JSON.parse(t) as { type?: string; url?: string; caption?: string }
+      if (j.type === "image" && j.url) return { type: "image", url: j.url, caption: j.caption }
+    } catch {}
+  }
+  const stickerId = parseStickerCode(t)
+  if (stickerId) return { type: "sticker", stickerId }
+  return { type: "text", content: body }
+}
+
+function MessageBubbleBody({ body, isMe }: { body: string; isMe: boolean }) {
+  const parsed = parseMessageBody(body)
+  if (parsed.type === "image") {
+    return (
+      <div className="space-y-1">
+        <a href={parsed.url} target="_blank" rel="noopener noreferrer" className="block rounded overflow-hidden max-w-[280px]">
+          <img src={parsed.url!} alt="Фото" className="max-h-64 w-full object-cover rounded" />
+        </a>
+        {parsed.caption && <p className="text-sm whitespace-pre-wrap break-words">{parsed.caption}</p>}
+      </div>
+    )
+  }
+  if (parsed.type === "sticker" && parsed.stickerId) {
+    const sticker = STICKERS.find((s) => s.id === parsed.stickerId)
+    if (sticker) {
+      return (
+        <div className="inline-block">
+          <Image src={sticker.src} alt={sticker.alt} width={80} height={80} className="object-contain" unoptimized />
+        </div>
+      )
+    }
+  }
+  return <p className="text-sm whitespace-pre-wrap break-words">{parsed.content ?? body}</p>
+}
 
 interface Conversation {
   user_id: string
@@ -52,6 +105,10 @@ function MessagesContent() {
   const [friendRequestsIncoming, setFriendRequestsIncoming] = useState<{ id?: string; user_id: string; username: string; display_name: string | null; avatar_url: string | null }[]>([])
   const [friends, setFriends] = useState<FriendEntry[]>([])
   const [totalUnread, setTotalUnread] = useState(0)
+  const [imageUploading, setImageUploading] = useState(false)
+  const [emojiOpen, setEmojiOpen] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadFriendsAndRequests = async () => {
     const res = await fetch("/api/friends")
@@ -105,19 +162,21 @@ function MessagesContent() {
     run()
   }, [withUserId, router])
 
-  const sendMessage = async () => {
-    if (!withUserId || !newBody.trim() || sending) return
+  const sendMessage = async (bodyOverride?: string) => {
+    const toSend = (bodyOverride !== undefined ? bodyOverride : newBody).trim()
+    if (!withUserId || (!toSend && bodyOverride === undefined) || sending) return
     setSending(true)
     try {
       const res = await fetch("/api/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ to_user_id: withUserId, body: newBody.trim() }),
+        body: JSON.stringify({ to_user_id: withUserId, body: bodyOverride !== undefined ? bodyOverride : newBody.trim() }),
       })
       const data = await res.json()
       if (res.ok && data.message) {
         setMessages((prev) => [...prev, data.message])
-        setNewBody("")
+        if (bodyOverride === undefined) setNewBody("")
+        setEmojiOpen(false)
         loadConversations()
       } else {
         alert(data.error || "Ошибка отправки")
@@ -126,6 +185,52 @@ function MessagesContent() {
       alert("Ошибка отправки")
     } finally {
       setSending(false)
+    }
+  }
+
+  const handleEmojiSelect = (value: string) => {
+    if (isStickerCode(value)) {
+      sendMessage(value)
+      return
+    }
+    const input = inputRef.current
+    if (input) {
+      const start = input.selectionStart ?? newBody.length
+      const end = input.selectionEnd ?? newBody.length
+      const next = newBody.slice(0, start) + value + newBody.slice(end)
+      setNewBody(next)
+      setTimeout(() => { input.focus(); input.setSelectionRange(start + value.length, start + value.length) }, 0)
+    } else {
+      setNewBody((prev) => prev + value)
+    }
+  }
+
+  const handleImageSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    e.target.value = ""
+    if (!file || !withUserId) return
+    if (!file.type.startsWith("image/")) {
+      alert("Выберите изображение (JPEG, PNG, GIF, WebP)")
+      return
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      alert("Файл не более 5 МБ")
+      return
+    }
+    setImageUploading(true)
+    try {
+      const form = new FormData()
+      form.append("file", file)
+      const res = await fetch("/api/messages/upload", { method: "POST", body: form })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || "Ошибка загрузки")
+      const caption = newBody.trim() || undefined
+      const bodyStr = JSON.stringify({ type: "image", url: data.url, caption })
+      await sendMessage(bodyStr)
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Ошибка загрузки изображения")
+    } finally {
+      setImageUploading(false)
     }
   }
 
@@ -219,22 +324,29 @@ function MessagesContent() {
                   <li key={c.user_id}>
                     <Link
                       href={`/messages?with=${c.user_id}`}
-                      className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""}`}
+                      className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""} ${c.unread_count > 0 ? "bg-primary/5" : ""}`}
                     >
-                      <Avatar className="h-10 w-10 flex-shrink-0">
-                        <AvatarImage src={c.avatar_url || undefined} />
-                        <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
-                      </Avatar>
+                      <div className="relative flex-shrink-0">
+                        <Avatar className="h-10 w-10">
+                          <AvatarImage src={c.avatar_url || undefined} />
+                          <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
+                        </Avatar>
+                        {c.unread_count > 0 && (
+                          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
+                            {c.unread_count > 99 ? "99+" : c.unread_count}
+                          </span>
+                        )}
+                      </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
-                          <span className="font-medium truncate">{c.display_name || c.username}</span>
-                          {c.unread_count > 0 && (
-                            <Badge className="h-5 min-w-5 px-1.5 text-xs">{c.unread_count > 99 ? "99+" : c.unread_count}</Badge>
-                          )}
+                          <span className={`truncate ${c.unread_count > 0 ? "font-semibold" : "font-medium"}`}>{c.display_name || c.username}</span>
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {c.last_message_from_me ? "Вы: " : ""}
                           {c.last_activity_at ? new Date(c.last_activity_at).toLocaleString("ru-RU") : ""}
+                          {c.unread_count > 0 && !c.last_message_from_me && (
+                            <span className="ml-1 text-primary font-medium">• Новые</span>
+                          )}
                         </p>
                       </div>
                     </Link>
@@ -305,7 +417,7 @@ function MessagesContent() {
                         isMe ? "bg-primary text-primary-foreground" : "bg-muted"
                       }`}
                     >
-                      <p className="text-sm whitespace-pre-wrap break-words">{m.body}</p>
+                      <MessageBubbleBody body={m.body} isMe={isMe} />
                       <p className={`text-xs mt-1 ${isMe ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
                         {new Date(m.created_at).toLocaleString("ru-RU")}
                       </p>
@@ -314,16 +426,75 @@ function MessagesContent() {
                 )
               })}
             </div>
-            <div className="py-3 flex gap-2 px-4">
+            <div className="py-3 flex gap-2 px-4 items-end">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp"
+                className="hidden"
+                onChange={handleImageSelect}
+              />
+              <Popover open={emojiOpen} onOpenChange={setEmojiOpen}>
+                <PopoverTrigger asChild>
+                  <Button type="button" variant="ghost" size="icon" className="shrink-0" title="Смайлики и стикеры">
+                    <Smile className="h-5 w-5" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-72 p-2" align="start" side="top">
+                  <div className="grid grid-cols-2 gap-1 mb-2">
+                    <span className="text-xs font-medium text-muted-foreground col-span-2">Смайлики — вставка в текст. Стикеры — отдельным сообщением.</span>
+                  </div>
+                  <ScrollArea className="h-[200px]">
+                    <div className="grid grid-cols-8 gap-1 mb-3">
+                      {EMOJIS.map((emoji, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          className={cn("flex h-8 w-8 items-center justify-center rounded text-xl hover:bg-muted transition-colors")}
+                          onClick={() => handleEmojiSelect(emoji)}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Стикеры</p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {STICKERS.map((sticker) => (
+                        <button
+                          key={sticker.id}
+                          type="button"
+                          className={cn("flex aspect-square items-center justify-center rounded overflow-hidden hover:bg-muted transition-colors border border-transparent hover:border-border")}
+                          onClick={() => handleEmojiSelect(`[sticker:${sticker.id}]`)}
+                          title={sticker.alt}
+                        >
+                          <Image src={sticker.src} alt={sticker.alt} width={56} height={56} className="object-contain" unoptimized />
+                        </button>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                </PopoverContent>
+              </Popover>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                title="Прикрепить картинку"
+                disabled={imageUploading || sending}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {imageUploading ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageIcon className="h-5 w-5" />}
+              </Button>
               <Input
+                ref={inputRef}
                 placeholder="Сообщение..."
                 value={newBody}
                 onChange={(e) => setNewBody(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
-                maxLength={2000}
+                maxLength={5000}
                 className="flex-1"
               />
-              <Button onClick={sendMessage} disabled={sending || !newBody.trim()} size="icon">
+              <Button onClick={() => sendMessage()} disabled={sending || !newBody.trim()} size="icon">
                 {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
               </Button>
             </div>

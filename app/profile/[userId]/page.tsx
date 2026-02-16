@@ -313,7 +313,7 @@ function ProfileViewContent() {
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
                 <Calendar className="w-7 h-7 text-primary flex-shrink-0" />
-                <span>Игр сыграно</span>
+                <span>Игры</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
