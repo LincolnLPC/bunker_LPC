@@ -283,6 +283,12 @@ function MessagesContent() {
             <ArrowLeft className="h-5 w-5" />
           </Button>
         </Link>
+        <Link href="/profile">
+          <Button variant="outline" size="sm">Профиль</Button>
+        </Link>
+        <Link href="/lobby">
+          <Button variant="outline" size="sm">Лобби</Button>
+        </Link>
         <MessageSquare className="h-6 w-6 text-primary" />
         <span className="text-lg font-bold flex items-center gap-2">
           {withUserId && otherUser ? (otherUser.display_name || otherUser.username) : "Сообщения"}

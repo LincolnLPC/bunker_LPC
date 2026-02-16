@@ -11,14 +11,12 @@ const scriptDir = __dirname
 const projectRoot = path.join(scriptDir, "..")
 const destDir = path.join(projectRoot, "public", "stickers")
 
-// Cursor stores user images here when attached to chat
-const cursorAssetsDir = path.join(
-  process.env.USERPROFILE || process.env.HOME,
-  ".cursor",
-  "projects",
-  "c-bunker-online-app",
-  "assets"
-)
+// Cursor stores user images here when attached to chat (try both project folder names)
+const home = process.env.USERPROFILE || process.env.HOME || ""
+const cursorAssetsDirs = [
+  path.join(home, ".cursor", "projects", "c-Prog-bunker-online-app", "assets"),
+  path.join(home, ".cursor", "projects", "c-bunker-online-app", "assets"),
+]
 
 const mapping = [
   [
@@ -51,10 +49,12 @@ if (!fs.existsSync(destDir)) {
   console.log("Created", destDir)
 }
 
+const destNames = mapping.map(([, destName]) => destName)
+
 let copied = 0
 for (const [srcName, destName] of mapping) {
   const srcPaths = [
-    path.join(cursorAssetsDir, srcName),
+    ...cursorAssetsDirs.map((d) => path.join(d, srcName)),
     path.join(altAssetsDir, srcName),
   ]
   const dest = path.join(destDir, destName)
@@ -69,8 +69,32 @@ for (const [srcName, destName] of mapping) {
   }
 }
 
+// Fallback: if no files found by exact names, take first 5 PNGs from any assets folder (in order)
 if (copied === 0) {
-  console.log("No sticker sources found. Ensure images are in:", cursorAssetsDir)
+  const assetsDirsToScan = [...cursorAssetsDirs, altAssetsDir]
+  for (const assetDir of assetsDirsToScan) {
+    if (!fs.existsSync(assetDir)) continue
+    let files = []
+    try {
+      files = fs.readdirSync(assetDir)
+        .filter((f) => f.toLowerCase().endsWith(".png"))
+        .sort()
+    } catch (_) {}
+    if (files.length >= 5) {
+      for (let i = 0; i < 5 && i < destNames.length; i++) {
+        const src = path.join(assetDir, files[i])
+        const dest = path.join(destDir, destNames[i])
+        fs.copyFileSync(src, dest)
+        console.log("Copied (by order):", destNames[i])
+        copied++
+      }
+      break
+    }
+  }
+}
+
+if (copied === 0) {
+  console.log("No sticker sources found. Put 5 PNG images in one of:", cursorAssetsDirs.join(", "), "or run from project with assets/ containing 5 PNGs.")
   process.exit(1)
 }
 console.log(`Done. Copied ${copied} stickers to public/stickers/`)
