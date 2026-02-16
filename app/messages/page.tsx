@@ -122,13 +122,15 @@ function MessagesContent() {
     }
   }
 
-  const loadConversations = async () => {
+  const loadConversations = async (): Promise<Conversation[]> => {
     const res = await fetch("/api/messages")
     const data = await res.json()
     if (res.ok) {
       if (data.conversations) setConversations(data.conversations)
       if (typeof data.total_unread === "number") setTotalUnread(data.total_unread)
+      return data.conversations || []
     }
+    return []
   }
 
   const loadThread = async (userId: string) => {
@@ -155,9 +157,18 @@ function MessagesContent() {
         return
       }
       setCurrentUserId(user.id)
-      await loadConversations()
+      const list = await loadConversations()
       await loadFriendsAndRequests()
-      if (withUserId) await loadThread(withUserId)
+      if (withUserId) {
+        await loadThread(withUserId)
+      } else {
+        // If opened from lobby/notification with unread — open first unread dialog so user sees who wrote
+        const firstUnread = list?.find((c) => (c.unread_count || 0) > 0)
+        if (firstUnread) {
+          router.replace(`/messages?with=${firstUnread.user_id}`)
+          return
+        }
+      }
       setLoading(false)
     }
     run()

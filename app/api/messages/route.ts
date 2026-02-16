@@ -102,7 +102,12 @@ export async function GET(request: Request) {
     last_activity_at: lastActivity[id],
     last_message_from_me: lastMessageFromMe[id],
     unread_count: unreadCount[id] || 0,
-  })).sort((a, b) => (b.last_activity_at || "").localeCompare(a.last_activity_at || ""))
+  })).sort((a, b) => {
+    // Unread first, then by most recent activity
+    if ((a.unread_count || 0) > 0 && (b.unread_count || 0) === 0) return -1
+    if ((a.unread_count || 0) === 0 && (b.unread_count || 0) > 0) return 1
+    return (b.last_activity_at || "").localeCompare(a.last_activity_at || "")
+  })
 
   return NextResponse.json({ conversations, total_unread: totalUnread })
 }
