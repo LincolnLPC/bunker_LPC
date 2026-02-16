@@ -286,7 +286,7 @@ function ProfileViewContent() {
           </CardContent>
         </Card>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
@@ -332,23 +332,25 @@ function ProfileViewContent() {
               <p className="text-sm text-muted-foreground mt-1">Процент побед: {winRate}%</p>
             </CardContent>
           </Card>
-          <Card className="bg-card/50 border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary flex-shrink-0" />
-                <span>Аккаунт</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm text-muted-foreground">
-                Создан: {new Date(profile.created_at).toLocaleDateString("ru-RU")}
-              </div>
-            </CardContent>
-          </Card>
         </div>
 
         {/* Achievements (all: earned and not earned) */}
         <AchievementsSection userId={userId} />
+
+        {/* Account - at the bottom of profile */}
+        <Card className="bg-card/50 border-border/50 mb-6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary flex-shrink-0" />
+              <span>Аккаунт</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm text-muted-foreground">
+              Создан: {new Date(profile.created_at).toLocaleDateString("ru-RU")}
+            </div>
+          </CardContent>
+        </Card>
 
         <Link href="/lobby">
           <Button variant="outline" className="w-full justify-center">

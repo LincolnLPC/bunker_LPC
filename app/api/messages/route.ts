@@ -79,8 +79,9 @@ export async function GET(request: Request) {
   })
 
   const ids = Array.from(partnerIds)
+  const totalUnread = Object.values(unreadCount).reduce((a, b) => a + b, 0)
   if (ids.length === 0) {
-    return NextResponse.json({ conversations: [] })
+    return NextResponse.json({ conversations: [], total_unread: 0 })
   }
 
   const { data: profiles } = await supabase
@@ -103,7 +104,7 @@ export async function GET(request: Request) {
     unread_count: unreadCount[id] || 0,
   })).sort((a, b) => (b.last_activity_at || "").localeCompare(a.last_activity_at || ""))
 
-  return NextResponse.json({ conversations })
+  return NextResponse.json({ conversations, total_unread: totalUnread })
 }
 
 // POST - Send a message

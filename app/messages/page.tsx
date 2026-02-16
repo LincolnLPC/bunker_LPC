@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
 import { ArrowLeft, MessageSquare, Send, Loader2, Circle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { isUserOnline } from "@/lib/online"
@@ -43,6 +44,7 @@ function MessagesContent() {
   const [newBody, setNewBody] = useState("")
   const [currentUserId, setCurrentUserId] = useState<string | null>(null)
   const [friendRequestsIncoming, setFriendRequestsIncoming] = useState<{ id?: string; user_id: string; username: string; display_name: string | null; avatar_url: string | null }[]>([])
+  const [totalUnread, setTotalUnread] = useState(0)
 
   const loadFriendRequests = async () => {
     const res = await fetch("/api/friends")
@@ -56,7 +58,10 @@ function MessagesContent() {
   const loadConversations = async () => {
     const res = await fetch("/api/messages")
     const data = await res.json()
-    if (res.ok && data.conversations) setConversations(data.conversations)
+    if (res.ok) {
+      if (data.conversations) setConversations(data.conversations)
+      if (typeof data.total_unread === "number") setTotalUnread(data.total_unread)
+    }
   }
 
   const loadThread = async (userId: string) => {
@@ -133,8 +138,13 @@ function MessagesContent() {
           </Button>
         </Link>
         <MessageSquare className="h-6 w-6 text-primary" />
-        <span className="text-lg font-bold">
+        <span className="text-lg font-bold flex items-center gap-2">
           {withUserId && otherUser ? (otherUser.display_name || otherUser.username) : "Сообщения"}
+          {!withUserId && totalUnread > 0 && (
+            <Badge className="bg-primary text-primary-foreground">
+              {totalUnread > 99 ? "99+" : totalUnread}
+            </Badge>
+          )}
         </span>
       </header>
 

@@ -47,6 +47,7 @@ function ProfilePageContent() {
   const [addByEmailLoading, setAddByEmailLoading] = useState(false)
   const [addByEmailError, setAddByEmailError] = useState<string | null>(null)
   const [addByEmailSuccess, setAddByEmailSuccess] = useState(false)
+  const [unreadMessagesCount, setUnreadMessagesCount] = useState(0)
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -78,6 +79,9 @@ function ProfilePageContent() {
         setFriends(list.filter((f: any) => f.status === "accepted"))
         setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
         setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
+        const unreadRes = await fetch("/api/messages/unread")
+        const unreadData = await unreadRes.json()
+        if (unreadRes.ok && typeof unreadData.count === "number") setUnreadMessagesCount(unreadData.count)
         setLoading(false)
         return
       }
@@ -110,6 +114,9 @@ function ProfilePageContent() {
             setFriends(list.filter((f: any) => f.status === "accepted"))
             setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
             setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
+            const unreadRes = await fetch("/api/messages/unread")
+            const unreadData = await unreadRes.json()
+            if (unreadRes.ok && typeof unreadData.count === "number") setUnreadMessagesCount(unreadData.count)
           } else {
             throw new Error("Profile was not returned from API")
           }
@@ -136,6 +143,9 @@ function ProfilePageContent() {
         setFriends(list.filter((f: any) => f.status === "accepted"))
         setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
         setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
+        const unreadRes = await fetch("/api/messages/unread")
+        const unreadData = await unreadRes.json()
+        if (unreadRes.ok && typeof unreadData.count === "number") setUnreadMessagesCount(unreadData.count)
       }
 
       setLoading(false)
@@ -143,6 +153,15 @@ function ProfilePageContent() {
 
     loadProfile()
   }, [router])
+
+  useEffect(() => {
+    if (!user) return
+    const refreshUnread = () => fetch("/api/messages/unread").then((r) => r.json()).then((d) => { if (d.count != null) setUnreadMessagesCount(d.count) })
+    const t = setInterval(refreshUnread, 60000)
+    const onFocus = () => refreshUnread()
+    window.addEventListener("focus", onFocus)
+    return () => { clearInterval(t); window.removeEventListener("focus", onFocus) }
+  }, [user])
 
   const handleLogout = async () => {
     const supabase = createClient()
@@ -245,7 +264,7 @@ function ProfilePageContent() {
         </Card>
 
         {/* Statistics */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
@@ -292,19 +311,6 @@ function ProfilePageContent() {
             <CardContent className="flex flex-col items-start">
               <div className="text-3xl font-bold text-primary">{profile.games_won}</div>
               <p className="text-sm text-muted-foreground mt-1">Процент побед: {winRate}%</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-card/50 border-border/50">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary flex-shrink-0" />
-                <span>Аккаунт</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-sm text-muted-foreground">
-                Создан: {new Date(profile.created_at).toLocaleDateString("ru-RU")}
-              </div>
             </CardContent>
           </Card>
         </div>
@@ -377,10 +383,15 @@ function ProfilePageContent() {
                 </CardTitle>
                 <CardDescription>Список друзей и личные сообщения</CardDescription>
               </div>
-              <Link href="/messages">
+              <Link href="/messages" className="relative inline-flex">
                 <Button variant="outline" size="sm">
                   <MessageSquare className="w-4 h-4 mr-2" />
                   Сообщения
+                  {unreadMessagesCount > 0 && (
+                    <Badge className="ml-2 h-5 min-w-5 px-1.5 bg-primary text-primary-foreground">
+                      {unreadMessagesCount > 99 ? "99+" : unreadMessagesCount}
+                    </Badge>
+                  )}
                 </Button>
               </Link>
             </div>
@@ -599,6 +610,21 @@ function ProfilePageContent() {
               <LogOut className="w-4 h-4 mr-2" />
               Выйти из аккаунта
             </Button>
+          </CardContent>
+        </Card>
+
+        {/* Account - at the bottom of profile */}
+        <Card className="bg-card/50 border-border/50">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Users className="w-5 h-5 text-primary flex-shrink-0" />
+              <span>Аккаунт</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-sm text-muted-foreground">
+              Создан: {new Date(profile.created_at).toLocaleDateString("ru-RU")}
+            </div>
           </CardContent>
         </Card>
       </main>
