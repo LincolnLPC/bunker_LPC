@@ -17,6 +17,7 @@ import {
   Star,
   Flame,
   Zap,
+  HelpCircle,
   LucideIcon,
 } from "lucide-react"
 import { safeFetch } from "@/lib/api/safe-fetch"
@@ -31,6 +32,7 @@ interface Achievement {
   tier: "bronze" | "silver" | "gold" | "platinum"
   points: number
   requirementValue: number
+  currentValue?: number
   earned: boolean
   earnedAt: string | null
   progress: number
@@ -56,6 +58,7 @@ const iconMap: Record<string, LucideIcon> = {
   star: Star,
   flame: Flame,
   zap: Zap,
+  "help-circle": HelpCircle,
 }
 
 const tierColors: Record<string, { bg: string; border: string; text: string }> = {
@@ -88,6 +91,7 @@ const categoryNames: Record<string, string> = {
   social: "Социальные",
   premium: "Премиум",
   special: "Особые",
+  whoami: "Кто я?",
 }
 
 interface AchievementsSectionProps {
@@ -157,7 +161,7 @@ export function AchievementsSection({ userId }: AchievementsSectionProps) {
     return a.length - b.length
   }
 
-  const categoryOrder = ["general", "games", "wins", "social", "premium", "special"]
+  const categoryOrder = ["general", "games", "wins", "social", "premium", "whoami", "special"]
   const isOtherUser = !!userId
 
   return (
@@ -246,13 +250,16 @@ export function AchievementsSection({ userId }: AchievementsSectionProps) {
                               {achievement.points}
                             </Badge>
                           </div>
-                          {!isEarned && achievement.progress > 0 && (
+                          {!isEarned && achievement.requirementValue >= 1 && (
                             <div className="mt-2 space-y-1">
                               <div className="flex justify-between text-xs text-muted-foreground">
-                                <span>Прогресс</span>
-                                <span>{achievement.progress}%</span>
+                                <span>
+                                  {achievement.code.startsWith("win_rate")
+                                    ? `${achievement.currentValue ?? 0}% / ${achievement.requirementValue}%`
+                                    : `${achievement.currentValue ?? 0} / ${achievement.requirementValue}`}
+                                </span>
                               </div>
-                              <Progress value={achievement.progress} className="h-1.5" />
+                              <Progress value={achievement.progress} className="h-0.5" />
                             </div>
                           )}
                           {isEarned && achievement.earnedAt && (

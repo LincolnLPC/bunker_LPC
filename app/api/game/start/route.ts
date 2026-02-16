@@ -98,6 +98,11 @@ export async function POST(request: Request) {
 
     if (updateError) throw updateError
 
+    // Count this room as "game started" for host (social achievements: rooms created and started)
+    if (room.host_id) {
+      await supabase.rpc("increment_games_hosted", { user_id_param: room.host_id })
+    }
+
     const settings = (room.settings as Record<string, unknown>) || {}
     const gameMode = (settings.gameMode as string) || "bunker"
 

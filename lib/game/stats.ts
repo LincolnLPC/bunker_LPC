@@ -20,10 +20,10 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
   const supabase = createServiceRoleClient()
 
   try {
-    // Verify game is in finished state and get host_id for host rating
+    // Verify game is in finished state and get host_id, settings (for whoami)
     const { data: room, error: roomCheckError } = await supabase
       .from("game_rooms")
-      .select("id, phase, host_id")
+      .select("id, phase, host_id, settings")
       .eq("id", roomId)
       .single()
 
@@ -130,6 +130,12 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
             console.error(`Error updating games_won for user ${userId}:`, updateWonError)
           }
         }
+      }
+
+      // Whoami mode: increment games_played_whoami for all participants
+      const gameMode = (room.settings as Record<string, unknown>)?.gameMode as string | undefined
+      if (gameMode === "whoami") {
+        await supabase.rpc("increment_games_played_whoami", { user_id_param: userId })
       }
 
       // Rating: +5 for participation, +20 for win (winners get 25 total)

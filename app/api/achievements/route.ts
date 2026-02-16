@@ -37,6 +37,12 @@ export async function GET(request: Request) {
       .select("achievement_id, earned_at, progress")
       .eq("user_id", targetUserId)
 
+    const { data: profile } = await client
+      .from("profiles")
+      .select("games_played, games_won, games_hosted, games_played_whoami, subscription_tier, premium_expires_at")
+      .eq("id", targetUserId)
+      .single()
+
     const uaByAchievement = (userAchievements || []).reduce(
       (acc, ua) => {
         acc[ua.achievement_id] = ua
@@ -45,8 +51,47 @@ export async function GET(request: Request) {
       {} as Record<string, { achievement_id: string; earned_at: string | null; progress: number }>
     )
 
+    const gp = profile?.games_played ?? 0
+    const gw = profile?.games_won ?? 0
+    const gh = profile?.games_hosted ?? 0
+    const gpWhoami = profile?.games_played_whoami ?? 0
+    const totalGames = gp + gh
+
+    function getCurrentValue(code: string): number | null {
+      switch (code) {
+        case "first_game":
+        case "games_10":
+        case "games_50":
+        case "games_100":
+        case "games_500":
+          return totalGames
+        case "first_win":
+        case "wins_5":
+        case "wins_25":
+        case "wins_100":
+          return gw
+        case "win_rate_50":
+        case "win_rate_75":
+          return totalGames >= (code === "win_rate_50" ? 10 : 20) ? Math.round((gw / totalGames) * 100) : 0
+        case "host_10":
+        case "host_50":
+          return gh
+        case "premium_subscriber":
+          return (profile?.subscription_tier === "premium" || profile?.premium_expires_at != null) ? 1 : 0
+        case "whoami_first":
+        case "whoami_10":
+        case "whoami_50":
+          return gpWhoami
+        default:
+          return null
+      }
+    }
+
     const achievementsWithStatus = (achievements || []).map((achievement) => {
       const ua = uaByAchievement[achievement.id]
+      const reqVal = achievement.requirement_value ?? 1
+      const currentVal = getCurrentValue(achievement.code)
+      const progressPct = ua?.progress ?? (currentVal != null && reqVal > 0 ? Math.min(100, Math.round((currentVal / reqVal) * 100)) : 0)
       return {
         id: achievement.id,
         code: achievement.code,
@@ -56,10 +101,11 @@ export async function GET(request: Request) {
         category: achievement.category,
         tier: achievement.tier,
         points: achievement.points,
-        requirementValue: achievement.requirement_value,
+        requirementValue: reqVal,
+        currentValue: currentVal ?? undefined,
         earned: !!ua,
         earnedAt: ua?.earned_at || null,
-        progress: ua?.progress ?? 0,
+        progress: ua ? 100 : progressPct,
       }
     })
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { createClient } from "@/lib/supabase/server"
+import { updateGameStatistics } from "@/lib/game/stats"
 
 /**
  * POST - Отметить текущее слово как отгаданное и получить следующее.
@@ -171,6 +172,16 @@ export async function POST(request: Request) {
         })
         .eq("id", roomId)
       if (!finishError) {
+        const { data: allPlayers } = await supabase
+          .from("game_players")
+          .select("id")
+          .eq("room_id", roomId)
+        const allPlayerIds = (allPlayers || []).map((p) => p.id)
+        await updateGameStatistics({
+          roomId,
+          survivorPlayerIds: [playerId],
+          allPlayerIds,
+        })
         await supabase.from("chat_messages").insert({
           room_id: roomId,
           player_id: null,
