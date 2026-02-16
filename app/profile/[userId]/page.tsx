@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
-import { Flame, ArrowLeft, Trophy, Calendar, Users, Crown, Loader2, MessageSquare, UserPlus, Circle, Award } from "lucide-react"
+import { Flame, ArrowLeft, Trophy, Calendar, Users, Crown, Loader2, MessageSquare, UserPlus, Circle, Award, Mic } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { isUserOnline } from "@/lib/online"
 
@@ -20,6 +20,7 @@ interface ProfileData {
   games_played: number
   games_won: number
   rating?: number | null
+  host_rating?: number | null
   last_seen_at?: string | null
   show_online_status?: boolean
   created_at: string
@@ -64,7 +65,7 @@ function ProfileViewContent() {
 
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
-        .select("id, username, display_name, avatar_url, subscription_tier, games_played, games_won, rating, last_seen_at, show_online_status, created_at")
+        .select("id, username, display_name, avatar_url, subscription_tier, games_played, games_won, rating, host_rating, last_seen_at, show_online_status, created_at")
         .eq("id", userId)
         .maybeSingle()
 
@@ -284,16 +285,27 @@ function ProfileViewContent() {
           </CardContent>
         </Card>
 
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Award className="w-5 h-5 text-primary" />
-                Рейтинг
+                Рейтинг игрока
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-primary">{profile.rating ?? 0}</div>
+            </CardContent>
+          </Card>
+          <Card className="bg-card/50 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Mic className="w-5 h-5 text-primary" />
+                Рейтинг ведущего
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-primary">{profile.host_rating ?? 0}</div>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">

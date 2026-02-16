@@ -16,8 +16,10 @@ interface LeaderboardEntry {
   display_name: string | null
   avatar_url: string | null
   rating: number
+  host_rating?: number
   games_played: number
   games_won: number
+  achievements_count?: number
 }
 
 export default function LeaderboardPage() {
@@ -87,7 +89,7 @@ export default function LeaderboardPage() {
               Рейтинг игроков
             </CardTitle>
             <CardDescription>
-              Рейтинг начисляется за участие в играх (+5) и за победы (+20 за победу)
+              Рейтинг игрока: +5 за игру, +20 за победу. Рейтинг ведущего: +20 только ведущий, +10 ведущий и игрок.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -103,8 +105,10 @@ export default function LeaderboardPage() {
                       <th className="text-left py-3 px-2 font-medium text-muted-foreground w-14">#</th>
                       <th className="text-left py-3 px-2 font-medium text-muted-foreground">Игрок</th>
                       <th className="text-right py-3 px-2 font-medium text-muted-foreground">Рейтинг</th>
-                      <th className="text-right py-3 px-2 font-medium text-muted-foreground hidden sm:table-cell">Игр</th>
-                      <th className="text-right py-3 px-2 font-medium text-muted-foreground hidden sm:table-cell">Побед</th>
+                      <th className="text-right py-3 px-2 font-medium text-muted-foreground hidden sm:table-cell">Ведущий</th>
+                      <th className="text-right py-3 px-2 font-medium text-muted-foreground">Игр</th>
+                      <th className="text-right py-3 px-2 font-medium text-muted-foreground">Побед</th>
+                      <th className="text-right py-3 px-2 font-medium text-muted-foreground hidden md:table-cell">Достиж.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -141,10 +145,16 @@ export default function LeaderboardPage() {
                           {entry.rating}
                         </td>
                         <td className="py-3 px-2 text-right text-muted-foreground hidden sm:table-cell">
+                          {entry.host_rating ?? 0}
+                        </td>
+                        <td className="py-3 px-2 text-right text-muted-foreground">
                           {entry.games_played}
                         </td>
-                        <td className="py-3 px-2 text-right text-muted-foreground hidden sm:table-cell">
+                        <td className="py-3 px-2 text-right text-muted-foreground">
                           {entry.games_won}
+                        </td>
+                        <td className="py-3 px-2 text-right text-muted-foreground hidden md:table-cell">
+                          {entry.achievements_count ?? 0}
                         </td>
                       </tr>
                     ))}

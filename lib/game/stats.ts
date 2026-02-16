@@ -20,10 +20,10 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
   const supabase = createServiceRoleClient()
 
   try {
-    // Verify game is in finished state before updating stats
+    // Verify game is in finished state and get host_id for host rating
     const { data: room, error: roomCheckError } = await supabase
       .from("game_rooms")
-      .select("id, phase")
+      .select("id, phase, host_id")
       .eq("id", roomId)
       .single()
 
@@ -137,6 +137,22 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
       await supabase.rpc("add_rating", {
         user_id_param: userId,
         points_param: ratingPoints,
+      })
+
+      // Host rating: if this user is the host (and also a player), +10 to host_rating
+      if (room.host_id && userId === room.host_id) {
+        await supabase.rpc("add_host_rating", {
+          user_id_param: userId,
+          points_param: 10,
+        })
+      }
+    }
+
+    // Host who was only host (not in game_players): +20 host_rating, no player stats
+    if (room.host_id && !allUserIds.includes(room.host_id)) {
+      await supabase.rpc("add_host_rating", {
+        user_id_param: room.host_id,
+        points_param: 20,
       })
     }
 

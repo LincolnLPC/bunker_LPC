@@ -5,7 +5,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Flame, Users, Shield, Zap, Clock, Trophy, User, Lock } from "lucide-react"
+import { Flame, Users, Shield, Zap, Clock, Trophy, User, Lock, Award, Mic, Loader2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -226,6 +226,9 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Leaderboard Section */}
+      <LeaderboardSection />
+
       {/* Game Modes */}
       <section className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
@@ -318,5 +321,101 @@ function GameModeCard({
       <p className="text-muted-foreground mb-4">{description}</p>
       <div className="text-sm text-primary">{duration}</div>
     </div>
+  )
+}
+
+interface LeaderboardEntry {
+  rank: number
+  id: string
+  username: string
+  display_name: string | null
+  avatar_url: string | null
+  rating: number
+  host_rating: number
+  games_played: number
+  games_won: number
+  achievements_count: number
+}
+
+function LeaderboardSection() {
+  const [list, setList] = useState<LeaderboardEntry[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/leaderboard?limit=20")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data.leaderboard) setList(data.leaderboard)
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [])
+
+  return (
+    <section className="py-24 px-6">
+      <div className="max-w-6xl mx-auto">
+        <h2 className="text-3xl md:text-4xl font-bold text-center mb-4">Рейтинг игроков</h2>
+        <p className="text-center text-muted-foreground mb-12 max-w-2xl mx-auto">
+          Лучшие игроки по рейтингу. Нажмите на игрока, чтобы открыть профиль.
+        </p>
+        {loading ? (
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-10 w-10 text-primary animate-spin" />
+          </div>
+        ) : list.length === 0 ? (
+          <p className="text-center text-muted-foreground py-12">Пока никого нет в рейтинге. Сыграйте игры!</p>
+        ) : (
+          <div className="rounded-xl border border-border/50 bg-card/50 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30">
+                    <th className="text-left py-3 px-4 font-medium w-12">#</th>
+                    <th className="text-left py-3 px-4 font-medium">Игрок</th>
+                    <th className="text-right py-3 px-4 font-medium">Рейтинг</th>
+                    <th className="text-right py-3 px-4 font-medium hidden sm:table-cell">Ведущий</th>
+                    <th className="text-right py-3 px-4 font-medium">Игр</th>
+                    <th className="text-right py-3 px-4 font-medium">Побед</th>
+                    <th className="text-right py-3 px-4 font-medium hidden md:table-cell">Достижения</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {list.map((entry) => (
+                    <tr key={entry.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
+                      <td className="py-3 px-4 text-muted-foreground font-mono">
+                        {entry.rank === 1 ? "🥇" : entry.rank === 2 ? "🥈" : entry.rank === 3 ? "🥉" : entry.rank}
+                      </td>
+                      <td className="py-3 px-4">
+                        <Link
+                          href={`/profile/${entry.id}`}
+                          className="flex items-center gap-2 hover:text-primary font-medium"
+                        >
+                          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 text-primary font-bold text-xs">
+                            {(entry.display_name || entry.username)[0]}
+                          </span>
+                          {entry.display_name || entry.username}
+                        </Link>
+                      </td>
+                      <td className="py-3 px-4 text-right font-semibold text-primary">{entry.rating}</td>
+                      <td className="py-3 px-4 text-right text-muted-foreground hidden sm:table-cell">{entry.host_rating}</td>
+                      <td className="py-3 px-4 text-right">{entry.games_played}</td>
+                      <td className="py-3 px-4 text-right">{entry.games_won}</td>
+                      <td className="py-3 px-4 text-right hidden md:table-cell">{entry.achievements_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="p-4 border-t border-border/50 text-center">
+              <Link href="/profile/leaderboard">
+                <Button variant="outline" size="sm">Вся таблица лидеров</Button>
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
   )
 }

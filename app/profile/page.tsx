@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2, Award, MessageSquare, UserPlus, Circle, Mail } from "lucide-react"
+import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2, Award, MessageSquare, UserPlus, Circle, Mail, Mic } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { AchievementsSection } from "@/components/profile/achievements-section"
@@ -23,6 +23,7 @@ interface ProfileData {
   games_played: number
   games_won: number
   rating?: number | null
+  host_rating?: number | null
   created_at: string
   media_settings?: {
     autoRequestCamera?: boolean
@@ -233,12 +234,12 @@ function ProfilePageContent() {
         </Card>
 
         {/* Statistics */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Award className="w-5 h-5 text-primary" />
-                Рейтинг
+                Рейтинг игрока
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -246,6 +247,18 @@ function ProfilePageContent() {
               <Link href="/profile/leaderboard" className="text-sm text-primary hover:underline mt-1 inline-block">
                 Таблица лидеров
               </Link>
+            </CardContent>
+          </Card>
+          <Card className="bg-card/50 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Mic className="w-5 h-5 text-primary" />
+                Рейтинг ведущего
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-primary">{profile.host_rating ?? 0}</div>
+              <p className="text-xs text-muted-foreground mt-1">+20 за игру только ведущим, +10 если ведущий и игрок</p>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
