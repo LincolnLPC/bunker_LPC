@@ -73,7 +73,8 @@ export async function GET(request: Request) {
       lastActivity[r.from_user_id] = r.created_at
       lastMessageFromMe[r.from_user_id] = false
     }
-    if (!r.read_at) {
+    const isUnread = r.read_at == null || r.read_at === ""
+    if (isUnread) {
       unreadCount[r.from_user_id] = (unreadCount[r.from_user_id] || 0) + 1
     }
   })
@@ -101,7 +102,7 @@ export async function GET(request: Request) {
     avatar_url: profilesMap[id]?.avatar_url,
     last_activity_at: lastActivity[id],
     last_message_from_me: lastMessageFromMe[id],
-    unread_count: unreadCount[id] || 0,
+    unread_count: Number(unreadCount[id] || 0),
   })).sort((a, b) => {
     // Unread first, then by most recent activity
     if ((a.unread_count || 0) > 0 && (b.unread_count || 0) === 0) return -1

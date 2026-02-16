@@ -345,43 +345,46 @@ function MessagesContent() {
             {/* Conversations (sorted by most recent) + friends without dialog */}
             {conversations.length > 0 && (
               <ul className="divide-y divide-border/50">
-                {conversations.map((c) => (
-                  <li key={c.user_id}>
-                    <Link
-                      href={`/messages?with=${c.user_id}`}
-                      className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""} ${c.unread_count > 0 ? "bg-primary/5" : ""}`}
-                    >
-                      <div className="relative flex-shrink-0">
-                        <Avatar className="h-10 w-10">
-                          <AvatarImage src={c.avatar_url || undefined} />
-                          <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
-                        </Avatar>
-                        {c.unread_count > 0 && (
-                          <span className="absolute -top-0.5 -right-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-primary-foreground">
-                            {c.unread_count > 99 ? "99+" : c.unread_count}
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={`truncate ${c.unread_count > 0 ? "font-semibold" : "font-medium"}`}>{c.display_name || c.username}</span>
-                          {c.unread_count > 0 && (
-                            <Badge className="h-5 min-w-5 px-1.5 text-xs bg-primary text-primary-foreground shrink-0">
-                              {c.unread_count > 99 ? "99+" : c.unread_count}
-                            </Badge>
+                {conversations.map((c) => {
+                  const unread = Number(c.unread_count ?? 0)
+                  return (
+                    <li key={c.user_id}>
+                      <Link
+                        href={`/messages?with=${c.user_id}`}
+                        className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""} ${unread > 0 ? "bg-primary/5" : ""}`}
+                      >
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="h-10 w-10">
+                            <AvatarImage src={c.avatar_url || undefined} />
+                            <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
+                          </Avatar>
+                          {unread > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 flex h-5 min-w-5 px-1 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground ring-2 ring-background">
+                              {unread > 99 ? "99+" : unread}
+                            </span>
                           )}
                         </div>
-                        <p className="text-sm text-muted-foreground truncate">
-                          {c.last_message_from_me ? "Вы: " : ""}
-                          {c.last_activity_at ? new Date(c.last_activity_at).toLocaleString("ru-RU") : ""}
-                          {c.unread_count > 0 && !c.last_message_from_me && (
-                            <span className="ml-1 text-primary font-medium">• Новые</span>
-                          )}
-                        </p>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`truncate ${unread > 0 ? "font-semibold" : "font-medium"}`}>{c.display_name || c.username}</span>
+                            {unread > 0 && (
+                              <Badge className="h-5 min-w-5 px-1.5 text-xs font-semibold bg-primary text-primary-foreground shrink-0 flex items-center justify-center">
+                                {unread > 99 ? "99+" : unread}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="text-sm text-muted-foreground truncate">
+                            {c.last_message_from_me ? "Вы: " : ""}
+                            {c.last_activity_at ? new Date(c.last_activity_at).toLocaleString("ru-RU") : ""}
+                            {unread > 0 && !c.last_message_from_me && (
+                              <span className="ml-1 text-primary font-medium">• Новые</span>
+                            )}
+                          </p>
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             )}
             {/* Friends with no conversation yet */}
@@ -418,11 +421,11 @@ function MessagesContent() {
           </div>
         </aside>
 
-        {/* Center: selected dialog or placeholder */}
+        {/* Center: selected dialog or placeholder — scroll only messages, input fixed at bottom */}
         {withUserId ? (
-          <div className="flex-1 flex flex-col min-w-0 border-l border-border/50">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 border-l border-border/50">
             {otherUser && (
-              <div className="py-2 px-4 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50">
+              <div className="flex-shrink-0 py-2 px-4 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50">
                 <Link href={`/profile/${otherUser.id}`} className="hover:underline">
                   {otherUser.display_name || otherUser.username}
                 </Link>
@@ -434,7 +437,7 @@ function MessagesContent() {
                 )}
               </div>
             )}
-            <div className="flex-1 overflow-auto py-4 px-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto py-4 px-4 space-y-3">
               {messages.map((m) => {
                 const isMe = m.from_user_id === currentUserId
                 return (
@@ -456,7 +459,7 @@ function MessagesContent() {
                 )
               })}
             </div>
-            <div className="py-3 flex gap-2 px-4 items-end">
+            <div className="flex-shrink-0 py-3 flex gap-2 px-4 items-end border-t border-border/50 bg-background/95">
               <input
                 ref={fileInputRef}
                 type="file"
