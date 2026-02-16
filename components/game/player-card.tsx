@@ -3,6 +3,7 @@
 import React, { useRef, useEffect, useState } from "react"
 import type { Player } from "@/types/game"
 import { logger } from "@/lib/logger"
+import { mediaLog } from "@/lib/media-logger"
 import { cn } from "@/lib/utils"
 import { MicOff, User } from "lucide-react"
 import { CameraEffectOverlay } from "./camera-effect-overlay"
@@ -89,6 +90,17 @@ const PlayerCardComponent = ({
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const [showCharacteristics, setShowCharacteristics] = useState(true)
+
+  useEffect(() => {
+    if (!isCurrentPlayer) return
+    mediaLog.playerCardSource({
+      playerId: player.id,
+      isCurrentPlayer: true,
+      useVdoNinja: !!vdoNinjaCameraUrl,
+      hasStream: !!player.stream,
+      streamId: player.stream?.id,
+    })
+  }, [isCurrentPlayer, player.id, player.stream, vdoNinjaCameraUrl])
 
   useEffect(() => {
     if (!videoRef.current) return

@@ -7,6 +7,7 @@ import type { WebRTCSignal } from "@/lib/webrtc/signaling"
 import { handleMediaError } from "@/lib/error-handling/connection-recovery"
 import type { MediaSettings } from "@/hooks/use-media-settings"
 import { webRTCLog } from "@/lib/webrtc/logger"
+import { mediaLog } from "@/lib/media-logger"
 import { RTC_OFFER_SKIPPED_REMOTE_OFFER } from "@/lib/webrtc/peer-connection"
 
 interface UseWebRTCOptions {
@@ -40,12 +41,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
   // Create stable reference to player IDs to avoid infinite loops
   const otherPlayerIds = useMemo(() => {
-    const ids = otherPlayers.map((p) => p.playerId || p.id).filter(Boolean).sort().join(",")
-    console.log("[WebRTC] otherPlayerIds computed:", {
-      otherPlayers: otherPlayers.map(p => ({ id: p.id, playerId: p.playerId })),
-      ids,
-    })
-    return ids
+    return otherPlayers.map((p) => p.playerId || p.id).filter(Boolean).sort().join(",")
   }, [otherPlayers])
 
   // При закрытии/падении соединения сразу убираем пира и запускаем переподключение (чтобы после refresh другого игрока создалось новое соединение)
@@ -71,111 +67,78 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
     let audioConstraints: MediaTrackConstraints | boolean = false
 
     setIsMediaLoading(true)
+    mediaLog.initStart({
+      video: requestVideo,
+      audio: requestAudio,
+      vdoNinjaUrl: mediaSettings?.vdoNinjaCameraUrl ?? null,
+    })
     try {
-      // Если указан VDO.ninja URL, пропускаем getUserMedia для видео
-      // VDO.ninja будет отображаться через iframe в PlayerCard
-      if (mediaSettings?.vdoNinjaCameraUrl && requestVideo) {
-        console.log("[WebRTC] VDO.ninja camera URL detected:", mediaSettings.vdoNinjaCameraUrl)
-        console.log("[WebRTC] VDO.ninja will be displayed via iframe in PlayerCard. Skipping getUserMedia for video.")
-        
-        // Если нужно только видео, возвращаем null (iframe будет показан в PlayerCard)
-        if (!requestAudio) {
-          return null
-        }
-        
-        // Если нужен также аудио, продолжаем только для аудио
-        console.log("[WebRTC] Requesting audio only (video via VDO.ninja iframe)")
-      }
-
-      // Check if browser supports getUserMedia
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        const errorMsg = "Ваш браузер не поддерживает доступ к камере/микрофону"
-        // Не устанавливаем ошибку в состояние - это не критично, игра может работать без видео
-        console.warn("[WebRTC] Browser doesn't support getUserMedia - video/audio will be unavailable")
-        // Возвращаем null вместо выброса ошибки, чтобы приложение продолжало работать
+      // Если указан VDO.ninja URL — НЕ вызываем getUserMedia вообще.
+      if (mediaSettings?.vdoNinjaCameraUrl && (requestVideo || requestAudio)) {
+        mediaLog.skip({ reason: "vdo_ninja_url_set", video: requestVideo, audio: requestAudio })
         return null
       }
 
-      // Проверка статуса разрешений (если поддерживается)
-      try {
-        if (navigator.permissions && navigator.permissions.query) {
-          console.log("[WebRTC] Checking permission status...")
-          const cameraPermission = await navigator.permissions.query({ name: 'camera' as PermissionName })
-          const microphonePermission = await navigator.permissions.query({ name: 'microphone' as PermissionName })
-          
-          console.log("[WebRTC] Permission status:", {
-            camera: cameraPermission.state,
-            microphone: microphonePermission.state,
-            cameraBlocked: cameraPermission.state === 'denied',
-            microphoneBlocked: microphonePermission.state === 'denied',
-          })
-          
-          if (cameraPermission.state === 'denied' || microphonePermission.state === 'denied') {
-            console.warn("[WebRTC] ⚠️ Permissions are BLOCKED (denied). User needs to reset permissions in browser settings.")
-            const message = "Доступ к камере/микрофону заблокирован в настройках браузера. Пожалуйста, разрешите доступ в настройках браузера и обновите страницу."
-            setError(message)
-            return null
-          }
-        }
-      } catch (permError) {
-        // Permissions API может не поддерживаться или не работать - это нормально
-        console.log("[WebRTC] Permissions API not available or failed (this is OK):", permError)
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        mediaLog.noGetUserMedia()
+        return null
       }
 
-      // Проверка доступных устройств (валидация deviceId — не используем устаревшие ID)
-      let validCameraDeviceId: string | null = null
-      let validMicrophoneDeviceId: string | null = null
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices()
-        const videoDevices = devices.filter(d => d.kind === 'videoinput')
-        const audioDevices = devices.filter(d => d.kind === 'audioinput')
-        const videoIds = new Set(videoDevices.map(d => d.deviceId))
-        const audioIds = new Set(audioDevices.map(d => d.deviceId))
-        if (mediaSettings?.cameraDeviceId && videoIds.has(mediaSettings.cameraDeviceId)) {
-          validCameraDeviceId = mediaSettings.cameraDeviceId
-        } else if (mediaSettings?.cameraDeviceId) {
-          console.warn("[WebRTC] cameraDeviceId from profile not found in enumerateDevices, will use default")
-        }
-        if (mediaSettings?.microphoneDeviceId && audioIds.has(mediaSettings.microphoneDeviceId)) {
-          validMicrophoneDeviceId = mediaSettings.microphoneDeviceId
-        } else if (mediaSettings?.microphoneDeviceId) {
-          console.warn("[WebRTC] microphoneDeviceId from profile not found in enumerateDevices, will use default")
-        }
-        console.log("[WebRTC] Device validation:", { validCameraDeviceId, validMicrophoneDeviceId, videoCount: videoDevices.length, audioCount: audioDevices.length })
-      } catch (enumError) {
-        console.warn("[WebRTC] Error enumerating devices (this is OK if permission not granted yet):", enumError)
-      }
+      // Не вызываем permissions.query и enumerateDevices до первого getUserMedia.
+      // В Firefox enumerateDevices может блокироваться; быстрый путь — сразу getUserMedia без deviceId.
 
-      // Подготовить constraints для видео (с deviceId только если валиден)
-      const videoConstraintsWithDevice = requestVideo
-        ? {
-            width: { ideal: 640 },
-            height: { ideal: 480 },
-            facingMode: "user",
-            ...(validCameraDeviceId && { deviceId: { ideal: validCameraDeviceId } }),
-          }
+      // Первая попытка — минимальные constraints (только true), без width/height/facingMode.
+      // Некоторые драйверы камер падают на доп. constraints.
+      const videoConstraintsMinimal = requestVideo ? true : false
+      const audioConstraintsMinimal = requestAudio ? true : false
+      const videoConstraintsWithQuality = requestVideo
+        ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" as const }
         : false
-
-      // Подготовить constraints для аудио (с deviceId только если валиден)
-      const audioConstraintsWithDevice = requestAudio
-        ? {
-            echoCancellation: true,
-            noiseSuppression: true,
-            ...(validMicrophoneDeviceId && { deviceId: { ideal: validMicrophoneDeviceId } }),
-          }
-        : false
-
-      // Constraints без deviceId (fallback при устаревших ID из профиля)
-      const videoConstraintsFallback = requestVideo
-        ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
-        : false
-      const audioConstraintsFallback = requestAudio
+      const audioConstraintsWithQuality = requestAudio
         ? { echoCancellation: true, noiseSuppression: true }
         : false
 
-      const tryGetUserMedia = async (useDeviceId: boolean, timeoutMs = 25000) => {
-        videoConstraints = useDeviceId ? videoConstraintsWithDevice : videoConstraintsFallback
-        audioConstraints = useDeviceId ? audioConstraintsWithDevice : audioConstraintsFallback
+      // С deviceId — заполняем при retry (enumerateDevices только тогда)
+      let validCameraDeviceId: string | null = null
+      let validMicrophoneDeviceId: string | null = null
+      const ensureDeviceValidation = async () => {
+        if (validCameraDeviceId !== null || validMicrophoneDeviceId !== null) return
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const videoDevs = devices.filter(d => d.kind === "videoinput")
+          const audioDevs = devices.filter(d => d.kind === "audioinput")
+          const videoIds = new Set(videoDevs.map(d => d.deviceId))
+          const audioIds = new Set(audioDevs.map(d => d.deviceId))
+          if (mediaSettings?.cameraDeviceId && videoIds.has(mediaSettings.cameraDeviceId)) validCameraDeviceId = mediaSettings.cameraDeviceId
+          if (mediaSettings?.microphoneDeviceId && audioIds.has(mediaSettings.microphoneDeviceId)) validMicrophoneDeviceId = mediaSettings.microphoneDeviceId
+          mediaLog.enumerateDevices({
+            videoCount: videoDevs.length,
+            audioCount: audioDevs.length,
+            cameraIds: videoDevs.map(d => d.deviceId),
+            microphoneIds: audioDevs.map(d => d.deviceId),
+          })
+        } catch {}
+      }
+
+      const buildConstraintsWithDevice = () => ({
+        video: requestVideo
+          ? { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" as const, ...(validCameraDeviceId && { deviceId: { ideal: validCameraDeviceId } }) }
+          : false,
+        audio: requestAudio
+          ? { echoCancellation: true, noiseSuppression: true, ...(validMicrophoneDeviceId && { deviceId: { ideal: validMicrophoneDeviceId } }) }
+          : false,
+      })
+
+      const tryGetUserMedia = async (useDeviceId: boolean, useMinimal: boolean, timeoutMs = 25000) => {
+        if (useDeviceId) await ensureDeviceValidation()
+        const c = useMinimal
+          ? { video: videoConstraintsMinimal, audio: audioConstraintsMinimal }
+          : useDeviceId
+            ? buildConstraintsWithDevice()
+            : { video: videoConstraintsWithQuality, audio: audioConstraintsWithQuality }
+        videoConstraints = c.video
+        audioConstraints = c.audio
+        mediaLog.getUserMediaCall({ video: requestVideo, audio: requestAudio, withDeviceId: useDeviceId, useMinimal, timeoutMs })
         const getUserMediaPromise = navigator.mediaDevices.getUserMedia({
           video: videoConstraints,
           audio: audioConstraints,
@@ -188,20 +151,17 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         return Promise.race([getUserMediaPromise, timeoutPromise])
       }
 
-      console.log("[WebRTC] 📹 Requesting camera and microphone access...", {
-        video: requestVideo,
-        audio: requestAudio,
-        cameraDeviceId: mediaSettings?.cameraDeviceId || null,
-        microphoneDeviceId: mediaSettings?.microphoneDeviceId || null,
-        userAgent: navigator.userAgent,
-        isSecureContext: window.isSecureContext,
-        location: window.location.href,
-      })
-
       let stream: MediaStream
       try {
-        stream = await tryGetUserMedia(true)
-        console.log("[WebRTC] ✅ getUserMedia succeeded with deviceId (first attempt)")
+        stream = await tryGetUserMedia(false, true)
+        mediaLog.getUserMediaOk({
+          streamId: stream.id,
+          videoTracks: stream.getVideoTracks().length,
+          audioTracks: stream.getAudioTracks().length,
+          attempt: "first",
+          videoLabels: stream.getVideoTracks().map(t => t.label),
+          audioLabels: stream.getAudioTracks().map(t => t.label),
+        })
       } catch (firstErr) {
         const msg = (firstErr as { message?: string })?.message ?? String(firstErr)
         const name = (firstErr as { name?: string })?.name ?? ""
@@ -212,55 +172,44 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
           isTimeout ||
           msg.includes("Could not start video source") ||
           msg.includes("Could not start audio source") ||
-          msg.toLowerCase().includes("device in use")
+          msg.toLowerCase().includes("device in use") ||
+          msg.toLowerCase().includes("занят")
         const hasDevicePref = mediaSettings?.cameraDeviceId || mediaSettings?.microphoneDeviceId
-        const shouldRetry = isRetryable && (hasDevicePref || isTimeout)
+        const shouldRetry = isRetryable
+        mediaLog.getUserMediaFail({ name, message: msg, isRetryable, willRetry: shouldRetry })
         if (shouldRetry) {
-          console.warn("[WebRTC] First attempt failed, retrying without deviceId" + (isTimeout ? " with longer timeout" : "") + ":", { name, message: msg })
-          stream = await tryGetUserMedia(false, isTimeout ? 40000 : undefined)
-          console.log("[WebRTC] ✅ getUserMedia succeeded (fallback retry)")
-          // Сброс устаревших deviceId в профиле — следующий вход не будет использовать невалидные ID
-          if (hasDevicePref) {
+          stream = await tryGetUserMedia(true, false, isTimeout ? 40000 : undefined)
+          mediaLog.getUserMediaOk({
+            streamId: stream.id,
+            videoTracks: stream.getVideoTracks().length,
+            audioTracks: stream.getAudioTracks().length,
+            attempt: "retry",
+            videoLabels: stream.getVideoTracks().map(t => t.label),
+            audioLabels: stream.getAudioTracks().map(t => t.label),
+          })
+          if (hasDevicePref && !validCameraDeviceId && !validMicrophoneDeviceId) {
             fetch("/api/profile/media-settings", {
               method: "PATCH",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ cameraDeviceId: null, microphoneDeviceId: null }),
-            }).catch((e) => console.debug("[WebRTC] Failed to clear stale deviceIds in profile:", e))
+            }).catch(() => {})
           }
         } else {
           throw firstErr
         }
       }
-      console.log("[WebRTC] ✅ getUserMedia succeeded, got stream:", stream.id)
-      
-      console.log("[WebRTC] ✅ Media access granted, stream obtained:", {
+
+      mediaLog.streamTracks({
         streamId: stream.id,
-        videoTracks: stream.getVideoTracks().length,
-        audioTracks: stream.getAudioTracks().length,
-        videoTracksInfo: stream.getVideoTracks().map(t => ({
-          id: t.id,
-          label: t.label,
-          enabled: t.enabled,
-          readyState: t.readyState,
-          muted: t.muted,
-          settings: t.getSettings(),
-        })),
-        audioTracksInfo: stream.getAudioTracks().map(t => ({
-          id: t.id,
-          label: t.label,
-          enabled: t.enabled,
-          readyState: t.readyState,
-          muted: t.muted,
-          settings: t.getSettings(),
-        })),
+        video: stream.getVideoTracks().map(t => ({ id: t.id, label: t.label, enabled: t.enabled, readyState: t.readyState })),
+        audio: stream.getAudioTracks().map(t => ({ id: t.id, label: t.label, enabled: t.enabled, readyState: t.readyState })),
       })
-      
-      // Проверка, что stream не пустой
+
       if (stream.getVideoTracks().length === 0 && requestVideo) {
-        console.warn("[WebRTC] ⚠️ Video was requested but stream has no video tracks!")
+        mediaLog.initError({ name: "NoVideoTracks", message: "Video requested but stream has no video tracks" })
       }
       if (stream.getAudioTracks().length === 0 && requestAudio) {
-        console.warn("[WebRTC] ⚠️ Audio was requested but stream has no audio tracks!")
+        mediaLog.initError({ name: "NoAudioTracks", message: "Audio requested but stream has no audio tracks" })
       }
       setLocalStream(stream)
       setError(null)
@@ -268,16 +217,13 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       // Add event listeners for track ended events (device disconnected)
       stream.getTracks().forEach((track) => {
         track.onended = () => {
-          console.warn(`[WebRTC] Track ended: ${track.kind}`, track.label)
-          if (track.kind === "video") {
-            setError("Видеокамера отключена")
-          } else if (track.kind === "audio") {
-            setError("Микрофон отключен")
-          }
+          mediaLog.trackEnded({ kind: track.kind, label: track.label })
+          if (track.kind === "video") setError("Видеокамера отключена")
+          else if (track.kind === "audio") setError("Микрофон отключен")
         }
-
         track.onerror = (event) => {
-          console.error(`[WebRTC] Track error: ${track.kind}`, event)
+          const errMsg = (event as { message?: string })?.message ?? String(event)
+          mediaLog.trackError({ kind: track.kind, label: track.label, error: errMsg })
           const { message } = handleMediaError(event)
           setError(message)
         }
@@ -373,14 +319,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       })
       
       if (isPermissionError) {
-        // Permission denied is not a critical error - user can retry manually
-        const message = "Доступ к камере/микрофону запрещен. Вы можете включить их позже, нажав кнопку 'Включить камеру'."
-        setError(message)
-        console.warn("[WebRTC] ⚠️ Permission denied - user can enable media manually via button", {
-          errorName: errorName,
-          errorMessage: errorMessage,
-          note: "This is normal if auto-request is blocked. User should click 'Enable Camera' button.",
-        })
+        mediaLog.initError({ name: errorName, message: errorMessage, permissionDenied: true })
+        setError("Доступ к камере/микрофону запрещен. Вы можете включить их позже, нажав кнопку 'Включить камеру'.")
         return null
       }
       
@@ -398,29 +338,67 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
         (errorMessage.includes("Timeout") || errorMessage.includes("timeout"))
       
       if (isNotReadableError || isTimeoutError) {
-        const message = isTimeoutError
-          ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Это не критично - игра продолжит работать без видеосвязи. Вы можете попробовать включить камеру позже, нажав кнопку 'Включить камеру'."
-          : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'. Это не критично - игра продолжит работать без видеосвязи."
-        setError(message)
-        webRTCLog("warn", "initializeMedia", isTimeoutError ? "Timeout" : "NotReadableError (Device in use)", {
-          errorName,
-          errorMessage,
-          recoverable: true,
+        // Если ошибка из-за видео — пробуем только микрофон, чтобы голос работал
+        const videoFault = errorMessage.includes("video source") || errorMessage.includes("Video")
+        if (requestVideo && requestAudio && videoFault) {
+          try {
+            const audioOnly = await navigator.mediaDevices.getUserMedia({
+              video: false,
+              audio: true,
+            })
+            mediaLog.getUserMediaOk({
+              streamId: audioOnly.id,
+              videoTracks: 0,
+              audioTracks: audioOnly.getAudioTracks().length,
+              attempt: "retry",
+              videoLabels: [],
+              audioLabels: audioOnly.getAudioTracks().map(t => t.label),
+            })
+            mediaLog.streamTracks({
+              streamId: audioOnly.id,
+              video: [],
+              audio: audioOnly.getAudioTracks().map(t => ({ id: t.id, label: t.label, enabled: t.enabled, readyState: t.readyState })),
+            })
+            audioOnly.getTracks().forEach((track) => {
+              track.onended = () => {
+                mediaLog.trackEnded({ kind: track.kind, label: track.label })
+                if (track.kind === "audio") setError("Микрофон отключен")
+              }
+              track.onerror = (event) => {
+                mediaLog.trackError({ kind: track.kind, label: track.label, error: (event as { message?: string })?.message })
+                const { message } = handleMediaError(event)
+                setError(message)
+              }
+            })
+            setLocalStream(audioOnly)
+            setError(null)
+            return audioOnly
+          } catch {
+            // ignore, fall through to set error
+          }
+        }
+        mediaLog.initError({
+          name: errorName,
+          message: errorMessage,
+          deviceInUse: isNotReadableError,
+          timeout: isTimeoutError,
         })
+        setError(isTimeoutError
+          ? "Таймаут при запуске камеры/микрофона. Камера может быть занята или долго не отвечает. Это не критично - игра продолжит работать без видеосвязи. Вы можете попробовать включить камеру позже, нажав кнопку 'Включить камеру'."
+          : "Камера или микрофон заняты другим приложением. Закройте другие приложения, использующие камеру, и попробуйте снова, нажав кнопку 'Включить камеру'. Это не критично - игра продолжит работать без видеосвязи.")
         return null
       }
       
-      // For other errors, use the standard error handler
       const { message, recoverable } = handleMediaError(err)
       setError(message)
-      
-      // Log as warning for recoverable errors, error for non-recoverable
-      if (recoverable) {
-        console.warn("[WebRTC] ⚠️ Media initialization failed (recoverable):", errorDetails)
-      } else {
-        console.error("[WebRTC] ❌ Media initialization failed (non-recoverable):", errorDetails)
-      }
-      
+      mediaLog.initError({
+        name: errorName,
+        message: errorMessage,
+        code: errorCode,
+        permissionDenied: false,
+        deviceInUse: false,
+        timeout: false,
+      })
       return null
     } finally {
       setIsMediaLoading(false)
@@ -429,23 +407,7 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
 
   // Инициализация сигналинга
   useEffect(() => {
-    console.log("[WebRTC] 🔄 Signaling initialization effect triggered:", {
-      roomId,
-      currentPlayerId,
-      roomIdType: typeof roomId,
-      currentPlayerIdType: typeof currentPlayerId,
-      roomIdLength: roomId?.length,
-      currentPlayerIdLength: currentPlayerId?.length,
-    })
-    
-    // Проверяем, что roomId и currentPlayerId не пустые строки
     if (!roomId || !currentPlayerId || roomId.trim() === "" || currentPlayerId.trim() === "") {
-      console.warn("[WebRTC] ⚠️ Cannot initialize signaling:", { 
-        roomId, 
-        currentPlayerId,
-        roomIdEmpty: !roomId || roomId.trim() === "",
-        currentPlayerIdEmpty: !currentPlayerId || currentPlayerId.trim() === ""
-      })
       setSignalingConnected(false)
       return
     }
@@ -916,21 +878,8 @@ export function useWebRTC({ roomId, userId, currentPlayerId, otherPlayers, media
       otherPlayers: otherPlayers.map(p => ({ id: p.id, playerId: p.playerId })),
     })
     
-    // Allow connection creation even without local stream (to receive remote streams)
-    if (!currentPlayerId) {
-      console.warn("[WebRTC] ⚠️ Skipping connection creation: No current player ID")
-      return
-    }
-    
-    if (!signalingRef.current || !signalingConnected) {
-      console.warn("[WebRTC] ⚠️ Skipping connection creation: Signaling not connected yet", {
-        hasSignalingRef: !!signalingRef.current,
-        signalingConnected,
-      })
-      return
-    }
-    
-    // Warn if local stream is not available, but continue anyway
+    if (!currentPlayerId) return
+    if (!signalingRef.current || !signalingConnected) return
     if (!localStream) {
       console.log("[WebRTC] ℹ️ Creating connections without local stream (will only receive remote streams)")
     }

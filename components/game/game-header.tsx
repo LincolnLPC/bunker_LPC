@@ -13,6 +13,8 @@ interface GameHeaderProps {
   onOpenAltar?: () => void
   onTimerEnd?: () => void
   unreadMessagesCount?: number
+  /** Server-synced time remaining (from /api/game/timer/check) to avoid drift */
+  serverTimeRemaining?: number | null
 }
 
 export function GameHeader({
@@ -23,6 +25,7 @@ export function GameHeader({
   onOpenAltar,
   onTimerEnd,
   unreadMessagesCount = 0,
+  serverTimeRemaining,
 }: GameHeaderProps) {
   const activePlayers = gameState.players.filter((p) => !p.isEliminated).length
   const totalPlayers = gameState.players.length
@@ -87,6 +90,7 @@ export function GameHeader({
               isActive={gameState.phase === "playing" || gameState.phase === "voting"}
               onTimeUp={onTimerEnd}
               startedAt={gameState.roundStartedAt}
+              serverTimeRemaining={serverTimeRemaining}
             />
           )}
         </div>

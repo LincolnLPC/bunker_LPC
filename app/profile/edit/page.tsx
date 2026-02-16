@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ArrowLeft, Flame, Loader2, Upload, Camera, Mic, RefreshCw } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
+import { mediaLog } from "@/lib/media-logger"
 
 interface MediaSettings {
   autoRequestCamera: boolean
@@ -96,17 +97,11 @@ function EditProfileForm() {
     loadProfile()
   }, [router])
 
-  // Единый источник медиа: getUserMedia вызывается ТОЛЬКО на странице игры (hooks/use-webrtc.ts).
-  // Здесь — только enumerateDevices, без getUserMedia, чтобы не занимать камеру/микрофон.
   const loadDevices = useCallback(async () => {
     setDevicesLoading(true)
     try {
-      // Только enumerateDevices — без getUserMedia, чтобы не блокировать камеру/микрофон для игры.
-      // Метки могут быть пустыми до первого разрешения в игре — показываем "Камера 1" и т.д.
       if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
         const devices = await navigator.mediaDevices.enumerateDevices()
-        console.log("[Profile] Enumerated devices:", devices.length, devices)
-        
         const cameras = devices
           .filter(device => device.kind === "videoinput" && device.deviceId && device.deviceId.trim() !== "")
           .map((device, index) => ({
@@ -114,7 +109,6 @@ function EditProfileForm() {
             label: device.label || `Камера ${index + 1}`,
             kind: device.kind as MediaDeviceKind,
           }))
-        
         const microphones = devices
           .filter(device => device.kind === "audioinput" && device.deviceId && device.deviceId.trim() !== "")
           .map((device, index) => ({
@@ -122,10 +116,12 @@ function EditProfileForm() {
             label: device.label || `Микрофон ${index + 1}`,
             kind: device.kind as MediaDeviceKind,
           }))
-
-        console.log("[Profile] Found cameras:", cameras.length, cameras)
-        console.log("[Profile] Found microphones:", microphones.length, microphones)
-
+        mediaLog.profileDevices({
+          cameras: cameras.length,
+          microphones: microphones.length,
+          cameraLabels: cameras.map(c => c.label),
+          microphoneLabels: microphones.map(m => m.label),
+        })
         setAvailableCameras(cameras)
         setAvailableMicrophones(microphones)
       }
@@ -135,6 +131,21 @@ function EditProfileForm() {
       setDevicesLoading(false)
     }
   }, [])
+
+  // enumerateDevices возвращает пустой список камер, пока браузер не получил разрешение через getUserMedia.
+  const requestMediaThenLoad = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) return
+    setDevicesLoading(true)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      stream.getTracks().forEach((t) => t.stop())
+      await loadDevices()
+    } catch (err) {
+      console.error("[Profile] getUserMedia failed:", err)
+    } finally {
+      setDevicesLoading(false)
+    }
+  }, [loadDevices])
 
   // Загрузить список доступных устройств при монтировании
   useEffect(() => {
@@ -511,8 +522,19 @@ function EditProfileForm() {
                   {devicesLoading ? (
                     <div className="text-sm text-muted-foreground">Загрузка устройств...</div>
                   ) : availableCameras.length === 0 ? (
-                    <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md">
-                      Камеры не найдены. Убедитесь, что камера подключена и нажмите "Обновить".
+                    <div className="space-y-3">
+                      <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md">
+                        Камеры не найдены. Браузер показывает список только после того, как вы разрешите доступ к камере.
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={requestMediaThenLoad}
+                        disabled={devicesLoading || !navigator.mediaDevices?.getUserMedia}
+                      >
+                        Разрешить камеру и обновить список
+                      </Button>
                     </div>
                   ) : (
                     <Select
@@ -564,8 +586,19 @@ function EditProfileForm() {
                   {devicesLoading ? (
                     <div className="text-sm text-muted-foreground">Загрузка устройств...</div>
                   ) : availableMicrophones.length === 0 ? (
-                    <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md">
-                      Микрофоны не найдены. Убедитесь, что микрофон подключен и нажмите "Обновить".
+                    <div className="space-y-3">
+                      <div className="text-sm text-muted-foreground p-3 bg-muted rounded-md">
+                        Микрофоны не найдены. Браузер показывает список только после разрешения доступа.
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={requestMediaThenLoad}
+                        disabled={devicesLoading || !navigator.mediaDevices?.getUserMedia}
+                      >
+                        Разрешить микрофон и обновить список
+                      </Button>
                     </div>
                   ) : (
                     <Select

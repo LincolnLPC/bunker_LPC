@@ -10,12 +10,13 @@ interface RoundTimerProps {
   onTimeUp?: () => void
   className?: string
   startedAt?: string // ISO timestamp when round started (for server-side sync)
+  /** Periodic server sync: when set, overrides local countdown to avoid drift */
+  serverTimeRemaining?: number | null
 }
 
-export function RoundTimer({ duration, isActive, onTimeUp, className, startedAt }: RoundTimerProps) {
+export function RoundTimer({ duration, isActive, onTimeUp, className, startedAt, serverTimeRemaining }: RoundTimerProps) {
   const calculateTimeRemaining = useCallback(() => {
     if (startedAt) {
-      // Calculate based on server time
       const startTime = new Date(startedAt).getTime()
       const now = new Date().getTime()
       const elapsed = Math.floor((now - startTime) / 1000)
@@ -29,6 +30,13 @@ export function RoundTimer({ duration, isActive, onTimeUp, className, startedAt 
   useEffect(() => {
     setTimeRemaining(calculateTimeRemaining())
   }, [calculateTimeRemaining])
+
+  // Sync with server when serverTimeRemaining is provided (periodic check)
+  useEffect(() => {
+    if (isActive && typeof serverTimeRemaining === "number" && serverTimeRemaining >= 0) {
+      setTimeRemaining(serverTimeRemaining)
+    }
+  }, [isActive, serverTimeRemaining])
 
   useEffect(() => {
     if (!isActive) {

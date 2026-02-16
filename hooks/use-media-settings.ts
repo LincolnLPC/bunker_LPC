@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
+import { mediaLog } from "@/lib/media-logger"
 
 export interface MediaSettings {
   autoRequestCamera: boolean
@@ -44,7 +45,7 @@ export function useMediaSettings() {
         .single()
 
       if (profile?.media_settings) {
-        setSettings({
+        const s = {
           autoRequestCamera: profile.media_settings.autoRequestCamera ?? DEFAULT_MEDIA_SETTINGS.autoRequestCamera,
           autoRequestMicrophone:
             profile.media_settings.autoRequestMicrophone ?? DEFAULT_MEDIA_SETTINGS.autoRequestMicrophone,
@@ -55,9 +56,28 @@ export function useMediaSettings() {
           cameraDeviceId: profile.media_settings.cameraDeviceId ?? null,
           microphoneDeviceId: profile.media_settings.microphoneDeviceId ?? null,
           vdoNinjaCameraUrl: profile.media_settings.vdoNinjaCameraUrl ?? null,
+        }
+        setSettings(s)
+        mediaLog.settingsLoaded({
+          autoCamera: s.autoRequestCamera,
+          autoMic: s.autoRequestMicrophone,
+          defaultCameraOn: s.defaultCameraEnabled,
+          defaultMicOn: s.defaultMicrophoneEnabled,
+          hasVdoNinja: !!s.vdoNinjaCameraUrl,
+          cameraDeviceId: s.cameraDeviceId ?? null,
+          microphoneDeviceId: s.microphoneDeviceId ?? null,
         })
       } else {
         setSettings(DEFAULT_MEDIA_SETTINGS)
+        mediaLog.settingsLoaded({
+          autoCamera: DEFAULT_MEDIA_SETTINGS.autoRequestCamera,
+          autoMic: DEFAULT_MEDIA_SETTINGS.autoRequestMicrophone,
+          defaultCameraOn: DEFAULT_MEDIA_SETTINGS.defaultCameraEnabled,
+          defaultMicOn: DEFAULT_MEDIA_SETTINGS.defaultMicrophoneEnabled,
+          hasVdoNinja: false,
+          cameraDeviceId: null,
+          microphoneDeviceId: null,
+        })
       }
 
       setLoading(false)

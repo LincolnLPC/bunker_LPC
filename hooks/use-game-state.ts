@@ -4,6 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRealtimeGame } from "@/hooks/use-realtime-game"
 import { retry, isRetryableError } from "@/lib/error-handling/connection-recovery"
+import { joinResponseSchema, startResponseSchema, voteResponseSchema } from "@/lib/api/schemas"
 import type { GameState, Player, Characteristic, Vote, ChatMessage, Spectator } from "@/types/game"
 import { logger } from "@/lib/logger"
 import { useDebouncedCallback } from "@/hooks/use-debounced-callback"
@@ -269,7 +270,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         const message = (roomError as any)?.message
         const details = (roomError as any)?.details
         const hint = (roomError as any)?.hint
-        console.error("[GameState] Error fetching room:", message ?? code ?? String(roomError), { code, message, details, hint, roomCode })
+        logger.error("[GameState] Error fetching room:", message ?? code ?? String(roomError), { code, message, details, hint, roomCode })
         throw roomError
       }
       if (!room) {
@@ -343,22 +344,25 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         
         logger.log("[GameState] Game already started, attempting to join as spectator")
         try {
-          const joinResponse = await fetch("/api/game/join", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ roomCode }),
-          })
-          
-          const text = await joinResponse.text()
-          let responseData: any
-          try {
-            responseData = text ? JSON.parse(text) : {}
-          } catch (parseError) {
-            console.error("[GameState] Failed to parse spectator join response:", parseError)
-            // Continue anyway
-            responseData = {}
-          }
-          
+          const { joinResponse, responseData } = await retry(
+            async () => {
+              const joinResponse = await fetch("/api/game/join", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ roomCode }),
+              })
+              const text = await joinResponse.text()
+              let responseData: any = text ? JSON.parse(text) : {}
+              const parsed = joinResponseSchema.safeParse(responseData)
+              if (parsed.success) responseData = parsed.data
+              if (!joinResponse.ok) {
+                const err = Object.assign(new Error(responseData?.error || "Join failed"), { status: joinResponse.status })
+                throw err
+              }
+              return { joinResponse, responseData }
+            },
+            { maxAttempts: 3, delay: 1000, shouldRetry: isRetryableError }
+          )
           if (joinResponse.ok && (responseData.isSpectator || !responseData.error)) {
             logger.log("[GameState] Successfully joined as spectator:", responseData.spectatorId)
             setCurrentPlayerId(null)
@@ -394,12 +398,11 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             logger.log("[GameState] Room requires password, cannot auto-join as spectator")
             setError("Эта комната защищена паролем. Пожалуйста, введите пароль на странице присоединения.")
           } else {
-            console.error("[GameState] Failed to join as spectator:", responseData)
-            // Don't throw error - allow user to view anyway
+            logger.error("[GameState] Failed to join as spectator:", responseData)
             logger.log("[GameState] Continuing despite spectator join failure")
           }
         } catch (spectatorError) {
-          console.error("[GameState] Error joining as spectator:", spectatorError)
+          logger.error("[GameState] Error joining as spectator:", spectatorError)
           // Continue anyway - user might still be able to view
         }
       } else if (shouldAutoJoin) {
@@ -421,7 +424,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                     logger.log("[GameState] Fetch request was aborted - this may be expected")
                     throw new Error("Request was cancelled")
                   }
-                  console.error("[GameState] Fetch error:", {
+                  logger.error("[GameState] Fetch error:", {
                     error: fetchError,
                     errorName: fetchError instanceof Error ? fetchError.name : typeof fetchError,
                     errorMessage: fetchError instanceof Error ? fetchError.message : String(fetchError),
@@ -437,14 +440,16 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 throw new Error(`Empty response from server: ${joinResponse.status} ${joinResponse.statusText}`)
               }
 
-              // Parse JSON from text
+              // Parse JSON from text and validate shape
               let responseData: any
               try {
                 responseData = JSON.parse(text)
               } catch (parseError) {
-                console.error("Failed to parse join response:", parseError, "Response text:", text.substring(0, 200))
+                logger.error("[GameState] Failed to parse join response:", parseError, "Response text:", text.substring(0, 200))
                 throw new Error(`Invalid JSON response from server: ${joinResponse.status} ${joinResponse.statusText}`)
               }
+              const joinParsed = joinResponseSchema.safeParse(responseData)
+              if (joinParsed.success) responseData = joinParsed.data
 
               logger.log("[GameState] Join response status:", joinResponse.status, joinResponse.statusText)
               logger.log("[GameState] Join response data:", responseData)
@@ -479,7 +484,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                   logger.log("[GameState] User already in room (expected), continuing...")
                   // Don't throw error - just continue with room reload
                 } else {
-                  console.error("[GameState] Join failed:", {
+                  logger.error("[GameState] Join failed:", {
                     status: joinResponse.status,
                     statusText: joinResponse.statusText,
                     error: errorMessage,
@@ -539,7 +544,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                   .single()
 
                 if (roomReloadError) {
-                  console.error("[GameState] Error reloading room after join:", roomReloadError)
+                  logger.error("[GameState] Error reloading room after join:", roomReloadError)
                 } else if (updatedRoom) {
                   await attachWhoamiWords(updatedRoom)
                   await attachWhoamiVotes(updatedRoom)
@@ -579,7 +584,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                       .order("sort_order", { ascending: true })
                     
                     if (charsError) {
-                      console.error("[GameState] Error fetching characteristics directly:", charsError)
+                      logger.error("[GameState] Error fetching characteristics directly:", charsError)
                     } else {
                       logger.log("[GameState] Direct characteristics fetch result:", {
                         count: directChars?.length || 0,
@@ -617,7 +622,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                   logger.log("[GameState] Request aborted during join - may be expected")
                   throw new Error("Request was cancelled")
                 }
-                console.error("[GameState] Error during join attempt:", {
+                logger.error("[GameState] Error during join attempt:", {
                   error: innerError,
                   errorName: innerError instanceof Error ? innerError.name : typeof innerError,
                   errorMessage: innerError instanceof Error ? innerError.message : String(innerError),
@@ -654,7 +659,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             logger.log("[GameState] Join request was aborted - this may be expected during navigation or retries")
             // Don't treat abort as critical error
           } else {
-            console.error("[GameState] Error auto-joining room after retries:", errorInfo)
+            logger.error("[GameState] Error auto-joining room after retries:", errorInfo)
             // Continue with existing state if join fails
             // This is not critical - user can manually join if needed
           }
@@ -703,7 +708,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
                 logger.log("[GameState] Added characteristics to room data after reload")
               }
             } else if (charsError) {
-              console.error("[GameState] Error fetching characteristics directly after reload:", charsError)
+              logger.error("[GameState] Error fetching characteristics directly after reload:", charsError)
             } else {
               logger.warn("[GameState] No characteristics found in database for player:", currentPlayerInReloaded.id)
             }
@@ -723,7 +728,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             }))
           })
         } else if (reloadError) {
-          console.error("[GameState] Error reloading room after auto-join:", reloadError)
+          logger.error("[GameState] Error reloading room after auto-join:", reloadError)
         }
       }
 
@@ -834,7 +839,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       const errorCode = (err as any)?.code
       const errorDetails = (err as any)?.details
-      console.error("[GameState] Error loading game state:", errorMessage, { code: errorCode, details: errorDetails, roomCode })
+      logger.error("[GameState] Error loading game state:", errorMessage, { code: errorCode, details: errorDetails, roomCode })
 
       // For other errors, set error state
       setError(errorMessage)
@@ -1162,7 +1167,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           }
         }
       } catch (error) {
-        console.error("[Timer] Error checking timer:", error)
+        logger.error("[Timer] Error checking timer:", error)
       }
     }, 8000) // Check every 8 seconds (reduced CPU/network load)
 
@@ -1187,7 +1192,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       return
     }
     if (!gameState) {
-      console.error("[GameState] ❌ Cannot start game: gameState is null")
+      logger.error("[GameState] ❌ Cannot start game: gameState is null")
       return
     }
 
@@ -1208,7 +1213,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             const data = await response.json()
             const errorMessage = data.error || "Failed to start game"
             
-            console.error("[GameState] ❌ Start game failed:", {
+            logger.error("[GameState] ❌ Start game failed:", {
               status: response.status,
               statusText: response.statusText,
               error: errorMessage,
@@ -1224,9 +1229,10 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
             
             throw new Error(errorMessage)
           } else {
-            logger.log("[GameState] ✅ Game started successfully, refreshing state...")
-            const responseData = await response.json().catch(() => ({}))
-            logger.log("[GameState] Start game response data:", responseData)
+            const raw = await response.json().catch(() => ({}))
+            const startParsed = startResponseSchema.safeParse(raw)
+            const responseData = startParsed.success ? startParsed.data : raw
+            logger.log("[GameState] ✅ Game started successfully, refreshing state...", responseData)
           }
         },
         {
@@ -1240,7 +1246,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       await loadGameState()
       logger.log("[GameState] ✅ Game state refreshed after start")
     } catch (err) {
-      console.error("[GameState] ❌ Error starting game:", {
+      logger.error("[GameState] ❌ Error starting game:", {
         error: err,
         errorName: err instanceof Error ? err.name : typeof err,
         errorMessage: err instanceof Error ? err.message : String(err),
@@ -1272,7 +1278,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
         loadGameState()
       } catch (err) {
-        console.error("Error revealing characteristic:", err)
+        logger.error("Error revealing characteristic:", err)
         setError(err instanceof Error ? err.message : "Failed to reveal characteristic")
       }
     },
@@ -1345,7 +1351,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
       loadGameState()
     } catch (err) {
-      console.error("Error starting voting:", err)
+      logger.error("Error starting voting:", err)
       // Don't show error if it's a phase mismatch - just refresh state
       const errorMessage = err instanceof Error ? err.message : String(err)
       if (!errorMessage.includes("must be in playing phase") && !errorMessage.includes("Game must be in playing")) {
@@ -1385,7 +1391,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
       loadGameState()
     } catch (err) {
-      console.error("Error advancing round:", err)
+      logger.error("Error advancing round:", err)
       // Не устанавливаем ошибку для ошибок фазы - это может быть проблема синхронизации
       const errorMessage = err instanceof Error ? err.message : "Failed to advance round"
       if (!errorMessage.includes("Must be in") || !errorMessage.includes("phase")) {
@@ -1412,7 +1418,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
       loadGameState()
     } catch (err) {
-      console.error("Error finishing game:", err)
+      logger.error("Error finishing game:", err)
       setError(err instanceof Error ? err.message : "Failed to finish game")
     }
   }, [gameState, loadGameState])
@@ -1436,7 +1442,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
       loadGameState()
     } catch (err) {
-      console.error("Error eliminating player:", err)
+      logger.error("Error eliminating player:", err)
       setError(err instanceof Error ? err.message : "Failed to eliminate player")
     }
     },
@@ -1478,7 +1484,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     }
   }, [gameState?.id, loadGameState])
 
-  // Cast vote
+  // Cast vote (with retry for network/5xx)
   const castVote = useCallback(
     async (targetId: string) => {
       if (!gameState || !currentPlayerId) {
@@ -1486,164 +1492,56 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       }
 
       try {
-        let response: Response
-        try {
-          response = await fetch("/api/game/vote", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              roomId: gameState.id,
-              targetPlayerId: targetId,
-            }),
-          })
-        } catch (fetchError) {
-          // Handle network errors (connection failed, CORS, etc.)
-          const networkError = fetchError instanceof Error 
-            ? fetchError.message 
-            : String(fetchError)
-          console.error("[Vote] Network error:", {
-            error: networkError,
-            gameStateId: gameState.id,
-            targetId,
-            fetchError
-          })
-          throw new Error(`Network error: ${networkError}. Please check your connection.`)
-        }
+        await retry(
+          async () => {
+            const response = await fetch("/api/game/vote", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                roomId: gameState.id,
+                targetPlayerId: targetId,
+              }),
+            })
 
-        // Read response as text first (can only read once)
-        const contentType = response.headers.get("content-type")
-        const text = await response.text()
+            const contentType = response.headers.get("content-type")
+            const text = await response.text()
 
-        if (!text || !text.trim()) {
-          console.error("[Vote] Empty response:", {
-            status: response.status,
-            statusText: response.statusText,
-            contentType
-          })
-          throw new Error(`Empty response from server: ${response.status} ${response.statusText}`)
-        }
-
-        // Parse JSON from text
-        let responseData: any = null
-        try {
-          responseData = JSON.parse(text)
-        } catch (parseError) {
-          console.error("[Vote] Failed to parse JSON:", {
-            parseError,
-            status: response.status,
-            statusText: response.statusText,
-            contentType,
-            responseText: text.substring(0, 200)
-          })
-          throw new Error(`Invalid JSON response: ${response.status} ${response.statusText}. Response: ${text.substring(0, 100)}`)
-        }
-
-        if (!response.ok) {
-          // Ensure we have error information - extract from responseData properly
-          let errorMessage: string = ""
-          
-          // Try to extract error message from responseData
-          if (responseData) {
-            // Check error field
-            if (responseData.error) {
-              if (typeof responseData.error === 'string') {
-                errorMessage = responseData.error
-              } else if (typeof responseData.error === 'object') {
-                errorMessage = responseData.error.message || responseData.error.error || JSON.stringify(responseData.error)
-              }
+            if (!text || !text.trim()) {
+              const err = new Error(`Empty response from server: ${response.status} ${response.statusText}`) as Error & { status?: number }
+              err.status = response.status
+              throw err
             }
-            
-            // Check message field if error not found
-            if (!errorMessage && responseData.message) {
-              if (typeof responseData.message === 'string') {
-                errorMessage = responseData.message
-              } else if (typeof responseData.message === 'object') {
-                errorMessage = responseData.message.message || JSON.stringify(responseData.message)
-              }
-            }
-          }
-          
-          // Fallback to status text if no message found
-          if (!errorMessage || errorMessage === '[object Object]') {
-            errorMessage = `Server error: ${response.status} ${response.statusText}`
-          }
-          
-          const errorDetails = responseData?.details || responseData?.errors || responseData?.code || null
-          
-          // Build detailed error message - ensure it's always a string
-          let fullErrorMessage = String(errorMessage)
-          if (errorDetails) {
-            if (typeof errorDetails === 'string') {
-              fullErrorMessage = `${errorMessage}: ${errorDetails}`
-            } else if (typeof errorDetails === 'object') {
-              try {
-                const detailsStr = JSON.stringify(errorDetails, null, 2)
-                fullErrorMessage = `${errorMessage}\nDetails: ${detailsStr}`
-              } catch {
-                fullErrorMessage = `${errorMessage} (See console for details)`
-              }
-            } else {
-              fullErrorMessage = `${errorMessage} (${String(errorDetails)})`
-            }
-          }
 
-          // Log full response data for debugging
-          console.error("[Vote] Failed to cast vote - Server response:", {
-            status: response.status,
-            statusText: response.statusText,
-            errorMessage: errorMessage,
-            errorDetails: errorDetails,
-            fullResponse: responseData,
-            responseText: text?.substring(0, 500),
-            contentType
-          })
-          
-          // Also log responseData separately to see its structure
-          console.error("[Vote] Full responseData object:", JSON.stringify(responseData, null, 2))
-          
-          // Extract additional info from responseData for better error message
-          let additionalInfo = ""
-          if (responseData?.details) {
-            if (typeof responseData.details === 'string') {
-              additionalInfo = responseData.details
-            } else if (typeof responseData.details === 'object') {
-              // Try to extract message from details object
-              if (responseData.details.message) {
-                additionalInfo = String(responseData.details.message)
-              } else {
-                try {
-                  additionalInfo = JSON.stringify(responseData.details, null, 2)
-                } catch {
-                  additionalInfo = "See console for details"
-                }
-              }
+            let responseData: any = null
+            try {
+              responseData = JSON.parse(text)
+            } catch (parseError) {
+              logger.error("[Vote] Failed to parse JSON:", parseError, "status:", response.status, "text:", text.substring(0, 200))
+              const err = new Error(`Invalid JSON response: ${response.status} ${response.statusText}`) as Error & { status?: number }
+              err.status = response.status
+              throw err
             }
-          }
-          
-          // Build final error message
-          let finalErrorMessage = errorMessage
-          if (additionalInfo && !finalErrorMessage.includes(additionalInfo)) {
-            finalErrorMessage = `${errorMessage}${additionalInfo ? `: ${additionalInfo}` : ''}`
-          }
 
-          // Create error with proper message - ensure message is always a string and doesn't contain [object Object]
-          let cleanErrorMessage = String(finalErrorMessage).replace(/\[object Object\]/g, '')
-          if (!cleanErrorMessage || cleanErrorMessage.trim() === '') {
-            cleanErrorMessage = `Server error: ${response.status} ${response.statusText}`
-          }
-          
-          const voteError = new Error(cleanErrorMessage)
-          // Attach additional info to error object for debugging
-          ;(voteError as any).status = response.status
-          ;(voteError as any).responseData = responseData
-          throw voteError
-        }
+            if (!response.ok) {
+              let errorMessage: string = ""
+              if (responseData?.error) {
+                errorMessage = typeof responseData.error === "string" ? responseData.error : (responseData.error?.message || responseData.error?.error || String(responseData.error))
+              }
+              if (!errorMessage && responseData?.message) {
+                errorMessage = typeof responseData.message === "string" ? responseData.message : String(responseData.message)
+              }
+              if (!errorMessage || errorMessage === "[object Object]") {
+                errorMessage = `Server error: ${response.status} ${response.statusText}`
+              }
+              const voteError = new Error(errorMessage) as Error & { status?: number }
+              voteError.status = response.status
+              throw voteError
+            }
 
-        // Vote cast successfully
-        logger.log("[Vote] Vote cast successfully:", responseData)
-        
-        // Don't reload full state, just update votes locally
-        // Votes will be synced via realtime
+            logger.log("[Vote] Vote cast successfully:", responseData)
+          },
+          { maxAttempts: 3, delay: 1000, shouldRetry: isRetryableError }
+        )
       } catch (err) {
         // Better error logging - handle all error types
         let errorMessage = "Failed to cast vote"
@@ -1664,7 +1562,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           // If message contains [object Object], try to get info from attached responseData
           if (msg.includes('[object Object]') && (err as any).responseData) {
             const responseData = (err as any).responseData
-            console.error("[Vote] Extracting error from responseData:", responseData)
+            logger.error("[Vote] Extracting error from responseData:", responseData)
             
             // Try multiple ways to extract error message
             if (responseData.error) {
@@ -1736,8 +1634,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         }
         
         // Log with multiple approaches to ensure we see something
-        console.error("Error casting vote:", errorString)
-        console.error("Error casting vote (detailed):", {
+        logger.error("Error casting vote:", errorString)
+        logger.error("Error casting vote (detailed):", {
           error: errorMessage,
           details: errorDetails,
           gameStateId: gameState?.id,
@@ -1752,17 +1650,17 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         if (err && typeof err === "object") {
           try {
             const props = Object.getOwnPropertyNames(err)
-            console.error("Error properties:", props)
+            logger.error("Error properties:", props)
             props.forEach(prop => {
               try {
                 const value = (err as any)[prop]
-                console.error(`  ${prop}:`, value)
+                logger.error(`  ${prop}:`, value)
               } catch (e) {
-                console.error(`  ${prop}: [unable to read]`)
+                logger.error(`  ${prop}: [unable to read]`)
               }
             })
           } catch (e) {
-            console.error("Could not enumerate error properties:", e)
+            logger.error("Could not enumerate error properties:", e)
           }
         }
         
@@ -1797,7 +1695,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
         loadGameState()
       } catch (err) {
-        console.error("Error updating characteristic:", err)
+        logger.error("Error updating characteristic:", err)
         setError(err instanceof Error ? err.message : "Failed to update characteristic")
         throw err
       }
@@ -1828,7 +1726,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
         loadGameState()
       } catch (err) {
-        console.error("Error randomizing characteristic:", err)
+        logger.error("Error randomizing characteristic:", err)
         setError(err instanceof Error ? err.message : "Failed to randomize characteristic")
         throw err
       }
@@ -1861,7 +1759,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
         loadGameState()
       } catch (err) {
-        console.error("Error exchanging characteristics:", err)
+        logger.error("Error exchanging characteristics:", err)
         setError(err instanceof Error ? err.message : "Failed to exchange characteristics")
         throw err
       }
@@ -1892,7 +1790,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
 
         loadGameState()
       } catch (err) {
-        console.error("Error toggling ready status:", err)
+        logger.error("Error toggling ready status:", err)
         setError(err instanceof Error ? err.message : "Failed to update ready status")
       }
     },
@@ -1909,14 +1807,14 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
       )
 
       if (!response.ok) {
-        console.error("[GameState] Failed to fetch special cards")
+        logger.error("[GameState] Failed to fetch special cards")
         return []
       }
 
       const data = await response.json()
       return data.cards || []
     } catch (err) {
-      console.error("[GameState] Error fetching special cards:", err)
+      logger.error("[GameState] Error fetching special cards:", err)
       return []
     }
   }, [gameState, currentPlayerId])
@@ -1996,7 +1894,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
           const errorMessage = responseData?.error || "Failed to use special card"
           // Don't log expected errors for eliminated players
           if (!errorMessage.includes("Eliminated players cannot use special cards")) {
-            console.error("Error using special card:", errorMessage)
+            logger.error("Error using special card:", errorMessage)
           }
           throw new Error(errorMessage)
         }
@@ -2007,7 +1905,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
         const errorMessage = err instanceof Error ? err.message : "Failed to use special card"
         // Don't log expected errors for eliminated players
         if (!errorMessage.includes("Eliminated players cannot use special cards")) {
-          console.error("Error using special card:", err)
+          logger.error("Error using special card:", err)
           setError(errorMessage)
         }
         throw err

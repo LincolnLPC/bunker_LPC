@@ -54,10 +54,10 @@ export function ConnectionStatus({
       ) : (
         <>
           <WifiOff className="h-4 w-4" />
-          <AlertTitle>Потеряно соединение</AlertTitle>
+          <AlertTitle>Нет связи</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-2">
             <span>
-              {isReconnecting ? "Попытка переподключения..." : "Нет соединения с сервером"}
+              {isReconnecting ? "Попытка переподключения..." : "Нет связи с сервером. Проверьте интернет или нажмите «Повторить»."}
             </span>
             {onRetry && (
               <Button

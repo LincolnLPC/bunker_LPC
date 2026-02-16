@@ -34,6 +34,10 @@ interface GameControlsProps {
   onViewMyWords?: () => void
   onWhoamiNextWord?: () => void
   isMediaLoading?: boolean
+  /** Открыть настройки профиля для выбора камеры (когда Snap Camera / виртуальная камера показывает логотип) */
+  onOpenMediaSettings?: () => void
+  /** When set, show "Повторить камеру" instead of "Включить камеру" */
+  mediaError?: string | null
 }
 
 export function GameControls({
@@ -67,6 +71,8 @@ export function GameControls({
   showTeasePanel = false,
   onReconnectVideo,
   isMediaLoading = false,
+  onOpenMediaSettings,
+  mediaError,
 }: GameControlsProps) {
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-[oklch(0.08_0.01_60/0.95)] border-t border-border backdrop-blur-sm">
@@ -83,11 +89,11 @@ export function GameControls({
               <Button
                 variant="outline"
                 size="sm"
-                className="border-primary text-primary hover:bg-primary/10"
+                className={mediaError ? "border-destructive/50 text-destructive hover:bg-destructive/10" : "border-primary text-primary hover:bg-primary/10"}
                 onClick={onRequestMedia}
               >
                 <Camera className="w-4 h-4 mr-2" />
-                Включить камеру
+                {mediaError ? "Повторить камеру" : "Включить камеру"}
               </Button>
             )
           )}
@@ -109,6 +115,17 @@ export function GameControls({
               >
                 {videoEnabled ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
               </Button>
+              {onOpenMediaSettings && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-muted-foreground/40 text-muted-foreground hover:text-foreground text-xs"
+                  onClick={onOpenMediaSettings}
+                  title="Выбрать другую камеру или микрофон (Snap Camera, OBS и т.д.)"
+                >
+                  Сменить камеру
+                </Button>
+              )}
             </>
           )}
           {/* Tease / camera effects button */}

@@ -159,17 +159,19 @@ export async function POST(request: Request) {
     // Check if voter has double vote
     const hasDoubleVote = voterMetadata && voterMetadata.doubleVote?.active && voterMetadata.doubleVote.round === room.current_round
 
-    // Upsert vote (replace if already voted)
-    // Use service role client to bypass RLS for voting operations
-    // We've already validated that the user is a player and can vote
-    console.log("[Vote] Attempting to upsert vote:", {
-      roomId,
-      round: room.current_round,
-      voterId: voter.id,
-      targetId: targetPlayerId,
-      voteWeight: hasDoubleVote ? 2 : 1,
-    })
-    
+    // Idempotency: if voter already voted for the same target this round, return 200 without changing data
+    const { data: existingVote } = await supabase
+      .from("votes")
+      .select("id, room_id, round, voter_id, target_id, vote_weight")
+      .eq("room_id", roomId)
+      .eq("round", room.current_round)
+      .eq("voter_id", voter.id)
+      .maybeSingle()
+
+    if (existingVote && existingVote.target_id === targetPlayerId) {
+      return NextResponse.json({ success: true, vote: existingVote })
+    }
+
     // Use service role client to bypass RLS, or fallback to regular client
     let serviceClient
     try {

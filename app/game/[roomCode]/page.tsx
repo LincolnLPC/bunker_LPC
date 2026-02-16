@@ -13,8 +13,10 @@ import { useWebRTC } from "@/hooks/use-webrtc"
 import { useMediaSettings } from "@/hooks/use-media-settings"
 import { createClient } from "@/lib/supabase/client"
 import { logger } from "@/lib/logger"
+import { mediaLog } from "@/lib/media-logger"
 import type { ChatMessage, Player } from "@/types/game"
-import { Loader2, X } from "lucide-react"
+import { Loader2 } from "lucide-react"
+import { MediaErrorBanner } from "./components/MediaErrorBanner"
 
 // Dynamic imports for components that are conditionally rendered or modals
 const VotingPanel = dynamic(() => import("@/components/game/voting-panel").then(mod => ({ default: mod.VotingPanel })), {
@@ -208,11 +210,9 @@ export default function GamePage() {
   
   const toggleAllPlayersMute = useCallback(() => {
     if (allPlayersMuted) {
-      // Включить всех
       setMutedPlayers(new Set())
       setAllPlayersMuted(false)
     } else {
-      // Отключить всех
       const allPlayerIds = gameState.players
         .filter((p) => p.id !== currentPlayerId)
         .map((p) => p.id)
@@ -220,6 +220,32 @@ export default function GamePage() {
       setAllPlayersMuted(true)
     }
   }, [allPlayersMuted, gameState.players, currentPlayerId])
+
+  // Periodic round timer sync with server to avoid client drift
+  useEffect(() => {
+    if (!gameState?.id || (gameState.phase !== "playing" && gameState.phase !== "voting")) {
+      setServerTimeRemaining(null)
+      return
+    }
+    const sync = async () => {
+      try {
+        const res = await fetch("/api/game/timer/check", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ roomId: gameState.id }),
+        })
+        if (!res.ok) return
+        const data = await res.json()
+        if (typeof data.timeRemaining === "number") setServerTimeRemaining(data.timeRemaining)
+      } catch {
+        // ignore
+      }
+    }
+    sync()
+    const interval = setInterval(sync, 15000)
+    return () => clearInterval(interval)
+  }, [gameState?.id, gameState?.phase])
+
   const [showRevealModal, setShowRevealModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [showJournal, setShowJournal] = useState(false)
@@ -234,6 +260,7 @@ export default function GamePage() {
     | { type: "special-card"; data: { playerName: string; cardName: string; cardDescription: string; cardType: string } }
     | { type: "bunker-char"; data: { characteristicName: string; characteristicType: "equipment" | "supply" } }
   const [modalQueue, setModalQueue] = useState<QueuedModal[]>([])
+  const [serverTimeRemaining, setServerTimeRemaining] = useState<number | null>(null)
   const currentModal = modalQueue[0] ?? null
 
   const dismissCurrentModal = useCallback(() => {
@@ -572,29 +599,7 @@ export default function GamePage() {
   const mediaRequestInProgressRef = useRef(false)
 
   useEffect(() => {
-    // Логируем состояние для диагностики
-    logger.log("[Media] Checking conditions for media initialization:", {
-      loading,
-      mediaSettingsLoading,
-      roomId: gameState.id,
-      currentPlayerId,
-      mediaInitialized,
-      autoRequestCamera: mediaSettings.autoRequestCamera,
-      autoRequestMicrophone: mediaSettings.autoRequestMicrophone,
-      allConditions: {
-        notLoading: !loading,
-        settingsLoaded: !mediaSettingsLoading,
-        hasRoomId: !!gameState.id,
-        hasPlayerId: !!currentPlayerId,
-        notInitialized: !mediaInitialized,
-        shouldRequest: (mediaSettings.autoRequestCamera || mediaSettings.autoRequestMicrophone),
-      }
-    })
-    
-    // Запрашиваем доступ только когда игра загружена и комната существует, и еще не инициализировали
-    // Также проверяем настройки пользователя - должен ли автоматически запрашивать доступ
-    // mediaRequestInProgressRef предотвращает повторные одновременные вызовы (причина таймаута)
-    if (
+    const willRequest = Boolean(
       !loading &&
       !mediaSettingsLoading &&
       gameState.id &&
@@ -602,58 +607,49 @@ export default function GamePage() {
       !mediaInitialized &&
       !mediaRequestInProgressRef.current &&
       (mediaSettings.autoRequestCamera || mediaSettings.autoRequestMicrophone)
-    ) {
+    )
+    const reasons: string[] = []
+    if (loading) reasons.push("loading")
+    if (mediaSettingsLoading) reasons.push("settings_loading")
+    if (!gameState.id) reasons.push("no_room_id")
+    if (!currentPlayerId) reasons.push("no_player_id")
+    if (mediaInitialized) reasons.push("already_initialized")
+    if (mediaRequestInProgressRef.current) reasons.push("request_in_progress")
+    if (!mediaSettings.autoRequestCamera && !mediaSettings.autoRequestMicrophone) reasons.push("auto_request_disabled")
+    mediaLog.autoRequestCheck({
+      willRequest,
+      reasons: reasons.length ? reasons : undefined,
+      loading,
+      settingsLoaded: !mediaSettingsLoading,
+      hasRoomId: !!gameState.id,
+      hasPlayerId: !!currentPlayerId,
+      notInitialized: !mediaInitialized,
+      requestInProgress: mediaRequestInProgressRef.current,
+      autoCamera: mediaSettings.autoRequestCamera,
+      autoMic: mediaSettings.autoRequestMicrophone,
+    })
+
+    if (willRequest) {
       mediaRequestInProgressRef.current = true
-      logger.log("[Media] Conditions met - requesting camera/microphone access...", {
-        loading,
-        mediaSettingsLoading,
-        roomId: gameState.id,
-        currentPlayerId,
-        mediaInitialized,
-        settings: mediaSettings,
-      })
-      
       initializeMedia({
         video: mediaSettings.autoRequestCamera,
         audio: mediaSettings.autoRequestMicrophone,
       })
         .then((stream) => {
           if (stream) {
-            logger.log("[Media] Successfully initialized media stream:", {
+            mediaLog.autoRequestDone({
+              success: true,
               streamId: stream.id,
               videoTracks: stream.getVideoTracks().length,
               audioTracks: stream.getAudioTracks().length,
             })
-            
-            // Применить настройки по умолчанию (включить/выключить треки)
-            // Состояние обновится автоматически в хуке useWebRTC через useEffect
             const videoTracks = stream.getVideoTracks()
-            videoTracks.forEach((track) => {
-              track.enabled = mediaSettings.defaultCameraEnabled
-              logger.log(`[Media] Video track ${track.id} enabled: ${track.enabled}`)
-            })
-            
+            videoTracks.forEach((track) => { track.enabled = mediaSettings.defaultCameraEnabled })
             const audioTracks = stream.getAudioTracks()
-            audioTracks.forEach((track) => {
-              track.enabled = mediaSettings.defaultMicrophoneEnabled
-              logger.log(`[Media] Audio track ${track.id} enabled: ${track.enabled}`)
-            })
-            
-            // Проверить, что localStream обновился в useWebRTC
-            setTimeout(() => {
-              logger.log("[Media] Checking localStream after initialization:", {
-                hasLocalStream: !!localStream,
-                localStreamId: localStream?.id,
-                videoEnabled,
-                audioEnabled,
-              })
-            }, 100)
-            
+            audioTracks.forEach((track) => { track.enabled = mediaSettings.defaultMicrophoneEnabled })
             setMediaInitialized(true)
           } else {
-            // Stream is null (browser doesn't support or permission denied) - this is OK
-            logger.log("[Media] Media unavailable (browser doesn't support or permission denied) - game will continue without video/audio")
-            // Set initialized to true so we don't keep retrying automatically
+            mediaLog.autoRequestDone({ success: false, reason: "no_stream_or_permission_denied" })
             setMediaInitialized(true)
           }
           mediaRequestInProgressRef.current = false
@@ -705,12 +701,10 @@ export default function GamePage() {
             errorMessage.includes("permission")
           
           if (isPermissionError) {
-            logger.log("[Media] ⚠️ Permission denied - user can enable media manually via button", errorDetails)
-            // Set initialized to true so we don't keep retrying
+            mediaLog.autoRequestDone({ success: false, reason: "permission_denied" })
             setMediaInitialized(true)
           } else {
-            console.error("[Media] ❌ Failed to initialize media (non-permission error):", errorDetails)
-            // Не устанавливаем mediaInitialized в true при других ошибках, чтобы можно было повторить
+            mediaLog.autoRequestDone({ success: false, reason: "init_error" })
           }
         })
     } else if (
@@ -721,23 +715,8 @@ export default function GamePage() {
       !mediaSettings.autoRequestCamera &&
       !mediaSettings.autoRequestMicrophone
     ) {
-      // Если пользователь отключил автозапрос, все равно устанавливаем флаг
-      logger.log("[Media] Auto-request disabled by user settings")
+      mediaLog.autoRequestDone({ success: false, reason: "auto_request_disabled" })
       setMediaInitialized(true)
-    } else {
-      // Логируем, почему условие не выполнилось
-      const reasons = []
-      if (loading) reasons.push("gameState still loading")
-      if (mediaSettingsLoading) reasons.push("mediaSettings still loading")
-      if (!gameState.id) reasons.push("no roomId")
-      if (!currentPlayerId) reasons.push("no currentPlayerId")
-      if (mediaInitialized) reasons.push("already initialized")
-      if (mediaRequestInProgressRef.current) reasons.push("request already in progress")
-      if (!mediaSettings.autoRequestCamera && !mediaSettings.autoRequestMicrophone) reasons.push("auto-request disabled")
-      
-      if (reasons.length > 0) {
-        logger.log("[Media] Conditions NOT met - waiting:", reasons.join(", "))
-      }
     }
   }, [loading, mediaSettingsLoading, gameState.id, currentPlayerId, initializeMedia, mediaInitialized, mediaSettings])
 
@@ -1126,10 +1105,17 @@ export default function GamePage() {
     [currentPlayerId, revealCharacteristic, refresh],
   )
 
-  // Handle leave game
+  // Handle leave game (with confirmation when game is active)
   const handleLeaveGame = useCallback(async () => {
-    if (!gameState?.id || !currentPlayerId) {
-      // If no game state or player ID, just redirect
+    if (!gameState?.id) {
+      window.location.href = "/lobby"
+      return
+    }
+    const isActiveGame = gameState.phase === "playing" || gameState.phase === "voting" || gameState.phase === "results"
+    if (currentPlayerId && isActiveGame && !window.confirm("Вы уверены, что хотите покинуть игру? Прогресс будет потерян.")) {
+      return
+    }
+    if (!currentPlayerId) {
       window.location.href = "/lobby"
       return
     }
@@ -1954,33 +1940,12 @@ export default function GamePage() {
         </div>
       )}
 
-      {/* Media error banner */}
       {mediaError && !localStream && !isMediaLoading && (
-        <div className="bg-destructive/20 border-b border-destructive/50 px-4 py-2 text-sm text-destructive">
-          <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
-            <span className="flex-1 min-w-0">{mediaError}</span>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                onClick={() => {
-                  initializeMedia().catch((err) => {
-                    console.error("[Media] Failed to initialize media:", err)
-                  })
-                }}
-                className="px-3 py-1 bg-destructive/20 hover:bg-destructive/30 rounded text-xs font-medium"
-              >
-                Попробовать снова
-              </button>
-              <button
-                onClick={clearMediaError}
-                className="p-1.5 rounded hover:bg-destructive/30 transition-colors"
-                title="Закрыть"
-                aria-label="Закрыть"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </div>
+        <MediaErrorBanner
+          message={mediaError}
+          onRetry={() => initializeMedia().catch(() => {})}
+          onDismiss={clearMediaError}
+        />
       )}
 
       {/* Hide main game content when showing catastrophe intro */}
@@ -2000,9 +1965,9 @@ export default function GamePage() {
           <GameHeader
             gameState={gameState}
             unreadMessagesCount={unreadMessagesCount}
+            serverTimeRemaining={serverTimeRemaining}
             onOpenChat={() => {
               setShowChat(true)
-              // Mark messages as read when opening chat
               if (chatMessages.length > 0) {
                 lastReadMessageIdRef.current = chatMessages[chatMessages.length - 1]?.id || null
                 setUnreadMessagesCount(0)
@@ -2012,11 +1977,8 @@ export default function GamePage() {
             onOpenJournal={() => setShowJournal(true)}
             onOpenAltar={() => setShowAltar(true)}
             onTimerEnd={() => {
-              // Автоматически начать голосование когда таймер истекает
-              // Проверяем, что игра еще в фазе playing (может быть уже автоматически перешла через сервер)
               if (gameState.phase === "playing" && isHost) {
                 startVoting().catch((err) => {
-                  // Если произошла ошибка (например, игра уже в voting), просто обновим состояние
                   logger.log("[Timer] Error starting voting from timer:", err)
                   refresh()
                 })
@@ -2064,6 +2026,8 @@ export default function GamePage() {
             showTeasePanel={showTeasePanel}
             onReconnectVideo={reconnectVideo}
             isMediaLoading={isMediaLoading}
+            mediaError={mediaError || undefined}
+            onOpenMediaSettings={() => router.push(`/profile/edit?returnTo=${encodeURIComponent(`/game/${roomCode}`)}`)}
         isHost={isHost}
         isSpectator={!!isSpectator}
         currentPhase={gameState.phase}
