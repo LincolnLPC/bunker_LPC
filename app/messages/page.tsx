@@ -105,6 +105,7 @@ function MessagesContent() {
   const [friendRequestsIncoming, setFriendRequestsIncoming] = useState<{ id?: string; user_id: string; username: string; display_name: string | null; avatar_url: string | null }[]>([])
   const [friends, setFriends] = useState<FriendEntry[]>([])
   const [totalUnread, setTotalUnread] = useState(0)
+  const [unreadByUser, setUnreadByUser] = useState<Record<string, number>>({})
   const [imageUploading, setImageUploading] = useState(false)
   const [emojiOpen, setEmojiOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -123,11 +124,16 @@ function MessagesContent() {
   }
 
   const loadConversations = async (): Promise<Conversation[]> => {
-    const res = await fetch("/api/messages")
-    const data = await res.json()
-    if (res.ok) {
+    const [listRes, unreadRes] = await Promise.all([
+      fetch("/api/messages"),
+      fetch("/api/messages/unread-by-user"),
+    ])
+    const data = await listRes.json()
+    const unreadData = unreadRes.ok ? await unreadRes.json() : {}
+    if (listRes.ok) {
       if (data.conversations) setConversations(data.conversations)
       if (typeof data.total_unread === "number") setTotalUnread(data.total_unread)
+      setUnreadByUser(typeof unreadData === "object" && unreadData !== null ? unreadData : {})
       return data.conversations || []
     }
     return []
@@ -268,10 +274,10 @@ function MessagesContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-br from-orange-950/20 via-background to-background pointer-events-none" />
 
-      <header className="relative z-10 flex items-center gap-4 px-4 py-3 border-b border-border/50">
+      <header className="relative z-10 flex-shrink-0 flex items-center gap-4 px-4 py-3 border-b border-border/50">
         <Link href={withUserId ? "/messages" : "/profile"}>
           <Button variant="ghost" size="icon">
             <ArrowLeft className="h-5 w-5" />
@@ -288,7 +294,7 @@ function MessagesContent() {
         </span>
       </header>
 
-      <main className="relative z-10 flex-1 flex overflow-hidden w-full max-w-6xl mx-auto">
+      <main className="relative z-10 flex-1 flex min-h-0 overflow-hidden w-full max-w-6xl mx-auto">
         {/* Left: list of friends and conversations (most recent first) */}
         <aside className="w-full sm:w-80 flex-shrink-0 border-r border-border/50 bg-card/30 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-auto min-h-0">
@@ -346,7 +352,7 @@ function MessagesContent() {
             {conversations.length > 0 && (
               <ul className="divide-y divide-border/50">
                 {conversations.map((c) => {
-                  const unread = Number(c.unread_count ?? 0)
+                  const unread = Number(unreadByUser[c.user_id] ?? c.unread_count ?? 0)
                   return (
                     <li key={c.user_id}>
                       <Link
@@ -392,20 +398,34 @@ function MessagesContent() {
               <div className="p-3 border-t border-border/50">
                 <p className="text-sm font-medium text-muted-foreground mb-2">Друзья</p>
                 <ul className="space-y-1">
-                  {friends.filter((f) => !conversations.some((c) => c.user_id === f.friend_user_id)).map((f) => (
+                  {friends.filter((f) => !conversations.some((c) => c.user_id === f.friend_user_id)).map((f) => {
+                    const friendUnread = Number(unreadByUser[f.friend_user_id] ?? 0)
+                    return (
                     <li key={f.friend_user_id}>
                       <Link
                         href={`/messages?with=${f.friend_user_id}`}
-                        className={`flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors ${withUserId === f.friend_user_id ? "bg-muted/50" : ""}`}
+                        className={`flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors ${withUserId === f.friend_user_id ? "bg-muted/50" : ""} ${friendUnread > 0 ? "bg-primary/5" : ""}`}
                       >
-                        <Avatar className="h-10 w-10 flex-shrink-0">
-                          <AvatarImage src={f.avatar_url || undefined} />
-                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
-                        </Avatar>
-                        <span className="font-medium truncate">{f.display_name || f.username}</span>
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="h-10 w-10">
+                            <AvatarImage src={f.avatar_url || undefined} />
+                            <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                          </Avatar>
+                          {friendUnread > 0 && (
+                            <Badge className="absolute -top-1 -right-1 h-5 min-w-5 px-1.5 text-xs font-semibold flex items-center justify-center bg-primary text-primary-foreground">
+                              {friendUnread > 99 ? "99+" : friendUnread}
+                            </Badge>
+                          )}
+                        </div>
+                        <span className="flex-1 min-w-0 font-medium truncate">{f.display_name || f.username}</span>
+                        {friendUnread > 0 && (
+                          <Badge className="h-5 min-w-5 px-1.5 text-xs font-semibold bg-primary text-primary-foreground shrink-0 flex items-center justify-center">
+                            {friendUnread > 99 ? "99+" : friendUnread}
+                          </Badge>
+                        )}
                       </Link>
                     </li>
-                  ))}
+                  )})}
                 </ul>
               </div>
             )}
@@ -421,11 +441,11 @@ function MessagesContent() {
           </div>
         </aside>
 
-        {/* Center: selected dialog or placeholder — scroll only messages, input fixed at bottom */}
+        {/* Center: selected dialog — header and input fixed, only messages scroll */}
         {withUserId ? (
-          <div className="flex-1 flex flex-col min-h-0 min-w-0 border-l border-border/50">
+          <div className="flex-1 flex flex-col min-h-0 min-w-0 border-l border-border/50 h-full">
             {otherUser && (
-              <div className="flex-shrink-0 py-2 px-4 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50">
+              <div className="flex-shrink-0 py-2 px-4 flex items-center gap-2 text-sm text-muted-foreground border-b border-border/50 bg-background/95">
                 <Link href={`/profile/${otherUser.id}`} className="hover:underline">
                   {otherUser.display_name || otherUser.username}
                 </Link>
@@ -437,7 +457,7 @@ function MessagesContent() {
                 )}
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-y-auto py-4 px-4 space-y-3">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-4 px-4 space-y-3">
               {messages.map((m) => {
                 const isMe = m.from_user_id === currentUserId
                 return (
@@ -459,7 +479,7 @@ function MessagesContent() {
                 )
               })}
             </div>
-            <div className="flex-shrink-0 py-3 flex gap-2 px-4 items-end border-t border-border/50 bg-background/95">
+            <div className="flex-shrink-0 py-3 flex gap-2 px-4 items-end border-t border-border/50 bg-background">
               <input
                 ref={fileInputRef}
                 type="file"
