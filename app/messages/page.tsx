@@ -359,17 +359,10 @@ function MessagesContent() {
                         href={`/messages?with=${c.user_id}`}
                         className={`flex items-center gap-3 p-3 hover:bg-muted/50 transition-colors ${withUserId === c.user_id ? "bg-muted/50" : ""} ${unread > 0 ? "bg-primary/5" : ""}`}
                       >
-                        <div className="relative flex-shrink-0">
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage src={c.avatar_url || undefined} />
-                            <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
-                          </Avatar>
-                          {unread > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 flex h-5 min-w-5 px-1 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground ring-2 ring-background">
-                              {unread > 99 ? "99+" : unread}
-                            </span>
-                          )}
-                        </div>
+                        <Avatar className="h-10 w-10 flex-shrink-0">
+                          <AvatarImage src={c.avatar_url || undefined} />
+                          <AvatarFallback>{(c.display_name || c.username)[0]}</AvatarFallback>
+                        </Avatar>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={`truncate ${unread > 0 ? "font-semibold" : "font-medium"}`}>{c.display_name || c.username}</span>
@@ -406,17 +399,10 @@ function MessagesContent() {
                         href={`/messages?with=${f.friend_user_id}`}
                         className={`flex items-center gap-3 p-3 rounded-lg hover:bg-muted/50 transition-colors ${withUserId === f.friend_user_id ? "bg-muted/50" : ""} ${friendUnread > 0 ? "bg-primary/5" : ""}`}
                       >
-                        <div className="relative flex-shrink-0">
-                          <Avatar className="h-10 w-10">
-                            <AvatarImage src={f.avatar_url || undefined} />
-                            <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
-                          </Avatar>
-                          {friendUnread > 0 && (
-                            <Badge className="absolute -top-1 -right-1 h-5 min-w-5 px-1.5 text-xs font-semibold flex items-center justify-center bg-primary text-primary-foreground">
-                              {friendUnread > 99 ? "99+" : friendUnread}
-                            </Badge>
-                          )}
-                        </div>
+                        <Avatar className="h-10 w-10 flex-shrink-0">
+                          <AvatarImage src={f.avatar_url || undefined} />
+                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                        </Avatar>
                         <span className="flex-1 min-w-0 font-medium truncate">{f.display_name || f.username}</span>
                         {friendUnread > 0 && (
                           <Badge className="h-5 min-w-5 px-1.5 text-xs font-semibold bg-primary text-primary-foreground shrink-0 flex items-center justify-center">
