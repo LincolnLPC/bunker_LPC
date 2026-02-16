@@ -21,6 +21,11 @@ export async function GET(request: Request) {
   const client = isOtherUser ? createServiceRoleClient() : supabase
 
   try {
+    // When loading own achievements, run check so premium and other eligible achievements get awarded
+    if (!isOtherUser) {
+      await supabase.rpc("check_all_achievements", { user_id_param: user.id })
+    }
+
     const { data: achievements, error: achError } = await client
       .from("achievements")
       .select("*")
