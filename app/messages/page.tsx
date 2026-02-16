@@ -363,8 +363,13 @@ function MessagesContent() {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className={`truncate ${c.unread_count > 0 ? "font-semibold" : "font-medium"}`}>{c.display_name || c.username}</span>
+                          {c.unread_count > 0 && (
+                            <Badge className="h-5 min-w-5 px-1.5 text-xs bg-primary text-primary-foreground shrink-0">
+                              {c.unread_count > 99 ? "99+" : c.unread_count}
+                            </Badge>
+                          )}
                         </div>
                         <p className="text-sm text-muted-foreground truncate">
                           {c.last_message_from_me ? "Вы: " : ""}
