@@ -137,12 +137,13 @@ function MessagesContent() {
     if (!res.ok) return
     setMessages(data.messages || [])
     setOtherUser(data.other ? { ...data.other, id: userId } : null)
-    await fetch("/api/messages/read", {
+    // Mark all messages from this user as read when opening the dialog
+    const readRes = await fetch("/api/messages/read", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from_user_id: userId }),
     })
-    loadConversations()
+    if (readRes.ok) await loadConversations()
   }
 
   useEffect(() => {
@@ -161,6 +162,19 @@ function MessagesContent() {
     }
     run()
   }, [withUserId, router])
+
+  // Refresh conversations when tab gets focus (so new messages show unread badge) and periodically
+  useEffect(() => {
+    const onFocus = () => {
+      loadConversations()
+    }
+    window.addEventListener("focus", onFocus)
+    const interval = setInterval(loadConversations, 20000)
+    return () => {
+      window.removeEventListener("focus", onFocus)
+      clearInterval(interval)
+    }
+  }, [])
 
   const sendMessage = async (bodyOverride?: string) => {
     const toSend = (bodyOverride !== undefined ? bodyOverride : newBody).trim()
