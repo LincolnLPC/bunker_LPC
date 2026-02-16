@@ -19,6 +19,7 @@ interface ProfileData {
   username: string
   display_name: string | null
   avatar_url: string | null
+  profile_banner_url?: string | null
   subscription_tier: "basic" | "premium"
   games_played: number
   games_won: number
@@ -228,8 +229,23 @@ function ProfilePageContent() {
       {/* Main Content */}
       <main className="relative z-10 max-w-4xl mx-auto px-6 py-12">
         {/* Profile Header */}
-        <Card className="mb-6 bg-card/50 border-border/50">
-          <CardContent className="pt-6">
+        <Card className="mb-6 border-border/50 overflow-hidden relative">
+          {profile.profile_banner_url && (
+            <>
+              <div
+                className="absolute inset-0 z-0 bg-card/50"
+                style={{
+                  backgroundImage: `url(${profile.profile_banner_url})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
+                }}
+                aria-hidden
+              />
+              <div className="absolute inset-0 z-0 bg-black/50" aria-hidden />
+            </>
+          )}
+          <CardContent className={`relative z-10 pt-6 min-h-[140px] ${profile.profile_banner_url ? "bg-transparent" : "bg-card/50"}`}>
             <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
               <Avatar className="h-24 w-24">
                 <AvatarImage src={profile.avatar_url || undefined} />

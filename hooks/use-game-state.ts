@@ -859,8 +859,8 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     }
   }, [])
 
-  // Debounced load for postgres_changes (300ms) — батчит несколько событий подряд в один запрос
-  const loadGameStateDebounced = useDebouncedCallback(loadGameState, 300)
+  // Debounced load for postgres_changes (150ms) — быстрее отклик без лишних запросов
+  const loadGameStateDebounced = useDebouncedCallback(loadGameState, 150)
 
   // Initial load
   useEffect(() => {
@@ -1914,6 +1914,14 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     [gameState, currentPlayerId, loadGameState],
   )
 
+  const addOptimisticChatMessage = useCallback((chatMessage: ChatMessage) => {
+    setGameState((prev) => {
+      if (!prev) return null
+      if (prev.chatMessages.some((m) => m.id === chatMessage.id)) return prev
+      return { ...prev, chatMessages: [...prev.chatMessages, chatMessage] }
+    })
+  }, [])
+
   return {
     gameState: gameState || ({
       id: "",
@@ -1953,6 +1961,7 @@ export function useGameState(roomCode: string, options?: UseGameStateOptions) {
     getSpecialCards,
     useSpecialCard,
     broadcastCameraEffect,
+    addOptimisticChatMessage,
     whoamiNextWord,
     whoamiVoteConfirm,
   }

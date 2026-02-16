@@ -43,17 +43,20 @@ export async function GET(request: Request) {
     })
   }
 
+  const CONVERSATIONS_LIST_LIMIT = 300
   const { data: sent } = await supabase
     .from("private_messages")
     .select("to_user_id, created_at")
     .eq("from_user_id", user.id)
     .order("created_at", { ascending: false })
+    .limit(CONVERSATIONS_LIST_LIMIT)
 
   const { data: received } = await supabase
     .from("private_messages")
     .select("from_user_id, created_at, read_at")
     .eq("to_user_id", user.id)
     .order("created_at", { ascending: false })
+    .limit(CONVERSATIONS_LIST_LIMIT)
 
   const partnerIds = new Set<string>()
   const lastActivity: Record<string, string> = {}

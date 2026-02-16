@@ -55,8 +55,8 @@ function MessageBubbleBody({ body, isMe }: { body: string; isMe: boolean }) {
     const sticker = STICKERS.find((s) => s.id === parsed.stickerId)
     if (sticker) {
       return (
-        <div className="inline-block">
-          <Image src={sticker.src} alt={sticker.alt} width={80} height={80} className="object-contain" unoptimized />
+        <div className="inline-block bg-transparent">
+          <Image src={sticker.src} alt={sticker.alt} width={80} height={80} className="object-contain bg-transparent" unoptimized />
         </div>
       )
     }
@@ -110,6 +110,7 @@ function MessagesContent() {
   const [emojiOpen, setEmojiOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const messagesScrollRef = useRef<HTMLDivElement>(null)
 
   const loadFriendsAndRequests = async () => {
     const res = await fetch("/api/friends")
@@ -163,12 +164,10 @@ function MessagesContent() {
         return
       }
       setCurrentUserId(user.id)
-      const list = await loadConversations()
-      await loadFriendsAndRequests()
+      const [list] = await Promise.all([loadConversations(), loadFriendsAndRequests()])
       if (withUserId) {
         await loadThread(withUserId)
       } else {
-        // If opened from lobby/notification with unread — open first unread dialog so user sees who wrote
         const firstUnread = list?.find((c) => (c.unread_count || 0) > 0)
         if (firstUnread) {
           router.replace(`/messages?with=${firstUnread.user_id}`)
@@ -180,7 +179,75 @@ function MessagesContent() {
     run()
   }, [withUserId, router])
 
-  // Refresh conversations when tab gets focus (so new messages show unread badge) and periodically
+  // Realtime: новые сообщения в открытом диалоге (работает после выполнения scripts/042-enable-realtime-private-messages.sql)
+  useEffect(() => {
+    if (!withUserId || !currentUserId) return
+    const supabase = createClient()
+    const channel = supabase
+      .channel(`private_messages:${currentUserId}:${withUserId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "private_messages",
+        },
+        (payload: { new: Record<string, unknown> }) => {
+          const raw = payload.new
+          const fromId = (raw?.from_user_id ?? raw?.fromUserId) as string
+          const toId = (raw?.to_user_id ?? raw?.toUserId) as string
+          const isForThisDialog =
+            (fromId === withUserId && toId === currentUserId) || (fromId === currentUserId && toId === withUserId)
+          if (!isForThisDialog) return
+          const m: Message = {
+            id: (raw?.id ?? "") as string,
+            from_user_id: fromId,
+            to_user_id: toId,
+            body: (raw?.body ?? "") as string,
+            read_at: (raw?.read_at ?? raw?.readAt) as string | null,
+            created_at: (raw?.created_at ?? raw?.createdAt ?? "") as string,
+          }
+          setMessages((prev) => {
+            if (prev.some((x) => x.id === m.id)) return prev
+            return [...prev, m].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          })
+          if (fromId === withUserId) loadConversations().catch(() => {})
+        }
+      )
+      .subscribe()
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [withUserId, currentUserId])
+
+  // Автоскролл к последнему сообщению при отправке или получении
+  useEffect(() => {
+    if (!withUserId || messages.length === 0) return
+    const el = messagesScrollRef.current
+    if (!el) return
+    el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
+  }, [withUserId, messages.length, messages[messages.length - 1]?.id])
+
+  // Polling: подтягиваем новые сообщения раз в 4 сек (работает и без Realtime)
+  useEffect(() => {
+    if (!withUserId) return
+    const mergeThread = async () => {
+      const res = await fetch(`/api/messages?with=${withUserId}`)
+      const data = await res.json()
+      if (!res.ok || !Array.isArray(data.messages)) return
+      setMessages((prev) => {
+        const byId = new Map(prev.map((m) => [m.id, m]))
+        for (const m of data.messages as Message[]) {
+          if (!byId.has(m.id)) byId.set(m.id, m)
+        }
+        return Array.from(byId.values()).sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+      })
+    }
+    const t = setInterval(mergeThread, 4000)
+    return () => clearInterval(t)
+  }, [withUserId])
+
+  // Refresh conversations when tab gets focus and periodically
   useEffect(() => {
     const onFocus = () => {
       loadConversations()
@@ -208,7 +275,14 @@ function MessagesContent() {
         setMessages((prev) => [...prev, data.message])
         if (bodyOverride === undefined) setNewBody("")
         setEmojiOpen(false)
-        loadConversations()
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.user_id === withUserId
+              ? { ...c, last_activity_at: data.message.created_at, last_message_from_me: true }
+              : c
+          )
+        )
+        loadConversations().catch(() => {})
       } else {
         alert(data.error || "Ошибка отправки")
       }
@@ -449,21 +523,28 @@ function MessagesContent() {
                 )}
               </div>
             )}
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-4 px-4 space-y-3">
+            <div
+              ref={messagesScrollRef}
+              className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden py-4 px-4 space-y-3"
+            >
               {messages.map((m) => {
                 const isMe = m.from_user_id === currentUserId
+                const parsed = parseMessageBody(m.body)
+                const isStickerOnly = parsed.type === "sticker"
                 return (
                   <div
                     key={m.id}
                     className={`flex ${isMe ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[80%] rounded-lg px-3 py-2 ${
-                        isMe ? "bg-primary text-primary-foreground" : "bg-muted"
-                      }`}
+                      className={cn(
+                        "max-w-[80%] rounded-lg",
+                        isStickerOnly ? "bg-transparent p-0" : "px-3 py-2",
+                        !isStickerOnly && (isMe ? "bg-primary text-primary-foreground" : "bg-muted")
+                      )}
                     >
                       <MessageBubbleBody body={m.body} isMe={isMe} />
-                      <p className={`text-xs mt-1 ${isMe ? "text-primary-foreground/80" : "text-muted-foreground"}`}>
+                      <p className={cn("text-xs mt-1", isStickerOnly ? "text-muted-foreground" : isMe ? "text-primary-foreground/80" : "text-muted-foreground")}>
                         {new Date(m.created_at).toLocaleString("ru-RU")}
                       </p>
                     </div>

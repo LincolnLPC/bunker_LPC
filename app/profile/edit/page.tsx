@@ -46,6 +46,9 @@ function EditProfileForm() {
   const [displayName, setDisplayName] = useState("")
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null)
   const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [profileBannerUrl, setProfileBannerUrl] = useState<string | null>(null)
+  const [bannerFile, setBannerFile] = useState<File | null>(null)
+  const [isPremium, setIsPremium] = useState(false)
   const [mediaSettings, setMediaSettings] = useState<MediaSettings>({
     autoRequestCamera: true,
     autoRequestMicrophone: true,
@@ -86,7 +89,8 @@ function EditProfileForm() {
         setUsername(profile.username || "")
         setDisplayName(profile.display_name || "")
         setAvatarUrl(profile.avatar_url)
-        
+        setProfileBannerUrl(profile.profile_banner_url ?? null)
+        setIsPremium(profile.subscription_tier === "premium")
         // Загрузить настройки медиа, если они есть
         if (profile.media_settings) {
           setMediaSettings({
@@ -184,6 +188,19 @@ function EditProfileForm() {
     }
   }
 
+  const handleBannerChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      setBannerFile(file)
+    }
+    e.target.value = ""
+  }
+
+  const handleBannerRemove = () => {
+    setBannerFile(null)
+    setProfileBannerUrl(null)
+  }
+
   const handleSave = async () => {
     setSaving(true)
     setError(null)
@@ -222,6 +239,7 @@ function EditProfileForm() {
       }
 
       let finalAvatarUrl = avatarUrl
+      let finalBannerUrl: string | null = isPremium ? profileBannerUrl : null
 
       // Загрузить аватар если выбран новый файл
       if (avatarFile) {
@@ -265,12 +283,32 @@ function EditProfileForm() {
         }
       }
 
+      // Загрузить фон блока профиля (только для премиум)
+      if (isPremium && bannerFile) {
+        try {
+          const ext = bannerFile.name.split(".").pop() || "jpg"
+          const filePath = `${user.id}/banner.${ext}`
+          const { error: bannerUploadError } = await supabase.storage
+            .from("avatars")
+            .upload(filePath, bannerFile, { upsert: true })
+          if (bannerUploadError) throw bannerUploadError
+          const { data: { publicUrl } } = supabase.storage.from("avatars").getPublicUrl(filePath)
+          finalBannerUrl = publicUrl
+        } catch (bannerErr) {
+          console.error("Banner upload error:", bannerErr)
+          throw new Error("Не удалось загрузить фон профиля. Попробуйте ещё раз.")
+        }
+      }
+
       // Обновить профиль
       // Подготавливаем данные для обновления
       const updateData: any = {
         username: finalUsername,
         display_name: displayName || null,
         avatar_url: finalAvatarUrl,
+      }
+      if (isPremium) {
+        updateData.profile_banner_url = finalBannerUrl
       }
 
       // Добавляем media_settings только если колонка существует (чтобы не было ошибки)
@@ -399,6 +437,49 @@ function EditProfileForm() {
                 </Button>
               </Label>
             </div>
+
+            {/* Фон блока профиля (только премиум) */}
+            {isPremium && (
+              <div className="space-y-2">
+                <Label>Фон блока профиля</Label>
+                <p className="text-sm text-muted-foreground">
+                  Картинка будет видна всем в шапке вашего профиля
+                </p>
+                <div className="flex flex-col gap-3">
+                  {(profileBannerUrl || bannerFile) && (
+                    <div className="relative rounded-lg overflow-hidden h-24 bg-muted">
+                      <img
+                        src={bannerFile ? URL.createObjectURL(bannerFile) : profileBannerUrl!}
+                        alt=""
+                        className="w-full h-full object-cover"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Input
+                      id="banner"
+                      type="file"
+                      accept="image/*"
+                      onChange={handleBannerChange}
+                      className="hidden"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => document.getElementById("banner")?.click()}
+                    >
+                      <Upload className="w-4 h-4 mr-2" />
+                      {profileBannerUrl || bannerFile ? "Заменить фон" : "Загрузить фон"}
+                    </Button>
+                    {(profileBannerUrl || bannerFile) && (
+                      <Button type="button" variant="ghost" onClick={handleBannerRemove}>
+                        Удалить фон
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Username */}
             <div className="space-y-2">

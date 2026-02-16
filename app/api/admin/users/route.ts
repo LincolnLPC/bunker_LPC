@@ -24,10 +24,10 @@ export async function GET(request: Request) {
   }
 
   try {
-    // Use regular client - profiles table has "Users can view all profiles" policy
+    // Base columns that exist after 001; optional columns (premium_expires_at, rating, last_seen_at, show_online_status) from later migrations — select only base so list works before those migrations
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url, subscription_tier, premium_expires_at, created_at, updated_at, games_played, games_won, rating, last_seen_at, show_online_status")
+      .select("id, username, display_name, avatar_url, subscription_tier, created_at, updated_at, games_played, games_won")
       .order("created_at", { ascending: false })
       .limit(500)
 

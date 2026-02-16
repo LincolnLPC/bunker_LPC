@@ -17,6 +17,7 @@ interface ProfileData {
   username: string
   display_name: string | null
   avatar_url: string | null
+  profile_banner_url?: string | null
   subscription_tier: "basic" | "premium"
   games_played: number
   games_won: number
@@ -66,7 +67,7 @@ function ProfileViewContent() {
 
       const { data: profileData, error: profileError } = await supabase
         .from("profiles")
-        .select("id, username, display_name, avatar_url, subscription_tier, games_played, games_won, rating, host_rating, last_seen_at, show_online_status, created_at")
+        .select("id, username, display_name, avatar_url, profile_banner_url, subscription_tier, games_played, games_won, rating, host_rating, last_seen_at, show_online_status, created_at")
         .eq("id", userId)
         .maybeSingle()
 
@@ -209,8 +210,23 @@ function ProfileViewContent() {
       </header>
 
       <main className="relative z-10 max-w-4xl mx-auto px-6 py-12">
-        <Card className="mb-6 bg-card/50 border-border/50">
-          <CardContent className="pt-6">
+        <Card className="mb-6 border-border/50 overflow-hidden relative">
+          {profile.profile_banner_url && (
+            <>
+              <div
+                className="absolute inset-0 z-0 bg-card/50"
+                style={{
+                  backgroundImage: `url(${profile.profile_banner_url})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                  backgroundRepeat: "no-repeat",
+                }}
+                aria-hidden
+              />
+              <div className="absolute inset-0 z-0 bg-black/50" aria-hidden />
+            </>
+          )}
+          <CardContent className={`relative z-10 pt-6 min-h-[140px] ${profile.profile_banner_url ? "bg-transparent" : "bg-card/50"}`}>
             <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
               <div className="relative">
                 <Avatar className="h-24 w-24">

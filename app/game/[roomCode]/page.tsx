@@ -157,6 +157,7 @@ export default function GamePage() {
     toggleReady,
     useSpecialCard,
     broadcastCameraEffect,
+    addOptimisticChatMessage,
     whoamiNextWord,
     whoamiVoteConfirm,
   } = useGameState(roomCode, { onCameraEffect: onCameraEffectFromRoom })
@@ -1078,20 +1079,29 @@ export default function GamePage() {
           }),
         })
 
+        const data = await response.json()
         if (!response.ok) {
-          const data = await response.json()
           throw new Error(data.error || "Failed to send message")
         }
 
-        // Message will be added via realtime - no need to refresh
-        // The message will appear instantly through the realtime subscription
+        if (data.message) {
+          const msg = data.message
+          addOptimisticChatMessage({
+            id: msg.id,
+            playerId: msg.playerId,
+            playerName: msg.playerName,
+            message: msg.message,
+            type: msg.type || "chat",
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : new Date(),
+          })
+        }
       } catch (err) {
         console.error("Error sending message:", err)
       } finally {
         setSendingMessage(false)
       }
     },
-    [gameState.id, sendingMessage, refresh],
+    [gameState.id, sendingMessage, addOptimisticChatMessage],
   )
 
   // Handle reveal characteristic
