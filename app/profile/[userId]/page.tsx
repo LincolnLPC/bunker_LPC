@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge"
 import { Flame, ArrowLeft, Trophy, Calendar, Users, Crown, Loader2, MessageSquare, UserPlus, Circle, Award, Mic } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { isUserOnline } from "@/lib/online"
+import { AchievementsSection } from "@/components/profile/achievements-section"
 
 interface ProfileData {
   id: string
@@ -287,10 +288,10 @@ function ProfileViewContent() {
 
         <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-primary" />
-                Рейтинг игрока
+                <Award className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Рейтинг игрока</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -298,10 +299,10 @@ function ProfileViewContent() {
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Mic className="w-5 h-5 text-primary" />
-                Рейтинг ведущего
+                <Mic className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Рейтинг ведущего</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -309,10 +310,10 @@ function ProfileViewContent() {
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-primary" />
-                Игр сыграно
+                <Calendar className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Игр сыграно</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -320,22 +321,22 @@ function ProfileViewContent() {
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-primary" />
-                Побед
+                <Trophy className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Побед</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col items-start">
               <div className="text-3xl font-bold text-primary">{profile.games_won}</div>
               <p className="text-sm text-muted-foreground mt-1">Процент побед: {winRate}%</p>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary" />
-                Аккаунт
+                <Users className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Аккаунт</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -345,6 +346,9 @@ function ProfileViewContent() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Achievements (all: earned and not earned) */}
+        <AchievementsSection userId={userId} />
 
         <Link href="/lobby">
           <Button variant="outline" className="w-full justify-center">

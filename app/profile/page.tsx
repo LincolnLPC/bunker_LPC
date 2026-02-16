@@ -40,7 +40,9 @@ function ProfilePageContent() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [friends, setFriends] = useState<{ friend_user_id: string; display_name: string | null; username: string; avatar_url: string | null; last_seen_at: string | null; show_online_status: boolean }[]>([])
+  const [friends, setFriends] = useState<{ id?: string; friend_user_id: string; display_name: string | null; username: string; avatar_url: string | null; last_seen_at: string | null; show_online_status: boolean; status?: string; is_incoming_request?: boolean }[]>([])
+  const [friendRequestsIncoming, setFriendRequestsIncoming] = useState<typeof friends>([])
+  const [friendRequestsPending, setFriendRequestsPending] = useState<typeof friends>([])
   const [friendEmail, setFriendEmail] = useState("")
   const [addByEmailLoading, setAddByEmailLoading] = useState(false)
   const [addByEmailError, setAddByEmailError] = useState<string | null>(null)
@@ -70,9 +72,12 @@ function ProfilePageContent() {
       // Если профиль найден, используем его
       if (profileData && !profileError) {
         setProfile(profileData as ProfileData)
-        const friendsRes = await fetch("/api/friends?status=accepted")
+        const friendsRes = await fetch("/api/friends")
         const friendsData = await friendsRes.json()
-        if (friendsData.friends) setFriends(friendsData.friends)
+        const list = friendsData.friends || []
+        setFriends(list.filter((f: any) => f.status === "accepted"))
+        setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
+        setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
         setLoading(false)
         return
       }
@@ -99,9 +104,12 @@ function ProfilePageContent() {
           if (responseData.profile) {
             console.log("Profile created successfully:", responseData.profile)
             setProfile(responseData.profile as ProfileData)
-            const friendsRes = await fetch("/api/friends?status=accepted")
+            const friendsRes = await fetch("/api/friends")
             const friendsData = await friendsRes.json()
-            if (friendsData.friends) setFriends(friendsData.friends)
+            const list = friendsData.friends || []
+            setFriends(list.filter((f: any) => f.status === "accepted"))
+            setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
+            setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
           } else {
             throw new Error("Profile was not returned from API")
           }
@@ -122,9 +130,12 @@ function ProfilePageContent() {
         }
       } else {
         setProfile(profileData as ProfileData)
-        const friendsRes = await fetch("/api/friends?status=accepted")
+        const friendsRes = await fetch("/api/friends")
         const friendsData = await friendsRes.json()
-        if (friendsData.friends) setFriends(friendsData.friends)
+        const list = friendsData.friends || []
+        setFriends(list.filter((f: any) => f.status === "accepted"))
+        setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
+        setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
       }
 
       setLoading(false)
@@ -236,61 +247,58 @@ function ProfilePageContent() {
         {/* Statistics */}
         <div className="grid md:grid-cols-2 lg:grid-cols-5 gap-6 mb-6">
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Award className="w-5 h-5 text-primary" />
-                Рейтинг игрока
+                <Award className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Рейтинг игрока</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col items-start">
               <div className="text-3xl font-bold text-primary">{profile.rating ?? 0}</div>
-              <Link href="/profile/leaderboard" className="text-sm text-primary hover:underline mt-1 inline-block">
+              <Link href="/profile/leaderboard" className="text-sm text-primary hover:underline mt-1">
                 Таблица лидеров
               </Link>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Mic className="w-5 h-5 text-primary" />
-                Рейтинг ведущего
+                <Mic className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Рейтинг ведущего</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-primary">{profile.host_rating ?? 0}</div>
-              <p className="text-xs text-muted-foreground mt-1">+20 за игру только ведущим, +10 если ведущий и игрок</p>
             </CardContent>
           </Card>
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Calendar className="w-5 h-5 text-primary" />
-                Игр сыграно
+                <Calendar className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Игр сыграно</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-primary">{profile.games_played}</div>
             </CardContent>
           </Card>
-
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-primary" />
-                Побед
+                <Trophy className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Побед</span>
               </CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col items-start">
               <div className="text-3xl font-bold text-primary">{profile.games_won}</div>
               <p className="text-sm text-muted-foreground mt-1">Процент побед: {winRate}%</p>
             </CardContent>
           </Card>
-
           <Card className="bg-card/50 border-border/50">
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary" />
-                Аккаунт
+                <Users className="w-5 h-5 text-primary flex-shrink-0" />
+                <span>Аккаунт</span>
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -409,9 +417,12 @@ function ProfilePageContent() {
                       if (res.ok) {
                         setAddByEmailSuccess(true)
                         setFriendEmail("")
-                        const fr = await fetch("/api/friends?status=accepted")
+                        const fr = await fetch("/api/friends")
                         const fd = await fr.json()
-                        if (fd.friends) setFriends(fd.friends)
+                        const list = fd.friends || []
+                        setFriends(list.filter((f: any) => f.status === "accepted"))
+                        setFriendRequestsIncoming(list.filter((f: any) => f.is_incoming_request))
+                        setFriendRequestsPending(list.filter((f: any) => f.status === "pending" && !f.is_incoming_request))
                       } else {
                         setAddByEmailError(data.error || "Ошибка")
                       }
@@ -429,12 +440,92 @@ function ProfilePageContent() {
             </div>
             {addByEmailError && <p className="text-sm text-destructive">{addByEmailError}</p>}
             {addByEmailSuccess && <p className="text-sm text-green-600">Запрос в друзья отправлен.</p>}
-            {friends.length === 0 ? (
+            {friendRequestsIncoming.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Входящие заявки в друзья</p>
+                <ul className="space-y-2">
+                  {friendRequestsIncoming.map((f) => (
+                    <li key={f.friend_user_id} className="flex items-center justify-between p-2 rounded-lg bg-muted/50">
+                      <Link href={`/profile/${f.friend_user_id}`} className="flex items-center gap-3 flex-1 min-w-0">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={f.avatar_url || undefined} />
+                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium truncate">{f.display_name || f.username}</span>
+                      </Link>
+                      <div className="flex gap-2 flex-shrink-0">
+                        <Button
+                          size="sm"
+                          onClick={async () => {
+                            const res = await fetch("/api/friends", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "accept", request_id: f.id }),
+                            })
+                            if (res.ok) {
+                              const fr = await fetch("/api/friends")
+                              const fd = await fr.json()
+                              const list = fd.friends || []
+                              setFriends(list.filter((x: any) => x.status === "accepted"))
+                              setFriendRequestsIncoming(list.filter((x: any) => x.is_incoming_request))
+                              setFriendRequestsPending(list.filter((x: any) => x.status === "pending" && !x.is_incoming_request))
+                            }
+                          }}
+                        >
+                          Принять
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            await fetch("/api/friends", {
+                              method: "POST",
+                              headers: { "Content-Type": "application/json" },
+                              body: JSON.stringify({ action: "decline", request_id: f.id }),
+                            })
+                            const fr = await fetch("/api/friends")
+                            const fd = await fr.json()
+                            const list = fd.friends || []
+                            setFriends(list.filter((x: any) => x.status === "accepted"))
+                            setFriendRequestsIncoming(list.filter((x: any) => x.is_incoming_request))
+                            setFriendRequestsPending(list.filter((x: any) => x.status === "pending" && !x.is_incoming_request))
+                          }}
+                        >
+                          Отклонить
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {friendRequestsPending.length > 0 && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Отправленные заявки</p>
+                <ul className="space-y-2">
+                  {friendRequestsPending.map((f) => (
+                    <li key={f.friend_user_id} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                      <Link href={`/profile/${f.friend_user_id}`} className="flex items-center gap-3 flex-1 min-w-0">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={f.avatar_url || undefined} />
+                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium truncate">{f.display_name || f.username}</span>
+                      </Link>
+                      <span className="text-xs text-muted-foreground">Ожидает ответа</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {friends.length === 0 && friendRequestsIncoming.length === 0 && friendRequestsPending.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 Пока нет друзей. Добавляйте игроков в друзья с их страницы профиля.
               </p>
-            ) : (
-              <ul className="space-y-2">
+            ) : friends.length > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-medium text-muted-foreground">Друзья</p>
+                <ul className="space-y-2">
                 {friends.map((f) => {
                   const online = f.show_online_status && f.last_seen_at
                     ? (Date.now() - new Date(f.last_seen_at).getTime() < 5 * 60 * 1000)
@@ -460,8 +551,9 @@ function ProfilePageContent() {
                     </li>
                   )
                 })}
-              </ul>
-            )}
+                </ul>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 

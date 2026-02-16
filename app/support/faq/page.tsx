@@ -11,7 +11,7 @@ interface FAQItem {
   id: string
   question: string
   answer: string
-  category: "general" | "gameplay" | "technical" | "subscription"
+  category: "general" | "gameplay" | "technical" | "subscription" | "rating"
 }
 
 const faqItems: FAQItem[] = [
@@ -131,6 +131,21 @@ const faqItems: FAQItem[] = [
       "Если вы достигли лимита создания комнат (3 в день для базового тарифа), вы увидите сообщение с предложением обновиться до премиум тарифа. Вы все еще можете присоединяться к существующим комнатам других игроков без ограничений.",
     category: "subscription",
   },
+  // Рейтинг
+  {
+    id: "rating-player",
+    question: "Как формируется рейтинг игрока?",
+    answer:
+      "Рейтинг игрока начисляется за участие в играх в режиме «Бункер»: +5 очков за каждую сыгранную игру, +20 очков за победу. Чем больше вы играете и выигрываете, тем выше рейтинг. Рейтинг отображается в профиле и в таблице лидеров.",
+    category: "rating",
+  },
+  {
+    id: "rating-host",
+    question: "Как формируется рейтинг ведущего?",
+    answer:
+      "Рейтинг ведущего начисляется за проведение игр: +20 очков за игру, в которой вы были только ведущим (не игроком), и +10 очков за игру, в которой вы были и ведущим, и игроком. Рейтинг отображается в профиле и в таблице лидеров.",
+    category: "rating",
+  },
 ]
 
 const categories = [
@@ -139,6 +154,7 @@ const categories = [
   { id: "gameplay", label: "Игровой процесс", icon: HelpCircle },
   { id: "technical", label: "Технические", icon: HelpCircle },
   { id: "subscription", label: "Подписки", icon: HelpCircle },
+  { id: "rating", label: "Рейтинг", icon: HelpCircle },
 ]
 
 export default function FAQPage() {

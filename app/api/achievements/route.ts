@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 
 /**
- * GET - Get achievements for the authenticated user
+ * GET - Get achievements for the authenticated user or for another user (user_id= query)
  */
 export async function GET(request: Request) {
   const supabase = await createClient()
@@ -15,32 +15,38 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   }
 
+  const { searchParams } = new URL(request.url)
+  const targetUserId = searchParams.get("user_id") || user.id
+  const isOtherUser = targetUserId !== user.id
+  const client = isOtherUser ? createServiceRoleClient() : supabase
+
   try {
-    // Get all achievements with user's progress
-    const { data: achievements, error } = await supabase
+    const { data: achievements, error: achError } = await client
       .from("achievements")
-      .select(
-        `
-        *,
-        user_achievements!left (
-          id,
-          earned_at,
-          progress
-        )
-      `
-      )
-      .eq("user_achievements.user_id", user.id)
+      .select("*")
       .order("points", { ascending: false })
       .order("category")
 
-    if (error) {
-      console.error("Error fetching achievements:", error)
+    if (achError) {
+      console.error("Error fetching achievements:", achError)
       return NextResponse.json({ error: "Failed to fetch achievements" }, { status: 500 })
     }
 
-    // Transform data to include earned status
-    const achievementsWithStatus = achievements?.map((achievement) => {
-      const userAchievement = achievement.user_achievements?.[0]
+    const { data: userAchievements } = await client
+      .from("user_achievements")
+      .select("achievement_id, earned_at, progress")
+      .eq("user_id", targetUserId)
+
+    const uaByAchievement = (userAchievements || []).reduce(
+      (acc, ua) => {
+        acc[ua.achievement_id] = ua
+        return acc
+      },
+      {} as Record<string, { achievement_id: string; earned_at: string | null; progress: number }>
+    )
+
+    const achievementsWithStatus = (achievements || []).map((achievement) => {
+      const ua = uaByAchievement[achievement.id]
       return {
         id: achievement.id,
         code: achievement.code,
@@ -51,11 +57,11 @@ export async function GET(request: Request) {
         tier: achievement.tier,
         points: achievement.points,
         requirementValue: achievement.requirement_value,
-        earned: !!userAchievement,
-        earnedAt: userAchievement?.earned_at || null,
-        progress: userAchievement?.progress || 0,
+        earned: !!ua,
+        earnedAt: ua?.earned_at || null,
+        progress: ua?.progress ?? 0,
       }
-    }) || []
+    })
 
     // Group by category
     const grouped = achievementsWithStatus.reduce((acc, achievement) => {

@@ -90,7 +90,12 @@ const categoryNames: Record<string, string> = {
   special: "Особые",
 }
 
-export function AchievementsSection() {
+interface AchievementsSectionProps {
+  /** If set, show achievements for this user (e.g. when viewing another profile). */
+  userId?: string | null
+}
+
+export function AchievementsSection({ userId }: AchievementsSectionProps) {
   const [achievements, setAchievements] = useState<Achievement[]>([])
   const [stats, setStats] = useState<AchievementsStats | null>(null)
   const [loading, setLoading] = useState(true)
@@ -98,10 +103,11 @@ export function AchievementsSection() {
   useEffect(() => {
     const loadAchievements = async () => {
       try {
+        const url = userId ? `/api/achievements?user_id=${encodeURIComponent(userId)}` : "/api/achievements"
         const { data, error } = await safeFetch<{
           achievements: Achievement[]
           stats: AchievementsStats
-        }>("/api/achievements")
+        }>(url)
 
         if (error || !data) {
           console.error("Error loading achievements:", error)
@@ -119,7 +125,7 @@ export function AchievementsSection() {
     }
 
     loadAchievements()
-  }, [])
+  }, [userId])
 
   if (loading) {
     return (
@@ -152,6 +158,7 @@ export function AchievementsSection() {
   }
 
   const categoryOrder = ["general", "games", "wins", "social", "premium", "special"]
+  const isOtherUser = !!userId
 
   return (
     <Card className="bg-card/50 border-border/50">
@@ -165,10 +172,10 @@ export function AchievementsSection() {
             <CardDescription>
               {stats ? (
                 <>
-                  {stats.earnedCount} из {stats.totalCount} ({stats.completionRate}%) • {stats.totalPoints} очков
+                  {stats.earnedCount} из {stats.totalCount} ({stats.completionRate}%){isOtherUser ? "" : ` • ${stats.totalPoints} очков`}
                 </>
               ) : (
-                "Отслеживайте свой прогресс"
+                isOtherUser ? "Достижения игрока" : "Отслеживайте свой прогресс"
               )}
             </CardDescription>
           </div>
