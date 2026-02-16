@@ -1,0 +1,155 @@
+import { NextResponse } from "next/server"
+import { createClient } from "@/lib/supabase/server"
+
+const MESSAGE_BODY_MAX_LENGTH = 2000
+
+// GET - List conversations (users I have messages with) with last message and unread count
+export async function GET(request: Request) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const { searchParams } = new URL(request.url)
+  const withUserId = searchParams.get("with") // get thread with this user
+
+  if (withUserId) {
+    const { data: messages, error } = await supabase
+      .from("private_messages")
+      .select("id, from_user_id, to_user_id, body, read_at, created_at")
+      .or(
+        `and(from_user_id.eq.${user.id},to_user_id.eq.${withUserId}),and(from_user_id.eq.${withUserId},to_user_id.eq.${user.id})`
+      )
+      .order("created_at", { ascending: true })
+      .limit(100)
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    const otherId = withUserId === user.id ? null : withUserId
+    const otherProfile = otherId
+      ? await supabase.from("profiles").select("id, username, display_name, avatar_url, last_seen_at, show_online_status").eq("id", otherId).single()
+      : { data: null }
+
+    return NextResponse.json({
+      messages: messages || [],
+      other: otherProfile.data,
+    })
+  }
+
+  const { data: sent } = await supabase
+    .from("private_messages")
+    .select("to_user_id, created_at")
+    .eq("from_user_id", user.id)
+    .order("created_at", { ascending: false })
+
+  const { data: received } = await supabase
+    .from("private_messages")
+    .select("from_user_id, created_at, read_at")
+    .eq("to_user_id", user.id)
+    .order("created_at", { ascending: false })
+
+  const partnerIds = new Set<string>()
+  const lastActivity: Record<string, string> = {}
+  const lastMessageFromMe: Record<string, boolean> = {}
+  const unreadCount: Record<string, number> = {}
+
+  ;(sent?.data || []).forEach((r: any) => {
+    partnerIds.add(r.to_user_id)
+    if (!lastActivity[r.to_user_id] || r.created_at > lastActivity[r.to_user_id]) {
+      lastActivity[r.to_user_id] = r.created_at
+      lastMessageFromMe[r.to_user_id] = true
+    }
+  })
+  ;(received?.data || []).forEach((r: any) => {
+    partnerIds.add(r.from_user_id)
+    if (!lastActivity[r.from_user_id] || r.created_at > lastActivity[r.from_user_id]) {
+      lastActivity[r.from_user_id] = r.created_at
+      lastMessageFromMe[r.from_user_id] = false
+    }
+    if (!r.read_at) {
+      unreadCount[r.from_user_id] = (unreadCount[r.from_user_id] || 0) + 1
+    }
+  })
+
+  const ids = Array.from(partnerIds)
+  if (ids.length === 0) {
+    return NextResponse.json({ conversations: [] })
+  }
+
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id, username, display_name, avatar_url")
+    .in("id", ids)
+
+  const profilesMap: Record<string, any> = {}
+  ;(profiles || []).forEach((p: any) => {
+    profilesMap[p.id] = p
+  })
+
+  const conversations = ids.map((id) => ({
+    user_id: id,
+    username: profilesMap[id]?.username,
+    display_name: profilesMap[id]?.display_name,
+    avatar_url: profilesMap[id]?.avatar_url,
+    last_activity_at: lastActivity[id],
+    last_message_from_me: lastMessageFromMe[id],
+    unread_count: unreadCount[id] || 0,
+  })).sort((a, b) => (b.last_activity_at || "").localeCompare(a.last_activity_at || ""))
+
+  return NextResponse.json({ conversations })
+}
+
+// POST - Send a message
+export async function POST(request: Request) {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+  }
+
+  const body = await request.json()
+  const { to_user_id: toUserId, body: messageBody } = body
+
+  if (!toUserId || typeof toUserId !== "string") {
+    return NextResponse.json({ error: "to_user_id required" }, { status: 400 })
+  }
+
+  const trimmed = typeof messageBody === "string" ? messageBody.trim() : ""
+  if (!trimmed) {
+    return NextResponse.json({ error: "Message body required" }, { status: 400 })
+  }
+  if (trimmed.length > MESSAGE_BODY_MAX_LENGTH) {
+    return NextResponse.json({ error: "Message too long" }, { status: 400 })
+  }
+
+  if (toUserId === user.id) {
+    return NextResponse.json({ error: "Cannot message yourself" }, { status: 400 })
+  }
+
+  const { data: msg, error } = await supabase
+    .from("private_messages")
+    .insert({
+      from_user_id: user.id,
+      to_user_id: toUserId,
+      body: trimmed,
+    })
+    .select("id, from_user_id, to_user_id, body, read_at, created_at")
+    .single()
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ success: true, message: msg })
+}

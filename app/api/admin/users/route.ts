@@ -27,7 +27,7 @@ export async function GET(request: Request) {
     // Use regular client - profiles table has "Users can view all profiles" policy
     const { data: profiles, error: profilesError } = await supabase
       .from("profiles")
-      .select("id, username, display_name, avatar_url, subscription_tier, premium_expires_at, created_at, updated_at, games_played, games_won")
+      .select("id, username, display_name, avatar_url, subscription_tier, premium_expires_at, created_at, updated_at, games_played, games_won, rating, last_seen_at, show_online_status")
       .order("created_at", { ascending: false })
       .limit(500)
 

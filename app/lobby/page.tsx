@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Flame, Plus, Users, LogOut, User, Settings, HelpCircle } from "lucide-react"
+import { Flame, Plus, Users, LogOut, User, Settings, HelpCircle, MessageSquare } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 
@@ -68,6 +68,11 @@ export default function LobbyPage() {
             <Button variant="ghost" className="flex items-center gap-2">
               <User className="h-4 w-4" />
               <span className="hidden sm:inline">{user?.user_metadata?.username || user?.email?.split("@")[0]}</span>
+            </Button>
+          </Link>
+          <Link href="/messages">
+            <Button variant="ghost" size="icon" title="Сообщения">
+              <MessageSquare className="h-5 w-5" />
             </Button>
           </Link>
           <Link href="/profile">

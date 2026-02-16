@@ -3,7 +3,7 @@
  * Functions for updating player statistics after game completion
  */
 
-import { createClient } from "@/lib/supabase/server"
+import { createClient, createServiceRoleClient } from "@/lib/supabase/server"
 
 export interface GameCompletionStats {
   roomId: string
@@ -17,7 +17,7 @@ export interface GameCompletionStats {
  * Note: This function should only be called once per game completion
  */
 export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlayerIds }: GameCompletionStats) {
-  const supabase = await createClient()
+  const supabase = createServiceRoleClient()
 
   try {
     // Verify game is in finished state before updating stats
@@ -131,6 +131,13 @@ export async function updateGameStatistics({ roomId, survivorPlayerIds, allPlaye
           }
         }
       }
+
+      // Rating: +5 for participation, +20 for win (winners get 25 total)
+      const ratingPoints = isWinner ? 25 : 5
+      await supabase.rpc("add_rating", {
+        user_id_param: userId,
+        points_param: ratingPoints,
+      })
     }
 
     console.log(`Statistics updated for ${allUserIds.length} players, ${survivorUserIds.size} winners`)

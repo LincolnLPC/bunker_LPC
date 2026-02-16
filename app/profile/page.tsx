@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
-import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2 } from "lucide-react"
+import { Flame, ArrowLeft, Edit, Trophy, Calendar, Users, LogOut, Crown, Loader2, Award, MessageSquare, UserPlus, Circle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { AchievementsSection } from "@/components/profile/achievements-section"
@@ -21,6 +21,7 @@ interface ProfileData {
   subscription_tier: "basic" | "premium"
   games_played: number
   games_won: number
+  rating?: number | null
   created_at: string
   media_settings?: {
     autoRequestCamera?: boolean
@@ -37,6 +38,7 @@ function ProfilePageContent() {
   const [profile, setProfile] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [friends, setFriends] = useState<{ friend_user_id: string; display_name: string | null; username: string; avatar_url: string | null; last_seen_at: string | null; show_online_status: boolean }[]>([])
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -62,6 +64,9 @@ function ProfilePageContent() {
       // Если профиль найден, используем его
       if (profileData && !profileError) {
         setProfile(profileData as ProfileData)
+        const friendsRes = await fetch("/api/friends?status=accepted")
+        const friendsData = await friendsRes.json()
+        if (friendsData.friends) setFriends(friendsData.friends)
         setLoading(false)
         return
       }
@@ -88,6 +93,9 @@ function ProfilePageContent() {
           if (responseData.profile) {
             console.log("Profile created successfully:", responseData.profile)
             setProfile(responseData.profile as ProfileData)
+            const friendsRes = await fetch("/api/friends?status=accepted")
+            const friendsData = await friendsRes.json()
+            if (friendsData.friends) setFriends(friendsData.friends)
           } else {
             throw new Error("Profile was not returned from API")
           }
@@ -108,6 +116,9 @@ function ProfilePageContent() {
         }
       } else {
         setProfile(profileData as ProfileData)
+        const friendsRes = await fetch("/api/friends?status=accepted")
+        const friendsData = await friendsRes.json()
+        if (friendsData.friends) setFriends(friendsData.friends)
       }
 
       setLoading(false)
@@ -217,7 +228,21 @@ function ProfilePageContent() {
         </Card>
 
         {/* Statistics */}
-        <div className="grid md:grid-cols-3 gap-6 mb-6">
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
+          <Card className="bg-card/50 border-border/50">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Award className="w-5 h-5 text-primary" />
+                Рейтинг
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-primary">{profile.rating ?? 0}</div>
+              <Link href="/profile/leaderboard" className="text-sm text-primary hover:underline mt-1 inline-block">
+                Таблица лидеров
+              </Link>
+            </CardContent>
+          </Card>
           <Card className="bg-card/50 border-border/50">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
@@ -312,6 +337,62 @@ function ProfilePageContent() {
                 Просмотреть историю игр
               </Button>
             </Link>
+          </CardContent>
+        </Card>
+
+        {/* Friends */}
+        <Card className="bg-card/50 border-border/50">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <UserPlus className="w-5 h-5 text-primary" />
+                  Друзья
+                </CardTitle>
+                <CardDescription>Список друзей и личные сообщения</CardDescription>
+              </div>
+              <Link href="/messages">
+                <Button variant="outline" size="sm">
+                  <MessageSquare className="w-4 h-4 mr-2" />
+                  Сообщения
+                </Button>
+              </Link>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {friends.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Пока нет друзей. Добавляйте игроков в друзья с их страницы профиля.
+              </p>
+            ) : (
+              <ul className="space-y-2">
+                {friends.map((f) => {
+                  const online = f.show_online_status && f.last_seen_at
+                    ? (Date.now() - new Date(f.last_seen_at).getTime() < 5 * 60 * 1000)
+                    : false
+                  return (
+                    <li key={f.friend_user_id} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+                      <Link href={`/profile/${f.friend_user_id}`} className="flex items-center gap-3 flex-1 min-w-0">
+                        <Avatar className="h-8 w-8">
+                          <AvatarImage src={f.avatar_url || undefined} />
+                          <AvatarFallback>{(f.display_name || f.username)[0]}</AvatarFallback>
+                        </Avatar>
+                        <span className="font-medium truncate">{f.display_name || f.username}</span>
+                        {f.show_online_status && (
+                          <span className={`text-xs ${online ? "text-green-600" : "text-muted-foreground"}`}>
+                            <Circle className={`inline h-2 w-2 mr-0.5 ${online ? "fill-green-500" : ""}`} />
+                            {online ? "в сети" : "не в сети"}
+                          </span>
+                        )}
+                      </Link>
+                      <Link href={`/messages?with=${f.friend_user_id}`}>
+                        <Button variant="ghost" size="sm">Написать</Button>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
           </CardContent>
         </Card>
 

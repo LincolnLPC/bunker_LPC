@@ -15,7 +15,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2, Crown, MessageSquare, Users, ExternalLink, Lock, Settings2 } from "lucide-react"
+import { Flame, ArrowLeft, AlertTriangle, Shield, Ban, Loader2, AlertCircle, Plus, Check, X, Eye, Trash2, Gamepad2, Crown, MessageSquare, Users, ExternalLink, Lock, Settings2, Circle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import type { User as SupabaseUser } from "@supabase/supabase-js"
 import { CreateBanModal } from "@/components/admin/create-ban-modal"
@@ -92,6 +92,9 @@ interface AdminUser {
   updated_at?: string
   games_played: number
   games_won: number
+  rating?: number | null
+  last_seen_at?: string | null
+  show_online_status?: boolean
   email?: string | null
 }
 
@@ -1302,43 +1305,64 @@ export default function AdminPage() {
                           <TableHead>Пользователь</TableHead>
                           <TableHead>Email</TableHead>
                           <TableHead>Подписка</TableHead>
+                          <TableHead>Рейтинг</TableHead>
+                          <TableHead>Онлайн</TableHead>
                           <TableHead>Игр / Побед</TableHead>
                           <TableHead>Регистрация</TableHead>
                           <TableHead>Профиль</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {users.map((u) => (
-                          <TableRow key={u.id}>
-                            <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-medium">{u.display_name || u.username}</span>
-                                <span className="text-xs text-muted-foreground">@{u.username}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
-                              {u.email || "—"}
-                            </TableCell>
-                            <TableCell>
-                              <Badge variant={u.subscription_tier === "premium" ? "default" : "secondary"}>
-                                {u.subscription_tier === "premium" ? "Премиум" : "Базовый"}
-                              </Badge>
-                            </TableCell>
-                            <TableCell className="text-sm">
-                              {u.games_played} / {u.games_won}
-                            </TableCell>
-                            <TableCell className="text-sm text-muted-foreground">
-                              {new Date(u.created_at).toLocaleDateString("ru-RU")}
-                            </TableCell>
-                            <TableCell>
-                              <Link href={`/profile/${u.id}`} target="_blank" rel="noopener noreferrer">
-                                <Button variant="ghost" size="sm" title="Открыть профиль на сайте">
-                                  <ExternalLink className="h-4 w-4" />
-                                </Button>
-                              </Link>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        {users.map((u) => {
+                          const online = u.show_online_status !== false && u.last_seen_at
+                            ? (Date.now() - new Date(u.last_seen_at).getTime() < 5 * 60 * 1000)
+                            : false
+                          return (
+                            <TableRow key={u.id}>
+                              <TableCell>
+                                <div className="flex flex-col">
+                                  <span className="font-medium">{u.display_name || u.username}</span>
+                                  <span className="text-xs text-muted-foreground">@{u.username}</span>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
+                                {u.email || "—"}
+                              </TableCell>
+                              <TableCell>
+                                <Badge variant={u.subscription_tier === "premium" ? "default" : "secondary"}>
+                                  {u.subscription_tier === "premium" ? "Премиум" : "Базовый"}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-sm font-mono">
+                                {u.rating ?? 0}
+                              </TableCell>
+                              <TableCell>
+                                {u.show_online_status === false ? (
+                                  <span className="text-muted-foreground text-xs">скрыт</span>
+                                ) : online ? (
+                                  <span className="flex items-center gap-1 text-green-600 text-xs">
+                                    <Circle className="h-2 w-2 fill-current" /> онлайн
+                                  </span>
+                                ) : (
+                                  <span className="text-muted-foreground text-xs">офлайн</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="text-sm">
+                                {u.games_played} / {u.games_won}
+                              </TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {new Date(u.created_at).toLocaleDateString("ru-RU")}
+                              </TableCell>
+                              <TableCell>
+                                <Link href={`/profile/${u.id}`} target="_blank" rel="noopener noreferrer">
+                                  <Button variant="ghost" size="sm" title="Открыть профиль на сайте">
+                                    <ExternalLink className="h-4 w-4" />
+                                  </Button>
+                                </Link>
+                              </TableCell>
+                            </TableRow>
+                          )
+                        })}
                       </TableBody>
                     </Table>
                   </div>

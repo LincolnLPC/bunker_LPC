@@ -11,9 +11,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Switch } from "@/components/ui/switch"
 import { Separator } from "@/components/ui/separator"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Flame, Loader2, Upload, Camera, Mic, RefreshCw } from "lucide-react"
+import { ArrowLeft, Flame, Loader2, Upload, Camera, Mic, RefreshCw, Bell } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { mediaLog } from "@/lib/media-logger"
+
+interface NotificationSettings {
+  phaseChange: boolean
+  invites: boolean
+}
 
 interface MediaSettings {
   autoRequestCamera: boolean
@@ -53,6 +58,11 @@ function EditProfileForm() {
   const [availableCameras, setAvailableCameras] = useState<MediaDevice[]>([])
   const [availableMicrophones, setAvailableMicrophones] = useState<MediaDevice[]>([])
   const [devicesLoading, setDevicesLoading] = useState(true)
+  const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>({
+    phaseChange: true,
+    invites: true,
+  })
+  const [showOnlineStatus, setShowOnlineStatus] = useState(true)
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -88,6 +98,16 @@ function EditProfileForm() {
             microphoneDeviceId: profile.media_settings.microphoneDeviceId ?? null,
             vdoNinjaCameraUrl: profile.media_settings.vdoNinjaCameraUrl ?? null,
           })
+        }
+        if (profile.notification_settings) {
+          const ns = profile.notification_settings as Record<string, boolean>
+          setNotificationSettings({
+            phaseChange: ns.phaseChange ?? true,
+            invites: ns.invites ?? true,
+          })
+        }
+        if (typeof profile.show_online_status === "boolean") {
+          setShowOnlineStatus(profile.show_online_status)
         }
       }
 
@@ -258,6 +278,10 @@ function EditProfileForm() {
       if (mediaSettings) {
         updateData.media_settings = mediaSettings
       }
+      if (notificationSettings) {
+        updateData.notification_settings = notificationSettings
+      }
+      updateData.show_online_status = showOnlineStatus
 
       const { data: updatedProfile, error: updateError } = await supabase
         .from("profiles")
@@ -400,6 +424,72 @@ function EditProfileForm() {
                 placeholder="Ваше имя"
                 maxLength={50}
               />
+            </div>
+
+            <Separator />
+
+            {/* Notification Settings */}
+            <div className="space-y-4">
+              <div>
+                <h3 className="text-lg font-semibold mb-2 flex items-center gap-2">
+                  <Bell className="w-5 h-5 text-primary" />
+                  Уведомления
+                </h3>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Выберите, о каких событиях вы хотите получать уведомления (в игре и по приглашениям). Push-уведомления будут подключены позже.
+                </p>
+              </div>
+              <div className="space-y-4 pl-2">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="notifyPhaseChange" className="text-base cursor-pointer">
+                      Смена фаз игры
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Уведомлять о переходе к голосованию, результатам раунда и т.д.
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifyPhaseChange"
+                    checked={notificationSettings.phaseChange}
+                    onCheckedChange={(checked) =>
+                      setNotificationSettings({ ...notificationSettings, phaseChange: checked })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="notifyInvites" className="text-base cursor-pointer">
+                      Приглашения в игру
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Уведомлять о приглашениях в комнаты от других игроков
+                    </p>
+                  </div>
+                  <Switch
+                    id="notifyInvites"
+                    checked={notificationSettings.invites}
+                    onCheckedChange={(checked) =>
+                      setNotificationSettings({ ...notificationSettings, invites: checked })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="showOnlineStatus" className="text-base cursor-pointer">
+                      Показывать статус «В сети»
+                    </Label>
+                    <p className="text-sm text-muted-foreground">
+                      Другие пользователи смогут видеть, онлайн вы или нет
+                    </p>
+                  </div>
+                  <Switch
+                    id="showOnlineStatus"
+                    checked={showOnlineStatus}
+                    onCheckedChange={setShowOnlineStatus}
+                  />
+                </div>
+              </div>
             </div>
 
             <Separator />
