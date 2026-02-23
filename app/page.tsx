@@ -192,6 +192,20 @@ export default function LandingPage() {
         </div>
       </header>
 
+      {/* Development notice */}
+      <div className="relative z-10 border-b border-border/50 bg-muted/50">
+        <div className="max-w-7xl mx-auto px-6 py-3 flex flex-wrap items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+          <span>Сайт находится в процессе разработки.</span>
+          <span>
+            Если вы нашли нерабочую механику или баг —{" "}
+            <Link href="/support" className="text-primary hover:underline font-medium">
+              напишите в поддержку
+            </Link>
+            .
+          </span>
+        </div>
+      </div>
+
       {/* Features Section */}
       <section className="py-24 px-6">
         <div className="max-w-6xl mx-auto">
